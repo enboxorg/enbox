@@ -1,0 +1,35 @@
+{
+  "summary": "A scheduled occurrence with a time or date, including appointments.",
+  "targets": [
+    {
+      "path": "event",
+      "utterance": "My dentist appointment is December 8 at 10 AM in London.",
+      "distinguish": "A completed clinical visit goes to Medical Records. Keep an alarm on the event or its private state."
+    },
+    {
+      "path": "state",
+      "utterance": "Give me a private alert 30 minutes before my dentist appointment.",
+      "distinguish": "Resolve the existing event record ID and store the alert in the user’s private state. A client schedules delivery."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "appointment",
+      "calendar",
+      "scheduled",
+      "meeting",
+      "all-day"
+    ],
+    "sensitive": true,
+    "identityFields": {
+      "event": [
+        "calendarUid"
+      ]
+    }
+  },
+  "interchange": {
+    "format": "jCal VEVENT",
+    "specification": "https://www.rfc-editor.org/rfc/rfc7265",
+    "scope": "Scoped VEVENT conversion. An all-day end date is exclusive."
+  }
+}

@@ -1,0 +1,346 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/subscriptions/v1/schemas/subscription",
+  "title": "SubscriptionData",
+  "description": "Subscriptions: subscription record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "plan": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "price": {
+      "$ref": "#/definitions/subscriptionMoney"
+    },
+    "billingCycle": {
+      "type": "string",
+      "enum": [
+        "weekly",
+        "monthly",
+        "quarterly",
+        "yearly",
+        "other"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "trial",
+        "active",
+        "paused",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "trialEndsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "renewsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "cancelledAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "managementUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "account": {
+      "$ref": "#/definitions/subscriptionRecordReference"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/subscriptionAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "#/definitions/subscriptionNoteText"
+    },
+    "source": {
+      "$ref": "#/definitions/subscriptionSource"
+    },
+    "labels": {
+      "$ref": "#/definitions/subscriptionLabels"
+    }
+  },
+  "required": [
+    "service",
+    "state"
+  ],
+  "examples": [
+    {
+      "service": "Example Music",
+      "state": "active",
+      "billingCycle": "monthly"
+    }
+  ],
+  "definitions": {
+    "subscriptionAlert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "offsetSeconds": {
+          "type": "integer",
+          "minimum": -315360000,
+          "maximum": 315360000
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "start",
+            "end",
+            "due"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "app",
+            "push",
+            "email"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "snoozedUntil": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "dismissedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "at"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "offsetSeconds"
+                ]
+              },
+              {
+                "required": [
+                  "anchor"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "offsetSeconds",
+            "anchor"
+          ],
+          "not": {
+            "required": [
+              "at"
+            ]
+          }
+        }
+      ]
+    },
+    "subscriptionMoney": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3,
+          "pattern": "^[A-Z]{3}$"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "description": "Non-negative decimal amount in an explicitly named currency; no floating-point currency conversion."
+    },
+    "subscriptionRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "subscriptionSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/subscriptionRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "subscriptionNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "subscriptionLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "connect",
+  "name": "Connect",
+  "category": "Identity and digital life",
+  "description": "Wallet discovery information.",
+  "moduleUri": "https://identity.foundation/modules/connect",
+  "exportName": "ConnectModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Use this web wallet."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "wallet",
+      "type": "wallet",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://identity.foundation/schemas/connect/wallet",
+      "schemaFile": "schemas/wallet.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    }
+  ],
+  "capture": {
+    "identity": "Match the owner's wallet discovery record.",
+    "exclude": [
+      "Personal wallet secrets or application data."
+    ],
+    "workflow": "Publish wallet discovery endpoints using the established Connect contract."
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "cards-passes",
+  "name": "Cards and Passes",
+  "category": "Travel and outdoors",
+  "description": "Membership/loyalty cards and personal access/transit passes, identifiers, validity, and issuer references.",
+  "moduleUri": "https://enbox.id/modules/cards-passes/v1",
+  "exportName": "CardsPassesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Save my library card number."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "pass",
+      "type": "pass",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/cards-passes/v1/schemas/pass",
+      "schemaFile": "schemas/pass.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match issuer and pass identifier, preserving the selected record ID.",
+    "exclude": [
+      "Assuming a barcode or uploaded image is an issuer-signed credential."
+    ],
+    "workflow": "Store display/validity information and link documents or native credentials."
+  }
+}

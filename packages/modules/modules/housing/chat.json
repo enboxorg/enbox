@@ -1,0 +1,29 @@
+{
+  "summary": "Residence, tenancy and occupancy periods, plus lease terms and source documents.",
+  "targets": [
+    {
+      "path": "residence",
+      "utterance": "Save the address of my new apartment.",
+      "distinguish": "Choose Housing when the user means a residence. A café address belongs to Places."
+    },
+    {
+      "path": "residence/occupancy",
+      "utterance": "We moved into the apartment on March 1 as renters.",
+      "distinguish": "Resolve the residence and year. Household membership is a separate sharing decision."
+    },
+    {
+      "path": "residence/lease",
+      "utterance": "My lease runs from April through next March.",
+      "distinguish": "Record the supplied agreement terms, retaining the original document and confirmed dates."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "lease term",
+      "moved in",
+      "rental agreement",
+      "tenancy"
+    ],
+    "sensitive": true
+  }
+}

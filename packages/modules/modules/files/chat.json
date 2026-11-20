@@ -1,0 +1,13 @@
+{
+  "summary": "Private file identity and encrypted content revisions.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "save file",
+      "upload",
+      "file revision"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Use the file upload or revision workflow with actual bytes. Link an existing file from its receipt, credential evidence or document record when appropriate."
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/vehicles/v1/schemas/registration",
+  "title": "RegistrationData",
+  "description": "One vehicle registration issued by a jurisdiction. Keep a new issuance or renewal as its own record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "registrationNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identifier printed for the registration."
+    },
+    "plateNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Displayed plate identifier, retaining punctuation, case and leading zeros."
+    },
+    "jurisdiction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "country": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^[A-Z]{2}$",
+          "description": "ISO 3166-1 alpha-2 country code."
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "authority": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "country"
+      ]
+    },
+    "registeredHolder": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Holder name as printed on the registration."
+    },
+    "issuedOn": {
+      "type": "string",
+      "format": "date"
+    },
+    "expiresOn": {
+      "type": "string",
+      "format": "date"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/definitions/registrationRecordReference"
+      }
+    }
+  },
+  "required": [
+    "jurisdiction"
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "plateNumber"
+      ]
+    },
+    {
+      "required": [
+        "registrationNumber"
+      ]
+    }
+  ],
+  "definitions": {
+    "registrationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    }
+  },
+  "examples": [
+    {
+      "plateNumber": "00-DEMO",
+      "jurisdiction": {
+        "country": "CA",
+        "region": "Ontario"
+      },
+      "issuedOn": "2026-02-01",
+      "expiresOn": "2027-01-31"
+    }
+  ]
+}

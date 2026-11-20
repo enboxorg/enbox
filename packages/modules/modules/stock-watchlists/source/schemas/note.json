@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/stock-watchlists/v1/schemas/note",
+  "title": "NoteData",
+  "description": "Stock Watchlists: note record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "headline": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "observedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192,
+        "format": "uri"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/noteSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "headline",
+    "body"
+  ],
+  "examples": [
+    {
+      "headline": "Research question",
+      "body": "Review the next earnings report."
+    }
+  ],
+  "definitions": {
+    "noteRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "noteSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

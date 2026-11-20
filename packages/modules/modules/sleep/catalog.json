@@ -1,0 +1,37 @@
+{
+  "id": "sleep",
+  "name": "Sleep",
+  "category": "Health and fitness",
+  "description": "Sleep sessions, bedtime/wake times, interruptions, and reported quality.",
+  "moduleUri": "https://enbox.id/modules/sleep/v1",
+  "exportName": "SleepModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I slept from 11 pm until 7 am."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "session",
+      "type": "session",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/sleep/v1/schemas/session",
+      "schemaFile": "schemas/session.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the observed sleep interval and source.",
+    "exclude": [
+      "A bedtime goal as an observed sleep session."
+    ],
+    "workflow": "Record actual sleep intervals and supplied quality observations."
+  }
+}

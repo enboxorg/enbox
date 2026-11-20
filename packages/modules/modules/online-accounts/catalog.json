@@ -1,0 +1,50 @@
+{
+  "id": "online-accounts",
+  "name": "Online Accounts",
+  "category": "Identity and digital life",
+  "description": "Service accounts, usernames, linked identities, plan/status metadata, and recovery references.",
+  "moduleUri": "https://enbox.id/modules/online-accounts/v1",
+  "exportName": "OnlineAccountsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My username on that service is riverbird."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "account",
+      "type": "account",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/online-accounts/v1/schemas/account",
+      "schemaFile": "schemas/account.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "account/identityLink",
+      "type": "identityLink",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/online-accounts/v1/schemas/identity-link",
+      "schemaFile": "schemas/identity-link.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match service identity and account identifier, not just a display username.",
+    "exclude": [
+      "Passwords, recovery secrets, or private signing keys."
+    ],
+    "workflow": "Maintain non-secret service-account metadata and explicit identity-link evidence."
+  }
+}

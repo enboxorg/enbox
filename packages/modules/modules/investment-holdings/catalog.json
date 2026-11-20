@@ -1,0 +1,69 @@
+{
+  "id": "investment-holdings",
+  "name": "Investment Holdings",
+  "category": "Money and investing",
+  "description": "Accounts, owned positions, lots, quantities, acquisition costs, and investment transactions.",
+  "moduleUri": "https://enbox.id/modules/investment-holdings/v1",
+  "exportName": "InvestmentHoldingsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I bought ten shares of NVDA."
+  ],
+  "dependencies": {
+    "accounts": "https://enbox.id/modules/financial-accounts/v1"
+  },
+  "records": [
+    {
+      "path": "account/position",
+      "type": "position",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/position",
+      "schemaFile": "schemas/position.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "account/position/lot",
+      "type": "lot",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/lot",
+      "schemaFile": "schemas/lot.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "account/position/trade",
+      "type": "trade",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/trade",
+      "schemaFile": "schemas/trade.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "Positions attach directly to Financial Accounts; ledger installation is optional. Watchlist interest is a separate fact and uses the same shared Instrument value schema.",
+    "Match an existing account and instrument before updating a position snapshot; quantities and asOf describe ownership, not an intention to buy."
+  ],
+  "capture": {
+    "identity": "Match the Financial Accounts parent, instrument identifiers and selected dated position.",
+    "exclude": [
+      "An intention to buy or a watchlist observation."
+    ],
+    "workflow": "Record ownership snapshots and authored lot/trade history; link optional ledger entries and research interests."
+  }
+}

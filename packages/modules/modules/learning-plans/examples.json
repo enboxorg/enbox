@@ -1,0 +1,28 @@
+[
+  {
+    "path": "goal/plan",
+    "encoding": "json",
+    "data": {
+      "name": "Conversational Spanish",
+      "subject": "Spanish",
+      "state": "planned"
+    }
+  },
+  {
+    "path": "goal/plan/activity",
+    "encoding": "json",
+    "data": {
+      "name": "Basic greetings",
+      "kind": "lesson",
+      "state": "planned"
+    }
+  },
+  {
+    "path": "goal/plan/activity/progress",
+    "encoding": "json",
+    "data": {
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "state": "completed"
+    }
+  }
+]

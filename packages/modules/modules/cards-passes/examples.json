@@ -1,0 +1,12 @@
+[
+  {
+    "path": "pass",
+    "encoding": "json",
+    "data": {
+      "name": "Library card",
+      "kind": "library",
+      "issuer": "Example Library",
+      "identifier": "LIB-123"
+    }
+  }
+]

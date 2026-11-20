@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/maintenance/v1/schemas/plan",
+  "title": "PlanData",
+  "description": "Maintenance: plan record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "recurrence": {
+      "$ref": "#/definitions/planRecurrence"
+    },
+    "nextDueOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "usageInterval": {
+      "$ref": "#/definitions/planQuantity"
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/planAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/planSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Replace air filter",
+      "nextDueOn": "2026-01-15"
+    }
+  ],
+  "definitions": {
+    "planAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "planQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "planRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "planRecurrence": {
+      "$ref": "https://enbox.id/schemas/common/recurrence/v1"
+    },
+    "planSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

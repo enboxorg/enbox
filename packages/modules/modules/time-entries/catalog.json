@@ -1,0 +1,37 @@
+{
+  "id": "time-entries",
+  "name": "Time Entries",
+  "category": "General personal records",
+  "description": "Actual time spent on activities, with durations and project/task references.",
+  "moduleUri": "https://enbox.id/modules/time-entries/v1",
+  "exportName": "TimeEntriesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I spent two hours working on the bicycle."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "entry",
+      "type": "entry",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/time-entries/v1/schemas/entry",
+      "schemaFile": "schemas/entry.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the actual activity interval and source timer/import identifier.",
+    "exclude": [
+      "Planned task duration as time already spent."
+    ],
+    "workflow": "Record observed time and link the relevant task/project."
+  }
+}

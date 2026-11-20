@@ -1,0 +1,89 @@
+{
+  "id": "pantry",
+  "name": "Pantry",
+  "category": "Food and shopping",
+  "description": "Food on hand, quantities, storage locations, expiry dates, and stock changes.",
+  "moduleUri": "https://enbox.id/modules/pantry/v1",
+  "exportName": "PantryModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "We have three cans of chickpeas in the cupboard."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "pantry",
+      "type": "pantry",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/pantry/v1/schemas/pantry",
+      "schemaFile": "schemas/pantry.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "pantry/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/pantry/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "pantry/item/change",
+      "type": "change",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/pantry/v1/schemas/change",
+      "schemaFile": "schemas/change.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "pantry/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/pantry/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "pantry/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/pantry/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the storage context and actual stock item/batch.",
+    "exclude": [
+      "A needed grocery item as stock already available."
+    ],
+    "workflow": "Maintain stock and append observed stock changes; link purchase evidence."
+  }
+}

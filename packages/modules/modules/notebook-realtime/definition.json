@@ -1,0 +1,85 @@
+{
+  "module": "https://enbox.id/modules/notebook-realtime/v1",
+  "published": true,
+  "uses": {
+    "notebook": "https://enbox.id/modules/notebook/v1"
+  },
+  "types": {
+    "live": {
+      "schema": "https://enbox.id/schemas/notebook-realtime/v1/live",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true
+    },
+    "session": {
+      "schema": "https://enbox.id/schemas/notebook-realtime/v1/session",
+      "dataFormats": [
+        "application/json"
+      ]
+    }
+  },
+  "structure": {
+    "page": {
+      "$ref": "notebook:notebook/page",
+      "live": {
+        "$recordLimit": {
+          "max": 1
+        },
+        "$size": {
+          "max": 2048
+        },
+        "$actions": [
+          {
+            "role": "notebook:notebook/page/admin",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "role": "notebook:notebook/page/editor",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "role": "notebook:notebook/page/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "session": {
+          "$immutable": true,
+          "$size": {
+            "max": 1024
+          },
+          "$actions": [
+            {
+              "role": "notebook:notebook/page/admin",
+              "can": [
+                "create",
+                "delete",
+                "read"
+              ]
+            },
+            {
+              "role": "notebook:notebook/page/editor",
+              "can": [
+                "create",
+                "delete",
+                "read"
+              ]
+            },
+            {
+              "role": "notebook:notebook/page/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

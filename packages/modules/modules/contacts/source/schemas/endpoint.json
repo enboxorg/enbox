@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/contacts/v1/schemas/endpoint",
+  "title": "EndpointData",
+  "description": "Contacts: endpoint record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "email",
+        "phone",
+        "website",
+        "messaging",
+        "other"
+      ]
+    },
+    "value": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "preferred": {
+      "type": "boolean"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/endpointSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "value"
+  ],
+  "examples": [
+    {
+      "kind": "email",
+      "value": "alex@example.com"
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "email"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "website"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "endpointRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "endpointSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

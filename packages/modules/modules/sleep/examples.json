@@ -1,0 +1,11 @@
+[
+  {
+    "path": "session",
+    "encoding": "json",
+    "data": {
+      "startedAt": "2026-01-14T23:00:00Z",
+      "endedAt": "2026-01-15T07:00:00Z",
+      "kind": "night"
+    }
+  }
+]

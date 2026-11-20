@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/purchases/v1/schemas/purchase",
+  "title": "PurchaseData",
+  "description": "Purchases: purchase record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "merchant": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "orderNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "purchasedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "total": {
+      "$ref": "#/definitions/purchaseMoney"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "ordered",
+        "partially-delivered",
+        "delivered",
+        "cancelled",
+        "returned"
+      ]
+    },
+    "expectedDelivery": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "deliveredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "trackingUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "receipt": {
+      "$ref": "#/definitions/purchaseRecordReference"
+    },
+    "transaction": {
+      "$ref": "#/definitions/purchaseRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/purchaseSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "merchant",
+    "state"
+  ],
+  "examples": [
+    {
+      "merchant": "Example Store",
+      "state": "ordered",
+      "total": {
+        "amount": "12.50",
+        "currency": "USD"
+      }
+    }
+  ],
+  "definitions": {
+    "purchaseMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "purchaseRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "purchaseSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

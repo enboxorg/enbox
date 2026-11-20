@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/note-text/v1",
+  "type": "string",
+  "minLength": 0,
+  "maxLength": 32768
+}

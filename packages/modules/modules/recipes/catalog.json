@@ -1,0 +1,76 @@
+{
+  "id": "recipes",
+  "name": "Recipes",
+  "category": "Food and shopping",
+  "description": "Ingredients, quantities, servings, preparation steps, and personal variations.",
+  "moduleUri": "https://enbox.id/modules/recipes/v1",
+  "exportName": "RecipesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Save this lentil soup recipe; it serves four."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "recipe",
+      "type": "recipe",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/recipe",
+      "schemaFile": "schemas/recipe.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "recipe/variation",
+      "type": "variation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/variation",
+      "schemaFile": "schemas/variation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "recipe/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "recipe/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/recipes/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected recipe or source identity and the intended variation.",
+    "exclude": [
+      "A meal plan or consumption log as a new recipe."
+    ],
+    "workflow": "Maintain ingredients and instructions; keep authored variations, plans and eating observations distinct."
+  }
+}

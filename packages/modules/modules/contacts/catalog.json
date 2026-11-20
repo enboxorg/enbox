@@ -1,0 +1,89 @@
+{
+  "id": "contacts",
+  "name": "Contacts",
+  "category": "People and personal life",
+  "description": "Address-book entries, communication details, and private information supplied about contacts.",
+  "moduleUri": "https://enbox.id/modules/contacts/v1",
+  "exportName": "ContactsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Alex's new phone number is in this message."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "contact",
+      "type": "contact",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/contacts/v1/schemas/contact",
+      "schemaFile": "schemas/contact.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "contact/endpoint",
+      "type": "endpoint",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/contacts/v1/schemas/endpoint",
+      "schemaFile": "schemas/endpoint.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "contact/interaction",
+      "type": "interaction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/contacts/v1/schemas/interaction",
+      "schemaFile": "schemas/interaction.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "group",
+      "type": "group",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/contacts/v1/schemas/group",
+      "schemaFile": "schemas/group.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "group/entry",
+      "type": "entry",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/contacts/v1/schemas/entry",
+      "schemaFile": "schemas/entry.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match an existing selected contact or verified external identifier; names alone are not unique.",
+    "exclude": [
+      "Replacing another person's self-published Profile with local address-book claims."
+    ],
+    "workflow": "Maintain private contact details and endpoints; link interactions to their actual event, conversation, or note."
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "id": "maintenance",
+  "name": "Maintenance",
+  "category": "Home and belongings",
+  "description": "Service plans, repairs, inspections, replaced parts, costs, and history linked to belongings or vehicles.",
+  "moduleUri": "https://enbox.id/modules/maintenance/v1",
+  "exportName": "MaintenanceModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I replaced the air filter today."
+  ],
+  "dependencies": {
+    "belongings": "https://enbox.id/modules/belongings/v1"
+  },
+  "records": [
+    {
+      "path": "item/plan",
+      "type": "plan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/maintenance/v1/schemas/plan",
+      "schemaFile": "schemas/plan.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/service",
+      "type": "service",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/maintenance/v1/schemas/service",
+      "schemaFile": "schemas/service.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Resolve the existing Belongings item and the service occurrence.",
+    "exclude": [
+      "A duplicate device-specific repair record or a scheduled service marked as performed."
+    ],
+    "workflow": "Keep plans and performed services distinct; record repairs once here for any asset kind."
+  }
+}

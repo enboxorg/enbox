@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/utilities/v1/schemas/account",
+  "title": "AccountData",
+  "description": "Utilities: account record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "service": {
+      "type": "string",
+      "enum": [
+        "electricity",
+        "gas",
+        "water",
+        "internet",
+        "telephone",
+        "waste",
+        "other"
+      ]
+    },
+    "accountNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "residence": {
+      "$ref": "#/definitions/accountRecordReference"
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "tariff": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "billingUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "contact": {
+      "$ref": "#/definitions/accountRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/accountSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "provider",
+    "service"
+  ],
+  "examples": [
+    {
+      "provider": "Example Water",
+      "service": "water"
+    }
+  ],
+  "definitions": {
+    "accountRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "accountSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

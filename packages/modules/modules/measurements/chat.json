@@ -1,0 +1,19 @@
+{
+  "summary": "A measured value with a stated kind, unit, time and source.",
+  "targets": [
+    {
+      "path": "measurement",
+      "utterance": "Record my blood pressure reading from this morning.",
+      "distinguish": "Record the supplied values and time. A goal or clinical interpretation is a separate assertion."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "blood pressure",
+      "heart rate",
+      "weighed",
+      "measurement"
+    ],
+    "sensitive": true
+  }
+}

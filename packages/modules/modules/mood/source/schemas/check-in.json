@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/mood/v1/schemas/check-in",
+  "title": "CheckInData",
+  "description": "Mood: checkIn record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "recordedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "mood": {
+      "type": "string",
+      "enum": [
+        "very-low",
+        "low",
+        "neutral",
+        "good",
+        "very-good",
+        "mixed"
+      ]
+    },
+    "feelings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "minItems": 0,
+      "maxItems": 30
+    },
+    "energy": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "stress": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "journal": {
+      "$ref": "#/definitions/checkInRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/checkInSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "recordedAt"
+  ],
+  "examples": [
+    {
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "feelings": [
+        "calm"
+      ],
+      "energy": 3
+    }
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "mood"
+      ]
+    },
+    {
+      "required": [
+        "feelings"
+      ],
+      "properties": {
+        "feelings": {
+          "minItems": 1,
+          "type": "array"
+        }
+      }
+    },
+    {
+      "required": [
+        "energy"
+      ]
+    },
+    {
+      "required": [
+        "stress"
+      ]
+    }
+  ],
+  "definitions": {
+    "checkInRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "checkInSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

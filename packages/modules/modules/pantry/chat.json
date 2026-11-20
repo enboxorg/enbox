@@ -1,0 +1,24 @@
+{
+  "summary": "Food actually on hand, where it is stored and observed stock changes.",
+  "targets": [
+    {
+      "path": "pantry/item",
+      "utterance": "I have two cans of lentils in the pantry.",
+      "distinguish": "Resolve the pantry. Buying intent belongs to Groceries."
+    },
+    {
+      "path": "pantry/item/change",
+      "utterance": "I just used one can from the pantry.",
+      "distinguish": "Select the actual stock item. A planned meal does not consume stock."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "pantry",
+      "on hand",
+      "in my freezer",
+      "used one can"
+    ],
+    "sensitive": false
+  }
+}

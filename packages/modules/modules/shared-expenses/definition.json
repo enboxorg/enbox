@@ -1,0 +1,150 @@
+{
+  "module": "https://enbox.id/modules/shared-expenses/v1",
+  "published": true,
+  "types": {
+    "group": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/group"
+    },
+    "expense": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/expense"
+    },
+    "settlement": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/settlement"
+    },
+    "editor": {
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "schema": "https://enbox.id/modules/shared-expenses/v1/schemas/viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "group": {
+      "$size": {
+        "max": 1048576
+      },
+      "$actions": [
+        {
+          "role": "group/editor",
+          "can": [
+            "read"
+          ]
+        },
+        {
+          "role": "group/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "expense": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "group/editor",
+            "can": [
+              "create",
+              "read",
+              "update",
+              "delete"
+            ]
+          },
+          {
+            "role": "group/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ]
+      },
+      "settlement": {
+        "$size": {
+          "max": 1048576
+        },
+        "$immutable": true,
+        "$actions": [
+          {
+            "role": "group/editor",
+            "can": [
+              "create",
+              "read",
+              "delete"
+            ]
+          },
+          {
+            "role": "group/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ]
+      },
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "group/editor",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "group/viewer",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "module": "https://enbox.id/modules/belongings/v1",
+  "published": true,
+  "types": {
+    "item": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/belongings/v1/schemas/item"
+    },
+    "editor": {
+      "schema": "https://enbox.id/modules/belongings/v1/schemas/editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "schema": "https://enbox.id/modules/belongings/v1/schemas/viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "item": {
+      "$size": {
+        "max": 1048576
+      },
+      "$actions": [
+        {
+          "role": "item/editor",
+          "can": [
+            "read",
+            "co-update"
+          ]
+        },
+        {
+          "role": "item/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "item/editor",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "item/viewer",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

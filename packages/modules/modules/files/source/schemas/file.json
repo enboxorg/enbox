@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/files/v1/schemas/file",
+  "title": "FileData",
+  "description": "Files: file record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "mediaType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+$"
+    },
+    "byteLength": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 104857600
+    },
+    "sha256": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "currentContent": {
+      "$ref": "#/definitions/fileRecordReference"
+    },
+    "originalUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/fileSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "mediaType"
+  ],
+  "examples": [
+    {
+      "name": "example.txt",
+      "mediaType": "text/plain",
+      "byteLength": 5
+    }
+  ],
+  "definitions": {
+    "fileRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "fileSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

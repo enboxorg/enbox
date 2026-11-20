@@ -1,0 +1,23 @@
+{
+  "summary": "Coverage from a manufacturer or retailer and claims for a selected owned item.",
+  "targets": [
+    {
+      "path": "item/warranty",
+      "utterance": "My washing machine has a two-year manufacturer warranty.",
+      "distinguish": "Resolve its existing Belongings item and coverage terms. Separately purchased insurance stays in Insurance."
+    },
+    {
+      "path": "item/warranty/claim",
+      "utterance": "Record the warranty claim I filed for that washing machine.",
+      "distinguish": "A fault report alone does not establish a claim or a completed repair."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "manufacturer warranty",
+      "warranty claim",
+      "coverage period"
+    ],
+    "sensitive": true
+  }
+}

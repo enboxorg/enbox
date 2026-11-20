@@ -1,0 +1,13 @@
+{
+  "summary": "Explicit follow, connection and restriction decisions for a specific peer or resource.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "follow DID",
+      "block peer",
+      "connection request"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Use the selected relationship action after the user chooses the peer and direction. Contact details belong in Contacts. DWN membership and grants are managed separately."
+}

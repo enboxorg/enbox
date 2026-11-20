@@ -1,0 +1,72 @@
+{
+  "id": "identity-documents",
+  "name": "Identity Documents",
+  "category": "Identity and digital life",
+  "description": "Identity documents issued to a person, including driving licences, passports, national IDs and state IDs. One record per issuance holds normalized fields and links to scans, extraction attempts and reviews.",
+  "moduleUri": "https://enbox.id/modules/identity-documents/v1",
+  "exportName": "IdentityDocumentsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Save the expiry date from my driving licence.",
+    "Record my passport number exactly as printed.",
+    "I renewed my national ID. Save the new issuance."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "document",
+      "type": "document",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/identity-documents/v1/schemas/document",
+      "schemaFile": "schemas/document.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "document/extraction",
+      "type": "extraction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/identity-documents/v1/schemas/extraction",
+      "schemaFile": "schemas/extraction.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "document/review",
+      "type": "review",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/identity-documents/v1/schemas/review",
+      "schemaFile": "schemas/review.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match a selected issuance using kind, issuer and the reviewed document number. A renewal can have a new number or validity period. Ask before replacing a prior issuance when the match is ambiguous.",
+    "exclude": [
+      "Vehicle plate and registration details describe the vehicle. Signed credentials and presentations belong in Credentials.",
+      "A photo alone supplies evidence. Record user review separately from issuer verification."
+    ],
+    "workflow": "Link source scans, retain extraction attempts, and record review/corrections before treating fields as reviewed."
+  },
+  "notes": [
+    "Use document for every government ID held by a person. documentType distinguishes passports, driving licences, national IDs and state IDs. fields.documentNumber is the printed identifier. fields.holder and fields.issuer describe the person and issuing body. Keep identifiers as strings.",
+    "Only a driving licence may carry fields.drivingPrivileges, with the category, dates and restrictions as issued. Only a passport may carry fields.passportTypeCode. Country-specific details stay optional, enabling partial capture from chat.",
+    "The holder, issuer, document number and dates can be mapped from the corresponding claims and document_details in the [OpenID Identity Assurance Schema Definition](https://openid.net/specs/openid-ida-verified-claims-1_0.html). This field mapping conveys no verification or trust-framework result.",
+    "An extraction stores the original input references, time, extractor and observed fields. A review records the user’s decision and corrections. Apply approved changes to the document separately. Keep each attempt and decision so other apps can explain where a field came from."
+  ]
+}

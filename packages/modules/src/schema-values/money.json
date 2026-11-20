@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/money/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "currency": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "pattern": "^[A-Z]{3}$"
+    }
+  },
+  "required": [
+    "amount",
+    "currency"
+  ],
+  "description": "Non-negative decimal amount in an explicitly named currency; no floating-point currency conversion."
+}

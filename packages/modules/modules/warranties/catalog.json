@@ -1,0 +1,52 @@
+{
+  "id": "warranties",
+  "name": "Warranties",
+  "category": "Home and belongings",
+  "description": "Coverage terms, covered items, dates, providers, claim references, and evidence.",
+  "moduleUri": "https://enbox.id/modules/warranties/v1",
+  "exportName": "WarrantiesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "The washing machine has a three-year warranty."
+  ],
+  "dependencies": {
+    "belongings": "https://enbox.id/modules/belongings/v1"
+  },
+  "records": [
+    {
+      "path": "item/warranty",
+      "type": "warranty",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/warranties/v1/schemas/warranty",
+      "schemaFile": "schemas/warranty.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "item/warranty/claim",
+      "type": "claim",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/warranties/v1/schemas/claim",
+      "schemaFile": "schemas/claim.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Resolve the Belongings item and warranty provider/policy period.",
+    "exclude": [
+      "A general insurance policy or an unverified claim outcome."
+    ],
+    "workflow": "Attach coverage and claim records to the existing item and link evidence."
+  }
+}

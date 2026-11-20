@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/career-history/v1/schemas/education",
+  "title": "EducationData",
+  "description": "One entry in the JSON Resume v1.0.0 education array.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "institution": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "area": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "studyType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "startDate": {
+      "$ref": "#/definitions/educationDate"
+    },
+    "endDate": {
+      "$ref": "#/definitions/educationDate"
+    },
+    "score": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "courses": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    }
+  },
+  "required": [
+    "institution"
+  ],
+  "examples": [
+    {
+      "institution": "North Coast College",
+      "area": "Geography",
+      "studyType": "Bachelor of Arts",
+      "startDate": "2016",
+      "endDate": "2020-06-12",
+      "courses": [
+        "Cartography",
+        "Field Methods"
+      ]
+    }
+  ],
+  "definitions": {
+    "educationDate": {
+      "type": "string",
+      "description": "Preserve the supplied calendar precision as YYYY, YYYY-MM or YYYY-MM-DD.",
+      "pattern": "^[12][0-9]{3}(-((0[1-9])|(1[0-2]))(-[0-9]{2})?)?$",
+      "if": {
+        "minLength": 10
+      },
+      "then": {
+        "format": "date"
+      }
+    }
+  }
+}

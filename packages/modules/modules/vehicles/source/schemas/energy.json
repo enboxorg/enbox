@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/vehicles/v1/schemas/energy",
+  "title": "EnergyData",
+  "description": "Vehicles: energy record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "fuel",
+        "charge"
+      ]
+    },
+    "quantity": {
+      "$ref": "#/definitions/energyQuantity"
+    },
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "cost": {
+      "$ref": "#/definitions/energyMoney"
+    },
+    "odometer": {
+      "$ref": "#/definitions/energyQuantity"
+    },
+    "place": {
+      "$ref": "#/definitions/energyRecordReference"
+    },
+    "full": {
+      "type": "boolean"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/energySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "quantity",
+    "occurredAt"
+  ],
+  "examples": [
+    {
+      "kind": "charge",
+      "quantity": {
+        "value": "25",
+        "unit": "kWh"
+      },
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "energyMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "energyQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "energyRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "energySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

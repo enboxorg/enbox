@@ -1,0 +1,50 @@
+{
+  "id": "bills",
+  "name": "Bills",
+  "category": "Money and investing",
+  "description": "Amounts owed, payees, due dates, recurrence, and payment state.",
+  "moduleUri": "https://enbox.id/modules/bills/v1",
+  "exportName": "BillsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My electricity bill is due on the 20th."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "bill",
+      "type": "bill",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bills/v1/schemas/bill",
+      "schemaFile": "schemas/bill.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "bill/payment",
+      "type": "payment",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bills/v1/schemas/payment",
+      "schemaFile": "schemas/payment.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the issuer and bill instance or selected record ID.",
+    "exclude": [
+      "A payment already represented as a ledger transaction without a bill obligation."
+    ],
+    "workflow": "Record the obligation, then payment evidence; link actual ledger movements."
+  }
+}

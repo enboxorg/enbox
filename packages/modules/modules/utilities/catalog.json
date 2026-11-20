@@ -1,0 +1,63 @@
+{
+  "id": "utilities",
+  "name": "Utilities",
+  "category": "Home and belongings",
+  "description": "Household service accounts, meters, readings, usage, and bill references.",
+  "moduleUri": "https://enbox.id/modules/utilities/v1",
+  "exportName": "UtilitiesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "The water meter reads 1842 today."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "account",
+      "type": "account",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/utilities/v1/schemas/account",
+      "schemaFile": "schemas/account.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "account/meter",
+      "type": "meter",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/utilities/v1/schemas/meter",
+      "schemaFile": "schemas/meter.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "account/meter/reading",
+      "type": "reading",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/utilities/v1/schemas/reading",
+      "schemaFile": "schemas/reading.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the provider service account and physical meter identifier.",
+    "exclude": [
+      "A utility-service account as the same entity as a financial account."
+    ],
+    "workflow": "Maintain service metadata and append actual meter readings, linking residence and bill records."
+  }
+}

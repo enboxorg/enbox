@@ -1,0 +1,118 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://identity.foundation/modules/preferences',
+  published : false,
+  types     : {
+    theme: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+      schema             : 'https://identity.foundation/schemas/preferences/theme',
+    },
+    locale: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+      schema             : 'https://identity.foundation/schemas/preferences/locale',
+    },
+    privacy: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://identity.foundation/schemas/preferences/privacy',
+    },
+    notification: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+      schema             : 'https://identity.foundation/schemas/preferences/notification',
+    },
+    accessibility: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/preferences/v1/schemas/accessibility',
+    },
+    food: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/preferences/v1/schemas/food',
+    },
+    travel: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/preferences/v1/schemas/travel',
+    },
+    communication: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/preferences/v1/schemas/communication',
+    },
+  },
+  structure: {
+    theme: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+    locale: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+    privacy: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+    notification: {
+      $size: {
+        max: 1048576,
+      },
+      $tags: {
+        $requiredTags       : ['channel'],
+        $allowUndefinedTags : false,
+        channel             : {
+          type: 'string',
+        },
+      },
+    },
+    accessibility: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+    food: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+    travel: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+    communication: {
+      $size: {
+        max: 1048576,
+      },
+      $recordLimit: {
+        max: 1,
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

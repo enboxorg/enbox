@@ -1,0 +1,11 @@
+[
+  {
+    "path": "account",
+    "encoding": "json",
+    "data": {
+      "name": "Personal account",
+      "kind": "bank",
+      "currency": "USD"
+    }
+  }
+]

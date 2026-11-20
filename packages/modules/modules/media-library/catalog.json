@@ -1,0 +1,138 @@
+{
+  "id": "media-library",
+  "name": "Media Library",
+  "category": "Media and learning",
+  "description": "A private library of books, films, series, podcast episodes, music and games with per-edition intent, observed activity and annotations.",
+  "moduleUri": "https://enbox.id/modules/media-library/v1",
+  "exportName": "MediaLibraryModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Put The Dispossessed on my reading list.",
+    "I finished listening to episode 14 of Field Notes.",
+    "Save my four-out-of-five rating for the film I watched."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "work",
+      "type": "work",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/work",
+      "schemaFile": "schemas/work.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "work/activity",
+      "type": "activity",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/activity",
+      "schemaFile": "schemas/activity.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "work/annotation",
+      "type": "annotation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/annotation",
+      "schemaFile": "schemas/annotation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "series",
+      "type": "series",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/series",
+      "schemaFile": "schemas/series.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "series/episode",
+      "type": "episode",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/episode",
+      "schemaFile": "schemas/episode.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "series/episode/activity",
+      "type": "activity",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/activity",
+      "schemaFile": "schemas/activity.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "series/episode/annotation",
+      "type": "annotation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/annotation",
+      "schemaFile": "schemas/annotation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "series/annotation",
+      "type": "annotation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/media-library/v1/schemas/annotation",
+      "schemaFile": "schemas/annotation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Resolve the selected edition or release using its type and qualified identifiers. A title can denote a book, movie, soundtrack or game. Scope a podcast GUID or TV episode number to its actual series.",
+    "exclude": [
+      "A web article saved by URL belongs in Bookmarks. A purchase or physical copy has independent evidence in Purchases and Belongings.",
+      "A discussion of a book or a recommendation question alone establishes no intent, consumption session or rating."
+    ],
+    "workflow": "Capture a stated library choice on the selected work, series or episode. Append observed consumption and dated progress to that item. Attach personal notes, quotes and reviews to their source."
+  },
+  "notes": [
+    "A work record identifies a specific Book, Movie, MusicAlbum, MusicRecording or VideoGame edition/release. One series record identifies a TVSeries or PodcastSeries. Each episode is a physical child of that series. Verify that an episode’s @type matches its series when writing or importing. Use the series context and a feed GUID or season/episode identity to match an episode.",
+    "Selection intent, following and favorites describe the owner’s choices. Activity records capture observed reading, listening, viewing and play with an explicit time. A queued book or film can exist without a session or completion record. Attach a quote, personal note, or scaled review to its source edition or episode.",
+    "The @type, name, identifier, creator and publisher fields use a scoped [Schema.org CreativeWork](https://schema.org/CreativeWork) vocabulary. Book adds isbn, bookEdition and numberOfPages. Music recordings may refer to the album record, games use gamePlatform, and PodcastSeries carries feedUrl. The compact DWN payloads include private library state and DWN references. JSON-LD exchange needs an explicit projection.",
+    "Use separate position units for page, seconds, percent, chapter and level. A reading app and a player can log the same audiobook edition with different clocks. Preserve source identifiers for imported sessions; choose the user’s intended edition if several match.",
+    "Files, purchases and physical belongings keep their own identity and access. Link existing records when the user has evidence for them. Specialist distribution workflows such as playlist sharing, audio streaming and game storefront inventory belong to their own applications."
+  ]
+}

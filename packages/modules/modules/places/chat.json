@@ -1,0 +1,28 @@
+{
+  "summary": "A physical place the user wants to remember by name, address or coordinates.",
+  "targets": [
+    {
+      "path": "place",
+      "utterance": "Remember that Little Fern Café is on Maple Street.",
+      "distinguish": "A request for nearby cafés alone supplies no saved place. An actual booking goes to Reservations."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "saved place",
+      "street address",
+      "coordinates",
+      "favorite cafe"
+    ],
+    "sensitive": false,
+    "sensitiveFields": [
+      "address",
+      "coordinates"
+    ]
+  },
+  "interchange": {
+    "format": "GeoJSON Point Feature",
+    "specification": "https://www.rfc-editor.org/rfc/rfc7946.html",
+    "scope": "One named Point in longitude, latitude, optional altitude order. Unsupported feature metadata is reported on import."
+  }
+}

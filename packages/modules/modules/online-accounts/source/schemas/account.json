@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/online-accounts/v1/schemas/account",
+  "title": "AccountData",
+  "description": "Online Accounts: account record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "serviceUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "username": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "email": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320,
+      "format": "email"
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "disabled",
+        "closed"
+      ]
+    },
+    "createdOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "closedOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "plan": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "subscription": {
+      "$ref": "#/definitions/accountRecordReference"
+    },
+    "recoveryReference": {
+      "$ref": "#/definitions/accountRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/accountSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "service",
+    "state"
+  ],
+  "examples": [
+    {
+      "service": "Example Service",
+      "username": "riverbird",
+      "state": "active"
+    }
+  ],
+  "definitions": {
+    "accountRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "accountSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

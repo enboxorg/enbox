@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/receipts/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Receipts: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "quantity": {
+      "$ref": "#/definitions/itemQuantity"
+    },
+    "unitPrice": {
+      "$ref": "#/definitions/itemMoney"
+    },
+    "total": {
+      "$ref": "#/definitions/itemMoney"
+    },
+    "sku": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Oats",
+      "quantity": {
+        "value": "1",
+        "unit": "bag"
+      }
+    }
+  ],
+  "definitions": {
+    "itemMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "itemQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

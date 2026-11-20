@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/trips/v1/schemas/trip",
+  "title": "TripData",
+  "description": "Trips: trip record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "destinations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "travellers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "contact": {
+            "$ref": "#/definitions/tripRecordReference"
+          },
+          "did": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "idea",
+        "planning",
+        "booked",
+        "ongoing",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "budget": {
+      "$ref": "#/definitions/tripMoney"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/tripSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Lisbon holiday",
+      "destinations": [
+        "Lisbon"
+      ],
+      "state": "planning"
+    }
+  ],
+  "definitions": {
+    "tripMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "tripRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "tripSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

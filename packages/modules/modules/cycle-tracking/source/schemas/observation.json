@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/cycle-tracking/v1/schemas/observation",
+  "title": "ObservationData",
+  "description": "Cycle Tracking: observation record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "date": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "bleeding": {
+      "type": "string",
+      "enum": [
+        "none",
+        "spotting",
+        "light",
+        "medium",
+        "heavy"
+      ]
+    },
+    "symptoms": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "temperature": {
+      "$ref": "#/definitions/observationQuantity"
+    },
+    "testResult": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/observationSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "date"
+  ],
+  "examples": [
+    {
+      "date": "2026-01-15",
+      "bleeding": "light"
+    }
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "bleeding"
+      ]
+    },
+    {
+      "required": [
+        "symptoms"
+      ],
+      "properties": {
+        "symptoms": {
+          "minItems": 1,
+          "type": "array"
+        }
+      }
+    },
+    {
+      "required": [
+        "temperature"
+      ]
+    },
+    {
+      "required": [
+        "testResult"
+      ]
+    }
+  ],
+  "definitions": {
+    "observationQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "observationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "observationSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

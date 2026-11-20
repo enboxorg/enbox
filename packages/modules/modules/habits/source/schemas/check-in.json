@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/habits/v1/schemas/check-in",
+  "title": "CheckInData",
+  "description": "Habits: checkIn record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "date": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "recordedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "partial",
+        "skipped"
+      ]
+    },
+    "quantity": {
+      "$ref": "#/definitions/checkInQuantity"
+    },
+    "evidence": {
+      "$ref": "#/definitions/checkInRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/checkInSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "date",
+    "state"
+  ],
+  "examples": [
+    {
+      "date": "2026-01-15",
+      "state": "completed"
+    }
+  ],
+  "definitions": {
+    "checkInQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "checkInRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "checkInSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

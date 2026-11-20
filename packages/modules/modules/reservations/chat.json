@@ -1,0 +1,19 @@
+{
+  "summary": "Booking status, confirmation and cancellation details from a travel or restaurant provider.",
+  "targets": [
+    {
+      "path": "reservation",
+      "utterance": "My hotel confirmed my Lisbon booking under reference ABC123.",
+      "distinguish": "A suggestion to visit Lisbon establishes no booking. Preserve the provider confirmation."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "booking confirmation",
+      "hotel reservation",
+      "flight confirmation",
+      "reservation number"
+    ],
+    "sensitive": true
+  }
+}

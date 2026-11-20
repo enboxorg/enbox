@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/contacts/v1/schemas/contact",
+  "title": "ContactData",
+  "description": "Contacts: contact record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "givenNames": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "familyName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "organization": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "did": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    },
+    "birthday": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "profile": {
+      "$ref": "#/definitions/contactRecordReference"
+    },
+    "photo": {
+      "$ref": "#/definitions/contactRecordReference"
+    },
+    "addresses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/contactAddress"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "pronouns": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/contactSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    },
+    "vcardUid": {
+      "type": "string",
+      "format": "uri",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Stable UID from a vCard 4.0 contact. Match within the import source before updating an existing contact."
+    }
+  },
+  "required": [
+    "displayName"
+  ],
+  "examples": [
+    {
+      "displayName": "Alex Example"
+    }
+  ],
+  "definitions": {
+    "contactAddress": {
+      "$ref": "https://enbox.id/schemas/common/address/v1"
+    },
+    "contactRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "contactSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "path": "document",
+    "encoding": "json",
+    "data": {
+      "title": "Annual laboratory report",
+      "kind": "lab-report"
+    }
+  },
+  {
+    "path": "visit",
+    "encoding": "json",
+    "data": {
+      "date": "2026-01-15",
+      "provider": "Example Clinic"
+    }
+  },
+  {
+    "path": "immunization",
+    "encoding": "json",
+    "data": {
+      "vaccine": "Example vaccine",
+      "administeredOn": "2026-01-15",
+      "assertion": "self-reported"
+    }
+  }
+]

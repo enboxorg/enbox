@@ -1,0 +1,23 @@
+[
+  {
+    "path": "place",
+    "encoding": "json",
+    "data": {
+      "name": "Riverside cafe",
+      "coordinates": {
+        "latitude": 38.7223,
+        "longitude": -9.1393
+      }
+    }
+  },
+  {
+    "path": "place/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "place/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

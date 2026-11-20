@@ -1,0 +1,499 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/extraction",
+  "title": "ExtractionData",
+  "description": "One immutable extraction attempt. documentType records the observed classification when available.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/extractionRecordReference"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "extractedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "extractor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "extractorVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ]
+    },
+    "rawText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "#/definitions/extractionNoteText"
+    },
+    "source": {
+      "$ref": "#/definitions/extractionSource"
+    },
+    "labels": {
+      "$ref": "#/definitions/extractionLabels"
+    },
+    "documentType": {
+      "type": "string",
+      "enum": [
+        "passport",
+        "national-id",
+        "state-id",
+        "drivers-licence",
+        "other",
+        "unknown"
+      ],
+      "description": "Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind."
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "holder": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "fullName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "givenNames": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "minItems": 1,
+              "maxItems": 20
+            },
+            "familyName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "personalNumber": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "Identifier of the holder as printed. Preserve leading zeros."
+            },
+            "dateOfBirth": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10,
+              "format": "date"
+            },
+            "nationalities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3,
+                "pattern": "^[A-Z]{2,3}$"
+              },
+              "minItems": 1,
+              "maxItems": 10
+            },
+            "address": {
+              "$ref": "#/definitions/extractionAddress"
+            }
+          }
+        },
+        "issuer": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "country": {
+              "type": "string",
+              "pattern": "^[A-Z]{2,3}$",
+              "description": "Use the supplied two- or three-letter country code. Preserve the source evidence for other representations."
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Identifier of this document issuance. Store passport, ID card and licence numbers here as strings."
+        },
+        "issueDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "drivingPrivileges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "validFrom": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "validUntil": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "restrictions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "minItems": 0,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "description": "One item per printed licence class. Preserve jurisdiction-specific designations and restrictions."
+        },
+        "passportTypeCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Document type code as printed on the passport. Omit when absent."
+        }
+      }
+    }
+  },
+  "required": [
+    "sources",
+    "extractedAt",
+    "extractor",
+    "state"
+  ],
+  "examples": [
+    {
+      "sources": [
+        {
+          "recordId": "example-scan"
+        }
+      ],
+      "extractedAt": "2026-01-15T12:00:00Z",
+      "extractor": "demo-import",
+      "state": "partial",
+      "documentType": "drivers-licence",
+      "fields": {
+        "documentNumber": "000DEM0123",
+        "drivingPrivileges": [
+          {
+            "category": "B"
+          }
+        ]
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ],
+        "not": {
+          "required": [
+            "fields"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "fields"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "object",
+            "required": [
+              "drivingPrivileges"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "documentType"
+        ],
+        "properties": {
+          "documentType": {
+            "const": "drivers-licence"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "object",
+            "required": [
+              "passportTypeCode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "documentType"
+        ],
+        "properties": {
+          "documentType": {
+            "const": "passport"
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "extractionRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "extractionSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/extractionRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "extractionNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "extractionLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "extractionAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formatted": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "street": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "locality": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "postalCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "countryCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    }
+  }
+}

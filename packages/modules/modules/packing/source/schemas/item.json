@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/packing/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Packing: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "quantity": {
+      "$ref": "#/definitions/itemQuantity"
+    },
+    "belonging": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "bag": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "traveller": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "needed",
+        "packed",
+        "unpacked",
+        "not-taking"
+      ]
+    },
+    "sortOrder": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Spare shirts",
+      "quantity": {
+        "value": "2",
+        "unit": "piece"
+      },
+      "state": "needed"
+    }
+  ],
+  "definitions": {
+    "itemQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

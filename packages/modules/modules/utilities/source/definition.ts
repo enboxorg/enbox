@@ -1,0 +1,41 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/utilities/v1',
+  published : true,
+  types     : {
+    account: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/utilities/v1/schemas/account',
+    },
+    meter: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/utilities/v1/schemas/meter',
+    },
+    reading: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/utilities/v1/schemas/reading',
+    },
+  },
+  structure: {
+    account: {
+      $size: {
+        max: 1048576,
+      },
+      meter: {
+        $size: {
+          max: 1048576,
+        },
+        reading: {
+          $size: {
+            max: 1048576,
+          },
+          $immutable: true,
+        },
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

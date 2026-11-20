@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/realtime-session/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "peerKey": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "peerKey"
+  ]
+}

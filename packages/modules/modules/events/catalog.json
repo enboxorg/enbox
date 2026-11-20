@@ -1,0 +1,119 @@
+{
+  "id": "events",
+  "name": "Events",
+  "category": "People and personal life",
+  "description": "Scheduled activities, recurrence, participants, location links, and native alert preferences.",
+  "moduleUri": "https://enbox.id/modules/events/v1",
+  "exportName": "EventsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Dinner with Alex is Friday at seven."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "event",
+      "type": "event",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/events/v1/schemas/event",
+      "schemaFile": "schemas/event.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "event/exception",
+      "type": "exception",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/events/v1/schemas/exception",
+      "schemaFile": "schemas/exception.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "event/response",
+      "type": "response",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/events/v1/schemas/response",
+      "schemaFile": "schemas/response.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "state",
+      "type": "state",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/events/v1/schemas/state",
+      "schemaFile": "schemas/state.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "event/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/events/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "event/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/events/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "event/attendee",
+      "type": "attendee",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/events/v1/schemas/attendee",
+      "schemaFile": "schemas/attendee.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "Editors jointly maintain event details and recurrence exceptions. Attendees submit and manage their own RSVP response records; viewers only read. The signed author identifies the responding principal.",
+    "The owner issues editor, attendee, and viewer assignments. Private state and reminder preferences are owner-local links rather than shared event children."
+  ],
+  "capture": {
+    "identity": "Match the selected event or recurring series and the original occurrence for exceptions.",
+    "exclude": [
+      "A task deadline, a completed medical visit, or booking evidence by itself."
+    ],
+    "workflow": "Record planned occurrences; store exceptions and authored RSVP separately, with personal alerts in owner-local state."
+  }
+}

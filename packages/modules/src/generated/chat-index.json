@@ -1,0 +1,2280 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "id": "belongings",
+      "module": "https://enbox.id/modules/belongings/v1",
+      "label": "Belongings",
+      "category": "Home and belongings",
+      "summary": "A particular physical item owned by the user, with serial, manufacturer and ownership details.",
+      "keywords": [
+        "serial number",
+        "my appliance",
+        "asset inventory",
+        "my laptop"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected physical item; serial numbers identify a manufacturer-specific item, not a product model.",
+      "exclude": [
+        "An unpurchased wish or a second copy of device/vehicle identity."
+      ],
+      "paths": [
+        {
+          "path": "item",
+          "schemaUri": "https://enbox.id/modules/belongings/v1/schemas/item",
+          "utterance": "Save the serial number on my new laptop.",
+          "distinguish": "A product the user might buy goes to Shopping Wishlists. Repairs and vehicle registration refer back to the existing item."
+        }
+      ]
+    },
+    {
+      "id": "bills",
+      "module": "https://enbox.id/modules/bills/v1",
+      "label": "Bills",
+      "category": "Money and investing",
+      "summary": "A payable obligation with a payee, amount or due date.",
+      "keywords": [
+        "bill due",
+        "electricity bill",
+        "invoice due",
+        "payee"
+      ],
+      "sensitive": true,
+      "identity": "Match the issuer and bill instance or selected record ID.",
+      "exclude": [
+        "A payment already represented as a ledger transaction without a bill obligation."
+      ],
+      "paths": [
+        {
+          "path": "bill",
+          "schemaUri": "https://enbox.id/modules/bills/v1/schemas/bill",
+          "utterance": "My electricity bill is due on December 12.",
+          "distinguish": "A due bill does not confirm payment. A scheduled subscription renewal describes contract terms."
+        }
+      ]
+    },
+    {
+      "id": "bookmarks",
+      "module": "https://enbox.id/modules/bookmarks/v1",
+      "label": "Bookmarks",
+      "category": "General personal records",
+      "summary": "A URL or DWN record the user wants to revisit.",
+      "keywords": [
+        "bookmark",
+        "save this link",
+        "read later",
+        "save this url"
+      ],
+      "sensitive": false,
+      "identity": "Match the saved URL or tenant-relative record target and the user's selected bookmark.",
+      "exclude": [
+        "The contents of the linked document or an authorization grant to it."
+      ],
+      "paths": [
+        {
+          "path": "bookmark",
+          "schemaUri": "https://enbox.id/modules/bookmarks/v1/schemas/bookmark",
+          "utterance": "Save this recipe link for later.",
+          "distinguish": "Use Recipes when the user supplies the recipe itself. A DID-relative record link keeps its owner context."
+        }
+      ]
+    },
+    {
+      "id": "budgets",
+      "module": "https://enbox.id/modules/budgets/v1",
+      "label": "Budgets",
+      "category": "Money and investing",
+      "summary": "Planned spending limits for a period and category. Actual charges belong to the financial account ledger.",
+      "keywords": [
+        "budget",
+        "spending limit",
+        "allocate"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected budget period and currency.",
+      "exclude": [
+        "Recorded spending that belongs in Transactions."
+      ],
+      "paths": [
+        {
+          "path": "budget",
+          "schemaUri": "https://enbox.id/modules/budgets/v1/schemas/budget",
+          "utterance": "Set a EUR budget for our January expenses.",
+          "distinguish": "Ask for the period and currency before creating a budget. A bill names a separate obligation."
+        },
+        {
+          "path": "budget/allocation",
+          "schemaUri": "https://enbox.id/modules/budgets/v1/schemas/allocation",
+          "utterance": "Cap January dining out at 150 euros.",
+          "distinguish": "Select the existing budget. A limit alone supplies no payment or purchase.",
+          "parent": {
+            "module": "https://enbox.id/modules/budgets/v1",
+            "path": "budget"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cards-passes",
+      "module": "https://enbox.id/modules/cards-passes/v1",
+      "label": "Cards and Passes",
+      "category": "Travel and outdoors",
+      "summary": "Membership, loyalty, transit and admission passes, including validity and issuer.",
+      "keywords": [
+        "library card",
+        "loyalty pass",
+        "transit pass",
+        "admission"
+      ],
+      "sensitive": true,
+      "identity": "Match issuer and pass identifier, preserving the selected record ID.",
+      "exclude": [
+        "Assuming a barcode or uploaded image is an issuer-signed credential."
+      ],
+      "paths": [
+        {
+          "path": "pass",
+          "schemaUri": "https://enbox.id/modules/cards-passes/v1/schemas/pass",
+          "utterance": "Save the membership number and expiry on my library card.",
+          "distinguish": "Ordinary membership evidence goes here. Government-issued personal identification goes in Identity Documents; issuer-signed credentials use the wallet workflow."
+        }
+      ]
+    },
+    {
+      "id": "career-history",
+      "module": "https://enbox.id/modules/career-history/v1",
+      "label": "Career History",
+      "category": "Work and learning",
+      "summary": "Employment and education the user states or imports from a résumé.",
+      "keywords": [
+        "resume",
+        "résumé",
+        "worked at",
+        "studied at",
+        "employment history"
+      ],
+      "sensitive": true,
+      "identity": "Use the selected role or study record. Otherwise compare employer and position, or institution and program, together with the supplied period. Two roles at one employer and two programs at one school may be separate records. Ask when several match.",
+      "exclude": [
+        "“I hope to study geography” is a learning goal. “Remind me to apply” is a task. A question about a career path establishes neither work experience nor enrollment.",
+        "A coworker’s biography belongs to their contact only with a separate explicit request. A signed qualification belongs in Credentials."
+      ],
+      "paths": [
+        {
+          "path": "work",
+          "schemaUri": "https://enbox.id/modules/career-history/v1/schemas/work",
+          "utterance": "I worked at Cedar Maps as a cartographer from 2020 to 2023.",
+          "distinguish": "A job application or desired role does not establish employment."
+        },
+        {
+          "path": "education",
+          "schemaUri": "https://enbox.id/modules/career-history/v1/schemas/education",
+          "utterance": "I studied geography at North Coast College from 2016 to 2020.",
+          "distinguish": "A plan to enroll belongs to Goals. Keep partial dates at their supplied precision."
+        }
+      ],
+      "interchange": {
+        "format": "JSON Resume v1.0.0",
+        "specification": "https://github.com/jsonresume/resume-schema/blob/v1.0.0/schema.json",
+        "scope": "One work[] or education[] item per record. Employer or institution is required."
+      }
+    },
+    {
+      "id": "collaboration",
+      "module": "https://enbox.id/modules/collaboration/v1",
+      "label": "Collaboration",
+      "category": "General personal records",
+      "summary": "User-selected shared contexts with a single membership roster.",
+      "keywords": [
+        "share space",
+        "invite",
+        "member"
+      ],
+      "sensitive": true,
+      "identity": "Use the explicitly selected shared space record; its name alone is not unique.",
+      "exclude": [
+        "A bookmark folder or a request to grant membership inferred from conversation text."
+      ],
+      "paths": [],
+      "workflow": "Open managed sharing for the selected space. Confirm the recipient and role through the owner’s membership or invitation workflow."
+    },
+    {
+      "id": "connect",
+      "module": "https://identity.foundation/modules/connect",
+      "label": "Connect",
+      "category": "Identity and digital life",
+      "summary": "Wallet discovery information published by a wallet owner.",
+      "keywords": [
+        "wallet discovery",
+        "connect wallet"
+      ],
+      "sensitive": true,
+      "identity": "Match the owner's wallet discovery record.",
+      "exclude": [
+        "Personal wallet secrets or application data."
+      ],
+      "paths": [],
+      "workflow": "Use wallet setup and discovery. A connection request confers no generic profile or record-writing authority."
+    },
+    {
+      "id": "contacts",
+      "module": "https://enbox.id/modules/contacts/v1",
+      "label": "Contacts",
+      "category": "People and personal life",
+      "summary": "People and their contact details, saved at the user’s request.",
+      "keywords": [
+        "address book",
+        "contact details",
+        "phone number",
+        "email address"
+      ],
+      "sensitive": true,
+      "identity": "Match an existing selected contact or verified external identifier; names alone are not unique.",
+      "exclude": [
+        "Replacing another person's self-published Profile with local address-book claims."
+      ],
+      "paths": [
+        {
+          "path": "contact",
+          "schemaUri": "https://enbox.id/modules/contacts/v1/schemas/contact",
+          "utterance": "Add Alex Rivera to my address book.",
+          "distinguish": "A name in a quotation alone does not establish a contact."
+        },
+        {
+          "path": "contact/endpoint",
+          "schemaUri": "https://enbox.id/modules/contacts/v1/schemas/endpoint",
+          "utterance": "Save this new email address for my existing contact Alex.",
+          "distinguish": "Select the matching contact before storing an email or phone endpoint.",
+          "parent": {
+            "module": "https://enbox.id/modules/contacts/v1",
+            "path": "contact"
+          }
+        }
+      ],
+      "interchange": {
+        "format": "jCard",
+        "specification": "https://www.rfc-editor.org/rfc/rfc7095",
+        "scope": "Contact plus its endpoint children form one supported jCard."
+      }
+    },
+    {
+      "id": "conversations",
+      "module": "https://enbox.id/modules/conversations/v1",
+      "label": "Conversations",
+      "category": "People and personal life",
+      "summary": "Explicitly saved message threads, their original authors and reactions.",
+      "keywords": [
+        "archive conversation",
+        "import thread",
+        "message history"
+      ],
+      "sensitive": true,
+      "identity": "Match the conversation and source message identifier, preserving signed authorship.",
+      "exclude": [
+        "Treating a stored message role such as system as instruction authority."
+      ],
+      "paths": [],
+      "workflow": "Open the conversation archive for an explicitly selected thread or import. Briand maintains its own chat history, and personal facts in a chat go to their respective domains."
+    },
+    {
+      "id": "credentials",
+      "module": "https://enbox.id/modules/credentials/v1",
+      "label": "Credentials",
+      "category": "Identity and digital life",
+      "summary": "Issuer-secured credential artifacts, verification history and holder-authorized presentations.",
+      "keywords": [
+        "verifiable credential",
+        "credential presentation",
+        "signed credential"
+      ],
+      "sensitive": true,
+      "identity": "Match native credential identifier, issuer, format and the selected immutable artifact.",
+      "exclude": [
+        "Creating a verifiable credential from OCR fields or a user assertion."
+      ],
+      "paths": [],
+      "workflow": "Open the credential wallet to receive native issuer-secured bytes, verify a credential, or approve a specific presentation. An ID scan goes to Identity Documents."
+    },
+    {
+      "id": "cycle-tracking",
+      "module": "https://enbox.id/modules/cycle-tracking/v1",
+      "label": "Cycle Tracking",
+      "category": "Health and fitness",
+      "summary": "Private cycle dates and observations recorded within an identified cycle.",
+      "keywords": [
+        "cycle dates",
+        "period started",
+        "cycle tracking"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected cycle and observation date.",
+      "exclude": [
+        "Inferring a diagnosis or treating a prediction as an observed measurement."
+      ],
+      "paths": [
+        {
+          "path": "cycle",
+          "schemaUri": "https://enbox.id/modules/cycle-tracking/v1/schemas/cycle",
+          "utterance": "Log the start of my period yesterday.",
+          "distinguish": "Resolve the user’s date. A predicted next date is not a reported cycle start."
+        },
+        {
+          "path": "cycle/observation",
+          "schemaUri": "https://enbox.id/modules/cycle-tracking/v1/schemas/observation",
+          "utterance": "Add today’s bleeding observation to this cycle.",
+          "distinguish": "Use the selected cycle; record only reported cycle-specific details. Keep unrelated symptoms in Symptoms.",
+          "parent": {
+            "module": "https://enbox.id/modules/cycle-tracking/v1",
+            "path": "cycle"
+          }
+        }
+      ]
+    },
+    {
+      "id": "debts-loans",
+      "module": "https://enbox.id/modules/debts-loans/v1",
+      "label": "Debts and Loans",
+      "category": "Money and investing",
+      "summary": "Individual borrowing and lending agreements, repayment terms and actual repayments.",
+      "keywords": [
+        "loan agreement",
+        "borrowed",
+        "lent money",
+        "repayment"
+      ],
+      "sensitive": true,
+      "identity": "Match the agreement and counterparties; similar amounts do not identify the same loan.",
+      "exclude": [
+        "Treating a planned repayment as a completed transfer."
+      ],
+      "paths": [
+        {
+          "path": "loan",
+          "schemaUri": "https://enbox.id/modules/debts-loans/v1/schemas/loan",
+          "utterance": "I lent my brother 100 dollars, repayable in March.",
+          "distinguish": "The agreement describes who owes whom. A ledger movement requires independent account details."
+        },
+        {
+          "path": "loan/repayment",
+          "schemaUri": "https://enbox.id/modules/debts-loans/v1/schemas/repayment",
+          "utterance": "Record the 25 dollars he repaid on that loan.",
+          "distinguish": "Select the loan; link a known transaction when appropriate. Distinguish money received from an instalment that is only due.",
+          "parent": {
+            "module": "https://enbox.id/modules/debts-loans/v1",
+            "path": "loan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "devices",
+      "module": "https://enbox.id/modules/devices/v1",
+      "label": "Devices",
+      "category": "Identity and digital life",
+      "summary": "Operational properties and dated configurations of an identified device.",
+      "keywords": [
+        "operating system",
+        "device setup",
+        "configuration snapshot"
+      ],
+      "sensitive": true,
+      "identity": "Resolve the existing Belongings item first.",
+      "exclude": [
+        "Duplicating manufacturer, model, serial number, ownership state, or maintenance history."
+      ],
+      "paths": [
+        {
+          "path": "item/device",
+          "schemaUri": "https://enbox.id/modules/devices/v1/schemas/device",
+          "utterance": "Record that my existing laptop runs Linux.",
+          "distinguish": "Select the Belongings item. Manufacturer, model, serial and ownership stay there.",
+          "parent": {
+            "module": "https://enbox.id/modules/belongings/v1",
+            "path": "item"
+          }
+        },
+        {
+          "path": "item/device/configuration",
+          "schemaUri": "https://enbox.id/modules/devices/v1/schemas/configuration",
+          "utterance": "Save the configuration after my laptop upgrade.",
+          "distinguish": "Select the device. A repair or parts replacement belongs in Maintenance.",
+          "parent": {
+            "module": "https://enbox.id/modules/devices/v1",
+            "path": "item/device"
+          }
+        }
+      ]
+    },
+    {
+      "id": "events",
+      "module": "https://enbox.id/modules/events/v1",
+      "label": "Events",
+      "category": "People and personal life",
+      "summary": "A scheduled occurrence with a time or date, including appointments.",
+      "keywords": [
+        "appointment",
+        "calendar",
+        "scheduled",
+        "meeting",
+        "all-day"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected event or recurring series and the original occurrence for exceptions.",
+      "exclude": [
+        "A task deadline, a completed medical visit, or booking evidence by itself."
+      ],
+      "paths": [
+        {
+          "path": "event",
+          "schemaUri": "https://enbox.id/modules/events/v1/schemas/event",
+          "utterance": "My dentist appointment is December 8 at 10 AM in London.",
+          "distinguish": "A completed clinical visit goes to Medical Records. Keep an alarm on the event or its private state."
+        },
+        {
+          "path": "state",
+          "schemaUri": "https://enbox.id/modules/events/v1/schemas/state",
+          "utterance": "Give me a private alert 30 minutes before my dentist appointment.",
+          "distinguish": "Resolve the existing event record ID and store the alert in the user’s private state. A client schedules delivery."
+        }
+      ],
+      "interchange": {
+        "format": "jCal VEVENT",
+        "specification": "https://www.rfc-editor.org/rfc/rfc7265",
+        "scope": "Scoped VEVENT conversion. An all-day end date is exclusive."
+      }
+    },
+    {
+      "id": "files",
+      "module": "https://enbox.id/modules/files/v1",
+      "label": "Files",
+      "category": "General personal records",
+      "summary": "Private file identity and encrypted content revisions.",
+      "keywords": [
+        "save file",
+        "upload",
+        "file revision"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected file identity and known content digest; filenames alone are not unique.",
+      "exclude": [
+        "Copying a linked file merely because another module references it."
+      ],
+      "paths": [],
+      "workflow": "Use the file upload or revision workflow with actual bytes. Link an existing file from its receipt, credential evidence or document record when appropriate."
+    },
+    {
+      "id": "financial-accounts",
+      "module": "https://enbox.id/modules/financial-accounts/v1",
+      "label": "Financial Accounts",
+      "category": "Money and investing",
+      "summary": "A user-selected financial account that anchors statements, activity and positions.",
+      "keywords": [
+        "brokerage account",
+        "bank account",
+        "investment account"
+      ],
+      "sensitive": true,
+      "identity": "Use the selected account record; institution and lastFour narrow candidates but are not globally unique.",
+      "exclude": [
+        "Utility accounts, login accounts, or a duplicate account created separately for a portfolio."
+      ],
+      "paths": [
+        {
+          "path": "account",
+          "schemaUri": "https://enbox.id/modules/financial-accounts/v1/schemas/account",
+          "utterance": "Set up my brokerage account for tracking.",
+          "distinguish": "Resolve an existing account before creating one. Last four digits and provider name alone can collide."
+        }
+      ]
+    },
+    {
+      "id": "flashcards",
+      "module": "https://enbox.id/modules/flashcards/v1",
+      "label": "Flashcards",
+      "category": "Media and learning",
+      "summary": "Study prompts, answer cards, deck membership and observed review history.",
+      "keywords": [
+        "flashcard",
+        "study deck",
+        "spaced repetition"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected card and deck membership; text alone need not identify a unique card.",
+      "exclude": [
+        "Duplicating learning goals or converting a review attempt into a new card."
+      ],
+      "paths": [
+        {
+          "path": "card",
+          "schemaUri": "https://enbox.id/modules/flashcards/v1/schemas/card",
+          "utterance": "Make a flashcard: capital of Senegal on the front, Dakar on the back.",
+          "distinguish": "Store the supplied prompt and answer. A learning outcome or course schedule belongs to Goals or Learning Plans."
+        },
+        {
+          "path": "deck",
+          "schemaUri": "https://enbox.id/modules/flashcards/v1/schemas/deck",
+          "utterance": "Create a deck called West African capitals.",
+          "distinguish": "Use a deck only when the user wants a reusable set of cards."
+        },
+        {
+          "path": "deck/entry",
+          "schemaUri": "https://enbox.id/modules/flashcards/v1/schemas/entry",
+          "utterance": "Add that existing Senegal flashcard to my geography deck.",
+          "distinguish": "Resolve the card and the destination deck before saving membership.",
+          "parent": {
+            "module": "https://enbox.id/modules/flashcards/v1",
+            "path": "deck"
+          }
+        }
+      ]
+    },
+    {
+      "id": "food-diary",
+      "module": "https://enbox.id/modules/food-diary/v1",
+      "label": "Food Diary",
+      "category": "Food and shopping",
+      "summary": "What the user actually ate or drank at an eating occasion.",
+      "keywords": [
+        "i ate",
+        "i had for lunch",
+        "food diary",
+        "i drank"
+      ],
+      "sensitive": true,
+      "identity": "Match the actual eating occasion and source observation.",
+      "exclude": [
+        "A planned meal or a shopping-list item."
+      ],
+      "paths": [
+        {
+          "path": "entry",
+          "schemaUri": "https://enbox.id/modules/food-diary/v1/schemas/entry",
+          "utterance": "Log the lentil soup I had for lunch today.",
+          "distinguish": "A recipe, shopping request or a future meal belongs in its own workflow."
+        }
+      ]
+    },
+    {
+      "id": "gifts",
+      "module": "https://enbox.id/modules/gifts/v1",
+      "label": "Gifts",
+      "category": "Food and shopping",
+      "summary": "Private gift plans, named recipients, occasions and progress from idea to gift given.",
+      "keywords": [
+        "gift plan",
+        "birthday present",
+        "gift for"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected gift plan, recipient, and occasion.",
+      "exclude": [
+        "Sharing private gifting intent with a wishlist's audience automatically."
+      ],
+      "paths": [
+        {
+          "path": "plan",
+          "schemaUri": "https://enbox.id/modules/gifts/v1/schemas/plan",
+          "utterance": "Start planning a birthday present for Sam.",
+          "distinguish": "Use the private recipient and occasion to resolve the gift plan. A generally desired product belongs in Shopping Wishlists."
+        },
+        {
+          "path": "plan/idea",
+          "schemaUri": "https://enbox.id/modules/gifts/v1/schemas/idea",
+          "utterance": "For Sam’s birthday, shortlist the cookbook already on their wishlist.",
+          "distinguish": "Link the existing wishlist item to the private plan. Its product description stays on the wishlist.",
+          "parent": {
+            "module": "https://enbox.id/modules/gifts/v1",
+            "path": "plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "goals",
+      "module": "https://enbox.id/modules/goals/v1",
+      "label": "Goals",
+      "category": "People and personal life",
+      "summary": "A desired measurable outcome with a horizon or progress measure.",
+      "keywords": [
+        "my goal",
+        "target outcome",
+        "goal progress"
+      ],
+      "sensitive": false,
+      "identity": "Match the user's selected outcome and time horizon.",
+      "exclude": [
+        "A single scheduled task or an unsupported claim of progress."
+      ],
+      "paths": [
+        {
+          "path": "goal",
+          "schemaUri": "https://enbox.id/modules/goals/v1/schemas/goal",
+          "utterance": "My goal is to run a 10K this spring.",
+          "distinguish": "An actual run is a workout. A recurring practice is a habit."
+        }
+      ]
+    },
+    {
+      "id": "groceries",
+      "module": "https://enbox.id/modules/groceries/v1",
+      "label": "Groceries",
+      "category": "Food and shopping",
+      "summary": "Food and household consumables the user wants to buy for a shopping trip.",
+      "keywords": [
+        "grocery list",
+        "shopping list",
+        "pick up milk",
+        "supermarket"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected list and item, including quantity/variant distinctions.",
+      "exclude": [
+        "Existing pantry inventory or an aspirational gift wishlist."
+      ],
+      "paths": [
+        {
+          "path": "list/item",
+          "schemaUri": "https://enbox.id/modules/groceries/v1/schemas/item",
+          "utterance": "Add oat milk and lemons to my grocery list.",
+          "distinguish": "Prepare one item per stated product under the selected list. Already owned quantities belong to Pantry.",
+          "parent": {
+            "module": "https://enbox.id/modules/groceries/v1",
+            "path": "list"
+          }
+        },
+        {
+          "path": "list",
+          "schemaUri": "https://enbox.id/modules/groceries/v1/schemas/list",
+          "utterance": "Create a shopping list for the picnic.",
+          "distinguish": "Create a list only for an explicit new list or a confirmed choice of parent."
+        },
+        {
+          "path": "space/list",
+          "schemaUri": "https://enbox.id/modules/groceries/v1/schemas/list",
+          "utterance": "Create a grocery list in our household space.",
+          "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match.",
+          "parent": {
+            "module": "https://enbox.id/modules/collaboration/v1",
+            "path": "space"
+          }
+        },
+        {
+          "path": "space/list/item",
+          "schemaUri": "https://enbox.id/modules/groceries/v1/schemas/item",
+          "utterance": "Add oat milk to our household grocery list.",
+          "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match.",
+          "parent": {
+            "module": "https://enbox.id/modules/groceries/v1",
+            "path": "space/list"
+          }
+        }
+      ]
+    },
+    {
+      "id": "habits",
+      "module": "https://enbox.id/modules/habits/v1",
+      "label": "Habits",
+      "category": "People and personal life",
+      "summary": "An explicitly tracked repeating practice and its actual check-ins.",
+      "keywords": [
+        "habit",
+        "streak",
+        "check in",
+        "daily practice"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected recurring practice and check-in date.",
+      "exclude": [
+        "Inferring completion because a recurring task or reminder exists."
+      ],
+      "paths": [
+        {
+          "path": "habit",
+          "schemaUri": "https://enbox.id/modules/habits/v1/schemas/habit",
+          "utterance": "I want to track my daily stretching habit.",
+          "distinguish": "One-off actions go to Tasks."
+        },
+        {
+          "path": "habit/checkIn",
+          "schemaUri": "https://enbox.id/modules/habits/v1/schemas/check-in",
+          "utterance": "I did my morning stretching today. Mark my habit complete.",
+          "distinguish": "Resolve the habit and date. Repetition alone is insufficient evidence of completion.",
+          "parent": {
+            "module": "https://enbox.id/modules/habits/v1",
+            "path": "habit"
+          }
+        }
+      ]
+    },
+    {
+      "id": "health-profile",
+      "module": "https://enbox.id/modules/health-profile/v1",
+      "label": "Health Profile",
+      "category": "Health and fitness",
+      "summary": "Health assertions the user explicitly reports, including allergies.",
+      "keywords": [
+        "allergic",
+        "allergy",
+        "diagnosed",
+        "health condition"
+      ],
+      "sensitive": true,
+      "identity": "Match the person and the selected condition/allergy assertion.",
+      "exclude": [
+        "Inferring diagnoses or confirming user-supplied claims as clinician-verified facts."
+      ],
+      "paths": [
+        {
+          "path": "profile/allergy",
+          "schemaUri": "https://enbox.id/modules/health-profile/v1/schemas/allergy",
+          "utterance": "I have a peanut allergy. Remember that for me.",
+          "distinguish": "Select the person’s health profile. A stated dislike or dietary choice belongs to Preferences.",
+          "parent": {
+            "module": "https://enbox.id/modules/health-profile/v1",
+            "path": "profile"
+          }
+        },
+        {
+          "path": "profile/condition",
+          "schemaUri": "https://enbox.id/modules/health-profile/v1/schemas/condition",
+          "utterance": "My clinician diagnosed asthma. Add that to my health profile.",
+          "distinguish": "Preserve who made the assertion. Symptoms alone do not establish a diagnosis.",
+          "parent": {
+            "module": "https://enbox.id/modules/health-profile/v1",
+            "path": "profile"
+          }
+        }
+      ]
+    },
+    {
+      "id": "housing",
+      "module": "https://enbox.id/modules/housing/v1",
+      "label": "Housing",
+      "category": "Home and belongings",
+      "summary": "Residence, tenancy and occupancy periods, plus lease terms and source documents.",
+      "keywords": [
+        "lease term",
+        "moved in",
+        "rental agreement",
+        "tenancy"
+      ],
+      "sensitive": true,
+      "identity": "Match the residence address and occupancy/lease period.",
+      "exclude": [
+        "A place bookmark or a utility account as the same entity."
+      ],
+      "paths": [
+        {
+          "path": "residence",
+          "schemaUri": "https://enbox.id/modules/housing/v1/schemas/residence",
+          "utterance": "Save the address of my new apartment.",
+          "distinguish": "Choose Housing when the user means a residence. A café address belongs to Places."
+        },
+        {
+          "path": "residence/occupancy",
+          "schemaUri": "https://enbox.id/modules/housing/v1/schemas/occupancy",
+          "utterance": "We moved into the apartment on March 1 as renters.",
+          "distinguish": "Resolve the residence and year. Household membership is a separate sharing decision.",
+          "parent": {
+            "module": "https://enbox.id/modules/housing/v1",
+            "path": "residence"
+          }
+        },
+        {
+          "path": "residence/lease",
+          "schemaUri": "https://enbox.id/modules/housing/v1/schemas/lease",
+          "utterance": "My lease runs from April through next March.",
+          "distinguish": "Record the supplied agreement terms, retaining the original document and confirmed dates.",
+          "parent": {
+            "module": "https://enbox.id/modules/housing/v1",
+            "path": "residence"
+          }
+        }
+      ]
+    },
+    {
+      "id": "identity-documents",
+      "module": "https://enbox.id/modules/identity-documents/v1",
+      "label": "Identity Documents",
+      "category": "Identity and digital life",
+      "summary": "Personal government IDs, including driving licences, passports and national or state ID cards. Store one issuance, its reported fields, and the evidence behind them.",
+      "keywords": [
+        "government id",
+        "identity card",
+        "national id",
+        "state id",
+        "passport",
+        "driving licence",
+        "driving license",
+        "driver’s licence",
+        "driver license",
+        "drivers license"
+      ],
+      "sensitive": true,
+      "identity": "Match a selected issuance using kind, issuer and the reviewed document number. A renewal can have a new number or validity period. Ask before replacing a prior issuance when the match is ambiguous.",
+      "exclude": [
+        "Vehicle plate and registration details describe the vehicle. Signed credentials and presentations belong in Credentials.",
+        "A photo alone supplies evidence. Record user review separately from issuer verification."
+      ],
+      "paths": [
+        {
+          "path": "document",
+          "schemaUri": "https://enbox.id/modules/identity-documents/v1/schemas/document",
+          "utterance": "Extract the expiry date from this scan of my driver’s licence.",
+          "distinguish": "Match the person’s document issuance; use documentType=drivers-licence for a licence. Vehicle registration identifies a vehicle. Prepare scan-derived fields for review."
+        }
+      ]
+    },
+    {
+      "id": "insurance",
+      "module": "https://enbox.id/modules/insurance/v1",
+      "label": "Insurance",
+      "category": "Identity and digital life",
+      "summary": "Policies, covered subjects, renewal dates and claims filed under a policy.",
+      "keywords": [
+        "insurance policy",
+        "insurance claim",
+        "deductible"
+      ],
+      "sensitive": true,
+      "identity": "Match insurer, policy identifier, coverage period and selected policy.",
+      "exclude": [
+        "A warranty or a completed claim settlement without evidence."
+      ],
+      "paths": [
+        {
+          "path": "policy",
+          "schemaUri": "https://enbox.id/modules/insurance/v1/schemas/policy",
+          "utterance": "Save my new home insurance policy.",
+          "distinguish": "Use insurer, policy identifier and coverage period to resolve the contract. Product warranty terms belong in Warranties."
+        },
+        {
+          "path": "policy/claim",
+          "schemaUri": "https://enbox.id/modules/insurance/v1/schemas/claim",
+          "utterance": "Log the claim I submitted to my home insurer.",
+          "distinguish": "Select the policy and preserve supplied evidence; a quote or intention to file does not establish a claim.",
+          "parent": {
+            "module": "https://enbox.id/modules/insurance/v1",
+            "path": "policy"
+          }
+        }
+      ]
+    },
+    {
+      "id": "investment-holdings",
+      "module": "https://enbox.id/modules/investment-holdings/v1",
+      "label": "Investment Holdings",
+      "category": "Money and investing",
+      "summary": "Stated positions and executed trades for the selected investment account.",
+      "keywords": [
+        "i own shares",
+        "shares of",
+        "cost basis",
+        "executed trade",
+        "position"
+      ],
+      "sensitive": true,
+      "identity": "Match the Financial Accounts parent, instrument identifiers and selected dated position.",
+      "exclude": [
+        "An intention to buy or a watchlist observation."
+      ],
+      "paths": [
+        {
+          "path": "account/position",
+          "schemaUri": "https://enbox.id/modules/investment-holdings/v1/schemas/position",
+          "utterance": "I own ten shares of NVDA in my brokerage account as of November 1.",
+          "distinguish": "Interest or a hypothetical trade belongs to no position. Obtain the as-of time and account before saving.",
+          "parent": {
+            "module": "https://enbox.id/modules/financial-accounts/v1",
+            "path": "account"
+          }
+        },
+        {
+          "path": "account/position/trade",
+          "schemaUri": "https://enbox.id/modules/investment-holdings/v1/schemas/trade",
+          "utterance": "Log the trade confirmation for my existing NVDA position.",
+          "distinguish": "Use an executed trade with the selected position and supplied transaction details.",
+          "parent": {
+            "module": "https://enbox.id/modules/investment-holdings/v1",
+            "path": "account/position"
+          }
+        }
+      ]
+    },
+    {
+      "id": "learning-plans",
+      "module": "https://enbox.id/modules/learning-plans/v1",
+      "label": "Learning Plans",
+      "category": "Media and learning",
+      "summary": "Study plans, learning activities and their progress attached to a selected outcome.",
+      "keywords": [
+        "learning plan",
+        "study plan",
+        "learning activity"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected goal and learning plan, then the relevant activity.",
+      "exclude": [
+        "Recording progress merely because a course or resource was saved."
+      ],
+      "paths": [
+        {
+          "path": "goal/plan",
+          "schemaUri": "https://enbox.id/modules/learning-plans/v1/schemas/plan",
+          "utterance": "Build a study plan for my goal of passing the French exam.",
+          "distinguish": "Choose the existing goal. Completed education periods belong to Career History.",
+          "parent": {
+            "module": "https://enbox.id/modules/goals/v1",
+            "path": "goal"
+          }
+        },
+        {
+          "path": "goal/plan/activity",
+          "schemaUri": "https://enbox.id/modules/learning-plans/v1/schemas/activity",
+          "utterance": "Add speaking practice to the French exam study plan.",
+          "distinguish": "Select the plan. An independently actionable errand belongs in Tasks.",
+          "parent": {
+            "module": "https://enbox.id/modules/learning-plans/v1",
+            "path": "goal/plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "maintenance",
+      "module": "https://enbox.id/modules/maintenance/v1",
+      "label": "Maintenance",
+      "category": "Home and belongings",
+      "summary": "Planned maintenance and performed service on an existing belonging.",
+      "keywords": [
+        "maintenance",
+        "oil change",
+        "replaced battery",
+        "repair history"
+      ],
+      "sensitive": true,
+      "identity": "Resolve the existing Belongings item and the service occurrence.",
+      "exclude": [
+        "A duplicate device-specific repair record or a scheduled service marked as performed."
+      ],
+      "paths": [
+        {
+          "path": "item/service",
+          "schemaUri": "https://enbox.id/modules/maintenance/v1/schemas/service",
+          "utterance": "I had the battery replaced in my laptop yesterday.",
+          "distinguish": "Resolve the asset. A future service belongs to a plan and cannot establish a repair.",
+          "parent": {
+            "module": "https://enbox.id/modules/belongings/v1",
+            "path": "item"
+          }
+        },
+        {
+          "path": "item/plan",
+          "schemaUri": "https://enbox.id/modules/maintenance/v1/schemas/plan",
+          "utterance": "Schedule an oil change for my car every six months.",
+          "distinguish": "Use the selected vehicle’s Belongings item as parent.",
+          "parent": {
+            "module": "https://enbox.id/modules/belongings/v1",
+            "path": "item"
+          }
+        }
+      ]
+    },
+    {
+      "id": "meal-plans",
+      "module": "https://enbox.id/modules/meal-plans/v1",
+      "label": "Meal Plans",
+      "category": "Food and shopping",
+      "summary": "Meals the user plans to serve on specified dates and meal slots.",
+      "keywords": [
+        "meal plan",
+        "dinner plan",
+        "on the menu"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected plan, date and meal slot.",
+      "exclude": [
+        "An eating observation or pantry stock change."
+      ],
+      "paths": [
+        {
+          "path": "plan/meal",
+          "schemaUri": "https://enbox.id/modules/meal-plans/v1/schemas/meal",
+          "utterance": "Put mushroom risotto on Tuesday’s dinner plan.",
+          "distinguish": "Select the meal plan and confirm the intended date. Actual consumption goes to Food Diary.",
+          "parent": {
+            "module": "https://enbox.id/modules/meal-plans/v1",
+            "path": "plan"
+          }
+        },
+        {
+          "path": "space/plan",
+          "schemaUri": "https://enbox.id/modules/meal-plans/v1/schemas/plan",
+          "utterance": "Create a meal plan in our shared household.",
+          "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match.",
+          "parent": {
+            "module": "https://enbox.id/modules/collaboration/v1",
+            "path": "space"
+          }
+        },
+        {
+          "path": "space/plan/meal",
+          "schemaUri": "https://enbox.id/modules/meal-plans/v1/schemas/meal",
+          "utterance": "Put lentil soup on our household dinner plan.",
+          "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match.",
+          "parent": {
+            "module": "https://enbox.id/modules/meal-plans/v1",
+            "path": "space/plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "measurements",
+      "module": "https://enbox.id/modules/measurements/v1",
+      "label": "Measurements",
+      "category": "Health and fitness",
+      "summary": "A measured value with a stated kind, unit, time and source.",
+      "keywords": [
+        "blood pressure",
+        "heart rate",
+        "weighed",
+        "measurement"
+      ],
+      "sensitive": true,
+      "identity": "Match the subject context, kind, observation time and source.",
+      "exclude": [
+        "A target value or an inferred clinical interpretation."
+      ],
+      "paths": [
+        {
+          "path": "measurement",
+          "schemaUri": "https://enbox.id/modules/measurements/v1/schemas/measurement",
+          "utterance": "Record my blood pressure reading from this morning.",
+          "distinguish": "Record the supplied values and time. A goal or clinical interpretation is a separate assertion."
+        }
+      ]
+    },
+    {
+      "id": "media-library",
+      "module": "https://enbox.id/modules/media-library/v1",
+      "label": "Media Library",
+      "category": "Media and learning",
+      "summary": "Personal books, film, TV, podcasts, music and games; library intent, reading or playback progress, highlights and reviews on the selected edition or episode.",
+      "keywords": [
+        "reading list",
+        "isbn",
+        "book edition",
+        "movie",
+        "tv show",
+        "watch later",
+        "podcast",
+        "episode",
+        "album",
+        "music recording",
+        "video game",
+        "playback",
+        "book review",
+        "highlight"
+      ],
+      "sensitive": false,
+      "identity": "Resolve the selected edition or release using its type and qualified identifiers. A title can denote a book, movie, soundtrack or game. Scope a podcast GUID or TV episode number to its actual series.",
+      "exclude": [
+        "A web article saved by URL belongs in Bookmarks. A purchase or physical copy has independent evidence in Purchases and Belongings.",
+        "A discussion of a book or a recommendation question alone establishes no intent, consumption session or rating."
+      ],
+      "paths": [
+        {
+          "path": "work",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/work",
+          "utterance": "Add The Dispossessed to my reading list.",
+          "distinguish": "Choose the identifiable book edition, film, album, song, or game release. A saved web article belongs to Bookmarks."
+        },
+        {
+          "path": "work/activity",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/activity",
+          "utterance": "I reached page 80 of The Dispossessed.",
+          "distinguish": "Select the edition. An actual progress observation needs its time and position unit.",
+          "parent": {
+            "module": "https://enbox.id/modules/media-library/v1",
+            "path": "work"
+          }
+        },
+        {
+          "path": "work/annotation",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/annotation",
+          "utterance": "I rate this film four out of five.",
+          "distinguish": "Apply the stated rating scale to the selected film or edition.",
+          "parent": {
+            "module": "https://enbox.id/modules/media-library/v1",
+            "path": "work"
+          }
+        },
+        {
+          "path": "series",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/series",
+          "utterance": "Follow the Field Notes podcast.",
+          "distinguish": "Resolve the actual podcast feed when several shows have the same name."
+        },
+        {
+          "path": "series/episode",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/episode",
+          "utterance": "Queue episode fourteen of Field Notes.",
+          "distinguish": "Select the series first; a queued episode establishes no playback.",
+          "parent": {
+            "module": "https://enbox.id/modules/media-library/v1",
+            "path": "series"
+          }
+        },
+        {
+          "path": "series/episode/activity",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/activity",
+          "utterance": "I paused this podcast episode at 7 minutes and 5 seconds.",
+          "distinguish": "Record playback progress under the selected episode using seconds.",
+          "parent": {
+            "module": "https://enbox.id/modules/media-library/v1",
+            "path": "series/episode"
+          }
+        },
+        {
+          "path": "series/episode/annotation",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/annotation",
+          "utterance": "Save this quote from the episode at minute seven.",
+          "distinguish": "Keep the text and optional position under the selected episode.",
+          "parent": {
+            "module": "https://enbox.id/modules/media-library/v1",
+            "path": "series/episode"
+          }
+        },
+        {
+          "path": "series/annotation",
+          "schemaUri": "https://enbox.id/modules/media-library/v1/schemas/annotation",
+          "utterance": "Remember my review of the Field Notes series.",
+          "distinguish": "A series review belongs to the show; an episode-specific review belongs to the selected episode.",
+          "parent": {
+            "module": "https://enbox.id/modules/media-library/v1",
+            "path": "series"
+          }
+        }
+      ]
+    },
+    {
+      "id": "medical-records",
+      "module": "https://enbox.id/modules/medical-records/v1",
+      "label": "Medical Records",
+      "category": "Health and fitness",
+      "summary": "Documented encounters, clinical records and immunizations supplied by the user.",
+      "keywords": [
+        "visited the clinic",
+        "clinical visit",
+        "vaccinated",
+        "immunization"
+      ],
+      "sensitive": true,
+      "identity": "Match document/visit identifiers, provider and occurrence date.",
+      "exclude": [
+        "A future appointment as an already completed visit or a self-reported statement as verified evidence."
+      ],
+      "paths": [
+        {
+          "path": "visit",
+          "schemaUri": "https://enbox.id/modules/medical-records/v1/schemas/visit",
+          "utterance": "Log my visit to the clinic on December 8. We discussed my test results.",
+          "distinguish": "A scheduled appointment stays in Events. Preserve findings only as reported."
+        },
+        {
+          "path": "immunization",
+          "schemaUri": "https://enbox.id/modules/medical-records/v1/schemas/immunization",
+          "utterance": "Record the flu vaccine I received today.",
+          "distinguish": "An appointment to get vaccinated does not establish an administered dose."
+        }
+      ]
+    },
+    {
+      "id": "medications",
+      "module": "https://enbox.id/modules/medications/v1",
+      "label": "Medications",
+      "category": "Health and fitness",
+      "summary": "Medication names, supplied regimens and doses actually taken.",
+      "keywords": [
+        "my medication",
+        "prescription",
+        "took my dose",
+        "dispensed"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected medication, regimen and actual dose occurrence.",
+      "exclude": [
+        "Inferring a taken dose from a schedule or generating treatment instructions."
+      ],
+      "paths": [
+        {
+          "path": "medication",
+          "schemaUri": "https://enbox.id/modules/medications/v1/schemas/medication",
+          "utterance": "Please track the medication my pharmacist dispensed.",
+          "distinguish": "Record the supplied name and state. A question about a drug alone is not a regimen."
+        },
+        {
+          "path": "medication/dose",
+          "schemaUri": "https://enbox.id/modules/medications/v1/schemas/dose",
+          "utterance": "I took my evening dose at 8 PM.",
+          "distinguish": "Match medication and occurrence. A reminder does not establish a dose.",
+          "parent": {
+            "module": "https://enbox.id/modules/medications/v1",
+            "path": "medication"
+          }
+        }
+      ]
+    },
+    {
+      "id": "mood",
+      "module": "https://enbox.id/modules/mood/v1",
+      "label": "Mood",
+      "category": "Health and fitness",
+      "summary": "Dated check-ins about feelings, mood and energy as reported by the user.",
+      "keywords": [
+        "mood check-in",
+        "log my mood",
+        "how I felt"
+      ],
+      "sensitive": true,
+      "identity": "Match the user's check-in and observation time.",
+      "exclude": [
+        "An inferred mental-health diagnosis."
+      ],
+      "paths": [
+        {
+          "path": "checkIn",
+          "schemaUri": "https://enbox.id/modules/mood/v1/schemas/check-in",
+          "utterance": "Log my mood this morning as mixed.",
+          "distinguish": "Only log a check-in the user meant to track. A physical symptom episode or measured reading has a separate workflow."
+        }
+      ]
+    },
+    {
+      "id": "notebook",
+      "module": "https://enbox.id/modules/notebook/v1",
+      "label": "Notebook",
+      "category": "General personal records",
+      "summary": "Editable pages, collaborative text updates and attachments compatible with notesd.",
+      "keywords": [
+        "save a note",
+        "notebook",
+        "journal entry",
+        "page"
+      ],
+      "sensitive": true,
+      "identity": "Match the existing notebook and stable page record ID.",
+      "exclude": [
+        "A second flat note format or raw Markdown in the delta path."
+      ],
+      "paths": [],
+      "workflow": "Open or create the selected notebook page and encode its body as a CRDT update. Use the page attachment envelope for page-owned files."
+    },
+    {
+      "id": "notebook-realtime",
+      "module": "https://enbox.id/modules/notebook-realtime/v1",
+      "label": "Notebook Realtime",
+      "category": "General personal records",
+      "summary": "Live editing sessions attached to an existing notebook page.",
+      "keywords": [
+        "collaborate live",
+        "notebook session"
+      ],
+      "sensitive": true,
+      "identity": "Use the existing Notebook page context; the advertisement is a singleton projection.",
+      "exclude": [
+        "Treating transient realtime state as the durable note body or a session peerKey as a private key."
+      ],
+      "paths": [],
+      "workflow": "Open live editing for an existing Notebook page. Reuse its membership and generate session keys through the realtime client."
+    },
+    {
+      "id": "online-accounts",
+      "module": "https://enbox.id/modules/online-accounts/v1",
+      "label": "Online Accounts",
+      "category": "Identity and digital life",
+      "summary": "Non-secret account and identity-link details for websites and services.",
+      "keywords": [
+        "service account",
+        "username",
+        "account handle"
+      ],
+      "sensitive": true,
+      "identity": "Match service identity and account identifier, not just a display username.",
+      "exclude": [
+        "Passwords, recovery secrets, or private signing keys."
+      ],
+      "paths": [
+        {
+          "path": "account",
+          "schemaUri": "https://enbox.id/modules/online-accounts/v1/schemas/account",
+          "utterance": "Remember the username I use at the library website.",
+          "distinguish": "Store the non-secret login identifier. Financial account identities and credentials have separate owners."
+        },
+        {
+          "path": "account/identityLink",
+          "schemaUri": "https://enbox.id/modules/online-accounts/v1/schemas/identity-link",
+          "utterance": "Record that I linked my DID to my selected service account.",
+          "distinguish": "Keep passwords, private keys and recovery secrets out of this record.",
+          "parent": {
+            "module": "https://enbox.id/modules/online-accounts/v1",
+            "path": "account"
+          }
+        }
+      ]
+    },
+    {
+      "id": "packing",
+      "module": "https://enbox.id/modules/packing/v1",
+      "label": "Packing",
+      "category": "Travel and outdoors",
+      "summary": "Trip packing checklists with bags, travellers and packed state.",
+      "keywords": [
+        "packing list",
+        "carry-on",
+        "pack for trip"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected trip packing list, traveller and item.",
+      "exclude": [
+        "Changing ownership or inventory merely because an item is on a packing list."
+      ],
+      "paths": [
+        {
+          "path": "list",
+          "schemaUri": "https://enbox.id/modules/packing/v1/schemas/list",
+          "utterance": "Start a packing list for our ski trip.",
+          "distinguish": "The itinerary belongs in Trips. A packing list describes items to take."
+        },
+        {
+          "path": "list/item",
+          "schemaUri": "https://enbox.id/modules/packing/v1/schemas/item",
+          "utterance": "Put two spare shirts on my carry-on packing list.",
+          "distinguish": "Resolve the list. An item to buy goes in Groceries or Shopping Wishlists based on purchase intent.",
+          "parent": {
+            "module": "https://enbox.id/modules/packing/v1",
+            "path": "list"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pantry",
+      "module": "https://enbox.id/modules/pantry/v1",
+      "label": "Pantry",
+      "category": "Food and shopping",
+      "summary": "Food actually on hand, where it is stored and observed stock changes.",
+      "keywords": [
+        "pantry",
+        "on hand",
+        "in my freezer",
+        "used one can"
+      ],
+      "sensitive": false,
+      "identity": "Match the storage context and actual stock item/batch.",
+      "exclude": [
+        "A needed grocery item as stock already available."
+      ],
+      "paths": [
+        {
+          "path": "pantry/item",
+          "schemaUri": "https://enbox.id/modules/pantry/v1/schemas/item",
+          "utterance": "I have two cans of lentils in the pantry.",
+          "distinguish": "Resolve the pantry. Buying intent belongs to Groceries.",
+          "parent": {
+            "module": "https://enbox.id/modules/pantry/v1",
+            "path": "pantry"
+          }
+        },
+        {
+          "path": "pantry/item/change",
+          "schemaUri": "https://enbox.id/modules/pantry/v1/schemas/change",
+          "utterance": "I just used one can from the pantry.",
+          "distinguish": "Select the actual stock item. A planned meal does not consume stock.",
+          "parent": {
+            "module": "https://enbox.id/modules/pantry/v1",
+            "path": "pantry/item"
+          }
+        }
+      ]
+    },
+    {
+      "id": "personal-projects",
+      "module": "https://enbox.id/modules/personal-projects/v1",
+      "label": "Personal Projects",
+      "category": "People and personal life",
+      "summary": "A named personal undertaking with a stated outcome and milestones.",
+      "keywords": [
+        "project brief",
+        "milestone",
+        "renovation project",
+        "project scope"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected project and milestone.",
+      "exclude": [
+        "Duplicating task bodies inside milestone lists."
+      ],
+      "paths": [
+        {
+          "path": "project",
+          "schemaUri": "https://enbox.id/modules/personal-projects/v1/schemas/project",
+          "utterance": "Start a kitchen renovation project and track the budget.",
+          "distinguish": "A single next action goes to Tasks."
+        },
+        {
+          "path": "project/milestone",
+          "schemaUri": "https://enbox.id/modules/personal-projects/v1/schemas/milestone",
+          "utterance": "Add cabinet installation as a milestone in the kitchen project.",
+          "distinguish": "Resolve the existing project and link any dependent tasks.",
+          "parent": {
+            "module": "https://enbox.id/modules/personal-projects/v1",
+            "path": "project"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pet-care",
+      "module": "https://enbox.id/modules/pet-care/v1",
+      "label": "Pet Care",
+      "category": "Home and belongings",
+      "summary": "An individual animal, its care observations and reported veterinary visits.",
+      "keywords": [
+        "my dog",
+        "my cat",
+        "vet visit",
+        "pet care"
+      ],
+      "sensitive": true,
+      "identity": "Match the animal identity and care/visit occurrence.",
+      "exclude": [
+        "A planned care reminder as performed care or inferred veterinary advice."
+      ],
+      "paths": [
+        {
+          "path": "pet",
+          "schemaUri": "https://enbox.id/modules/pet-care/v1/schemas/pet",
+          "utterance": "Save my cat’s microchip information.",
+          "distinguish": "Resolve the particular animal and preserve the supplied ID."
+        },
+        {
+          "path": "pet/care",
+          "schemaUri": "https://enbox.id/modules/pet-care/v1/schemas/care",
+          "utterance": "Log feeding Miso this evening.",
+          "distinguish": "Select the pet and distinguish performed care from a reminder.",
+          "parent": {
+            "module": "https://enbox.id/modules/pet-care/v1",
+            "path": "pet"
+          }
+        },
+        {
+          "path": "pet/vetRecord",
+          "schemaUri": "https://enbox.id/modules/pet-care/v1/schemas/vet-record",
+          "utterance": "Record Miso’s visit to the vet this morning.",
+          "distinguish": "Select the animal and record only observations or instructions as supplied.",
+          "parent": {
+            "module": "https://enbox.id/modules/pet-care/v1",
+            "path": "pet"
+          }
+        }
+      ]
+    },
+    {
+      "id": "places",
+      "module": "https://enbox.id/modules/places/v1",
+      "label": "Places",
+      "category": "Travel and outdoors",
+      "summary": "A physical place the user wants to remember by name, address or coordinates.",
+      "keywords": [
+        "saved place",
+        "street address",
+        "coordinates",
+        "favorite cafe"
+      ],
+      "sensitive": false,
+      "identity": "Match coordinates, address or a qualified external place identifier.",
+      "exclude": [
+        "A planned visit as proof of being at a place."
+      ],
+      "paths": [
+        {
+          "path": "place",
+          "schemaUri": "https://enbox.id/modules/places/v1/schemas/place",
+          "utterance": "Remember that Little Fern Café is on Maple Street.",
+          "distinguish": "A request for nearby cafés alone supplies no saved place. An actual booking goes to Reservations."
+        }
+      ],
+      "interchange": {
+        "format": "GeoJSON Point Feature",
+        "specification": "https://www.rfc-editor.org/rfc/rfc7946.html",
+        "scope": "One named Point in longitude, latitude, optional altitude order. Unsupported feature metadata is reported on import."
+      }
+    },
+    {
+      "id": "plants",
+      "module": "https://enbox.id/modules/plants/v1",
+      "label": "Plants",
+      "category": "Home and belongings",
+      "summary": "An individual plant and its observed care history.",
+      "keywords": [
+        "houseplant",
+        "watering log",
+        "repotted"
+      ],
+      "sensitive": false,
+      "identity": "Match the individual plant, not only its species.",
+      "exclude": [
+        "A care schedule as evidence that watering happened."
+      ],
+      "paths": [
+        {
+          "path": "plant",
+          "schemaUri": "https://enbox.id/modules/plants/v1/schemas/plant",
+          "utterance": "Track the new monstera on my windowsill.",
+          "distinguish": "Match the individual plant and location; the species alone is ambiguous."
+        },
+        {
+          "path": "plant/care",
+          "schemaUri": "https://enbox.id/modules/plants/v1/schemas/care",
+          "utterance": "I repotted the windowsill monstera today.",
+          "distinguish": "A care log records work performed. A future reminder belongs to Tasks.",
+          "parent": {
+            "module": "https://enbox.id/modules/plants/v1",
+            "path": "plant"
+          }
+        }
+      ]
+    },
+    {
+      "id": "preferences",
+      "module": "https://identity.foundation/modules/preferences",
+      "label": "Preferences",
+      "category": "Identity and digital life",
+      "summary": "Explicit food, travel, communication and accessibility preferences.",
+      "keywords": [
+        "i prefer",
+        "aisle seat",
+        "vegetarian",
+        "quiet hours",
+        "captions"
+      ],
+      "sensitive": true,
+      "identity": "Match the setting path and required channel discriminator where present.",
+      "exclude": [
+        "Treating another record's descriptive data as a user preference."
+      ],
+      "paths": [
+        {
+          "path": "food",
+          "schemaUri": "https://enbox.id/modules/preferences/v1/schemas/food",
+          "utterance": "I prefer vegetarian meals.",
+          "distinguish": "An allergy is a health assertion and eating a meal is an observation."
+        },
+        {
+          "path": "travel",
+          "schemaUri": "https://enbox.id/modules/preferences/v1/schemas/travel",
+          "utterance": "I prefer an aisle seat.",
+          "distinguish": "A seat assigned on a particular flight is booking information."
+        },
+        {
+          "path": "communication",
+          "schemaUri": "https://enbox.id/modules/preferences/v1/schemas/communication",
+          "utterance": "I prefer email for updates.",
+          "distinguish": "An email address for reaching someone belongs to Contacts."
+        },
+        {
+          "path": "accessibility",
+          "schemaUri": "https://enbox.id/modules/preferences/v1/schemas/accessibility",
+          "utterance": "Please remember that I prefer captions.",
+          "distinguish": "Store the stated setting without inferring a medical condition."
+        }
+      ]
+    },
+    {
+      "id": "profile",
+      "module": "https://identity.foundation/modules/profile",
+      "label": "Profiles",
+      "category": "Identity and digital life",
+      "summary": "Self-published identity profile, images and external links.",
+      "keywords": [
+        "publish profile",
+        "update public bio",
+        "public avatar"
+      ],
+      "sensitive": true,
+      "identity": "Match the owner's self-published profile and selected profile links.",
+      "exclude": [
+        "Private contact-book annotations about other people."
+      ],
+      "paths": [],
+      "workflow": "Open profile editing and confirm what will be public. An address-book entry for another person belongs in Contacts."
+    },
+    {
+      "id": "purchases",
+      "module": "https://enbox.id/modules/purchases/v1",
+      "label": "Purchases",
+      "category": "Food and shopping",
+      "summary": "An actual order, its fulfilment, items or returns.",
+      "keywords": [
+        "order number",
+        "my order",
+        "shipped",
+        "return window",
+        "delivery tracking"
+      ],
+      "sensitive": true,
+      "identity": "Match merchant and order identifier, preserving item and return identities.",
+      "exclude": [
+        "A saved wishlist item as a completed order or a receipt as a second purchase."
+      ],
+      "paths": [
+        {
+          "path": "purchase",
+          "schemaUri": "https://enbox.id/modules/purchases/v1/schemas/purchase",
+          "utterance": "My new headphones shipped under order A123.",
+          "distinguish": "Use Receipts for merchant-issued evidence and Transactions for a posted payment."
+        }
+      ]
+    },
+    {
+      "id": "receipts",
+      "module": "https://enbox.id/modules/receipts/v1",
+      "label": "Receipts",
+      "category": "Money and investing",
+      "summary": "Merchant receipts and their line items as evidence of a sale.",
+      "keywords": [
+        "receipt",
+        "sales slip",
+        "subtotal",
+        "receipt number"
+      ],
+      "sensitive": true,
+      "identity": "Match merchant receipt identifier and source document, not only total/date.",
+      "exclude": [
+        "Treating OCR output as reviewed evidence or duplicating the linked purchase."
+      ],
+      "paths": [
+        {
+          "path": "receipt",
+          "schemaUri": "https://enbox.id/modules/receipts/v1/schemas/receipt",
+          "utterance": "File this grocery receipt. The total was 18.40 USD.",
+          "distinguish": "Keep the merchant and currency as supplied. A receipt alone does not establish a particular posted account transaction."
+        },
+        {
+          "path": "receipt/item",
+          "schemaUri": "https://enbox.id/modules/receipts/v1/schemas/item",
+          "utterance": "This line on my grocery receipt is 2.75 USD for apples.",
+          "distinguish": "Select the source receipt. Do not turn its items into a new shopping list.",
+          "parent": {
+            "module": "https://enbox.id/modules/receipts/v1",
+            "path": "receipt"
+          }
+        }
+      ]
+    },
+    {
+      "id": "recipes",
+      "module": "https://enbox.id/modules/recipes/v1",
+      "label": "Recipes",
+      "category": "Food and shopping",
+      "summary": "A recipe with supplied ingredients and instructions.",
+      "keywords": [
+        "my recipe",
+        "ingredients",
+        "method",
+        "directions",
+        "cook time"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected recipe or source identity and the intended variation.",
+      "exclude": [
+        "A meal plan or consumption log as a new recipe."
+      ],
+      "paths": [
+        {
+          "path": "recipe",
+          "schemaUri": "https://enbox.id/modules/recipes/v1/schemas/recipe",
+          "utterance": "Save my porridge recipe: simmer oats and milk for five minutes.",
+          "distinguish": "A request for recipe ideas expresses no personal recipe. Store a URL alone as a bookmark."
+        }
+      ],
+      "interchange": {
+        "format": "Schema.org Recipe (JSON-LD)",
+        "specification": "https://schema.org/Recipe",
+        "scope": "Ingredient lines retain text and recipeInstructions map to ordered steps."
+      }
+    },
+    {
+      "id": "relationships",
+      "module": "https://enbox.id/modules/relationships/v1",
+      "label": "Relationships",
+      "category": "People and personal life",
+      "summary": "Explicit follow, connection and restriction decisions for a specific peer or resource.",
+      "keywords": [
+        "follow DID",
+        "block peer",
+        "connection request"
+      ],
+      "sensitive": true,
+      "identity": "Match the peer DID or explicit target and relationship kind.",
+      "exclude": [
+        "Granting record access because someone is a contact, follower or connection."
+      ],
+      "paths": [],
+      "workflow": "Use the selected relationship action after the user chooses the peer and direction. Contact details belong in Contacts. DWN membership and grants are managed separately."
+    },
+    {
+      "id": "reservations",
+      "module": "https://enbox.id/modules/reservations/v1",
+      "label": "Reservations",
+      "category": "Travel and outdoors",
+      "summary": "Booking status, confirmation and cancellation details from a travel or restaurant provider.",
+      "keywords": [
+        "booking confirmation",
+        "hotel reservation",
+        "flight confirmation",
+        "reservation number"
+      ],
+      "sensitive": true,
+      "identity": "Match provider and confirmation identifier within the correct traveller context.",
+      "exclude": [
+        "A tentative trip idea as a confirmed booking."
+      ],
+      "paths": [
+        {
+          "path": "reservation",
+          "schemaUri": "https://enbox.id/modules/reservations/v1/schemas/reservation",
+          "utterance": "My hotel confirmed my Lisbon booking under reference ABC123.",
+          "distinguish": "A suggestion to visit Lisbon establishes no booking. Preserve the provider confirmation."
+        }
+      ]
+    },
+    {
+      "id": "routes",
+      "module": "https://enbox.id/modules/routes/v1",
+      "label": "Routes",
+      "category": "Travel and outdoors",
+      "summary": "Planned paths and waypoints, and separate recorded tracks.",
+      "keywords": [
+        "route waypoint",
+        "GPS track",
+        "planned route"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected route and distinct recorded track occurrence.",
+      "exclude": [
+        "A planned route as an actual journey or workout."
+      ],
+      "paths": [
+        {
+          "path": "route",
+          "schemaUri": "https://enbox.id/modules/routes/v1/schemas/route",
+          "utterance": "Save my walking route along the river.",
+          "distinguish": "A named route describes a path; a single destination belongs to Places."
+        },
+        {
+          "path": "route/waypoint",
+          "schemaUri": "https://enbox.id/modules/routes/v1/schemas/waypoint",
+          "utterance": "Add the riverside gate as a waypoint.",
+          "distinguish": "Select the route and link the place when known.",
+          "parent": {
+            "module": "https://enbox.id/modules/routes/v1",
+            "path": "route"
+          }
+        },
+        {
+          "path": "route/track",
+          "schemaUri": "https://enbox.id/modules/routes/v1/schemas/track",
+          "utterance": "Save the actual track I recorded on that route.",
+          "distinguish": "Use recorded positions or source geometry. Link a workout when the user also logged exercise.",
+          "parent": {
+            "module": "https://enbox.id/modules/routes/v1",
+            "path": "route"
+          }
+        }
+      ]
+    },
+    {
+      "id": "shared-expenses",
+      "module": "https://enbox.id/modules/shared-expenses/v1",
+      "label": "Shared Expenses",
+      "category": "Money and investing",
+      "summary": "Participant shares, payer claims and settlements for a particular group.",
+      "keywords": [
+        "split dinner",
+        "group expense",
+        "settle up",
+        "split the bill"
+      ],
+      "sensitive": true,
+      "identity": "Match the group and original expense/settlement evidence.",
+      "exclude": [
+        "Treating another participant's payer field as their signature or a proposed settlement as paid."
+      ],
+      "paths": [
+        {
+          "path": "group",
+          "schemaUri": "https://enbox.id/modules/shared-expenses/v1/schemas/group",
+          "utterance": "Set up a shared expenses group for our trip.",
+          "distinguish": "Confirm the participant roster. A trip itinerary does not imply permission to share financial records."
+        },
+        {
+          "path": "group/expense",
+          "schemaUri": "https://enbox.id/modules/shared-expenses/v1/schemas/expense",
+          "utterance": "Split this dinner bill with my travel group.",
+          "distinguish": "Resolve the group, payer, currency and intended shares. Link the receipt separately.",
+          "parent": {
+            "module": "https://enbox.id/modules/shared-expenses/v1",
+            "path": "group"
+          }
+        },
+        {
+          "path": "group/settlement",
+          "schemaUri": "https://enbox.id/modules/shared-expenses/v1/schemas/settlement",
+          "utterance": "Record that Sam paid me their share today.",
+          "distinguish": "Select group and parties. A proposed transfer is not evidence of a completed settlement.",
+          "parent": {
+            "module": "https://enbox.id/modules/shared-expenses/v1",
+            "path": "group"
+          }
+        }
+      ]
+    },
+    {
+      "id": "shopping-wishlists",
+      "module": "https://enbox.id/modules/shopping-wishlists/v1",
+      "label": "Shopping Wishlists",
+      "category": "Food and shopping",
+      "summary": "Specific products the user wants to consider purchasing.",
+      "keywords": [
+        "wishlist",
+        "wish list",
+        "want to buy",
+        "target price"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected list and product variant/source.",
+      "exclude": [
+        "An expression of interest as a completed purchase or current inventory."
+      ],
+      "paths": [
+        {
+          "path": "list/item",
+          "schemaUri": "https://enbox.id/modules/shopping-wishlists/v1/schemas/item",
+          "utterance": "Put the blue headphones on my birthday wishlist.",
+          "distinguish": "Shopping interest establishes neither ownership nor a completed purchase. Keep private gifting intent in Gifts.",
+          "parent": {
+            "module": "https://enbox.id/modules/shopping-wishlists/v1",
+            "path": "list"
+          }
+        }
+      ]
+    },
+    {
+      "id": "sleep",
+      "module": "https://enbox.id/modules/sleep/v1",
+      "label": "Sleep",
+      "category": "Health and fitness",
+      "summary": "Reported or measured sleep intervals, duration and quality.",
+      "keywords": [
+        "sleep log",
+        "fell asleep",
+        "woke up",
+        "slept from"
+      ],
+      "sensitive": true,
+      "identity": "Match the observed sleep interval and source.",
+      "exclude": [
+        "A bedtime goal as an observed sleep session."
+      ],
+      "paths": [
+        {
+          "path": "session",
+          "schemaUri": "https://enbox.id/modules/sleep/v1/schemas/session",
+          "utterance": "Log last night’s sleep from 11 PM to 7 AM.",
+          "distinguish": "Resolve dates across midnight. A bedtime goal or alarm is distinct from an observed interval."
+        }
+      ]
+    },
+    {
+      "id": "stock-watchlists",
+      "module": "https://enbox.id/modules/stock-watchlists/v1",
+      "label": "Stock Watchlists",
+      "category": "Money and investing",
+      "summary": "User-directed research interest in named securities or ticker symbols.",
+      "keywords": [
+        "watchlist",
+        "track these stocks",
+        "stock ticker",
+        "follow this stock"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected watchlist and qualified instrument identifiers; names alone can be ambiguous.",
+      "exclude": [
+        "Interpreting interest or a target price as owned shares."
+      ],
+      "paths": [
+        {
+          "path": "watchlist/instrument",
+          "schemaUri": "https://enbox.id/modules/stock-watchlists/v1/schemas/instrument",
+          "utterance": "Keep track of XYZ, GOOG, KDP, TGT, NFLX and NVDA for me.",
+          "distinguish": "Use one entry per instrument in the selected watchlist. Never infer shares or cost basis.",
+          "parent": {
+            "module": "https://enbox.id/modules/stock-watchlists/v1",
+            "path": "watchlist"
+          }
+        },
+        {
+          "path": "watchlist",
+          "schemaUri": "https://enbox.id/modules/stock-watchlists/v1/schemas/watchlist",
+          "utterance": "Create a watchlist named Dividend research.",
+          "distinguish": "A new list needs a user-selected identity. A market briefing is generated output."
+        }
+      ]
+    },
+    {
+      "id": "subscriptions",
+      "module": "https://enbox.id/modules/subscriptions/v1",
+      "label": "Subscriptions",
+      "category": "Money and investing",
+      "summary": "Recurring service terms, trial periods, prices and renewal dates.",
+      "keywords": [
+        "subscription",
+        "renews",
+        "trial ends",
+        "billing cycle"
+      ],
+      "sensitive": true,
+      "identity": "Match service/account and subscription instance or plan period.",
+      "exclude": [
+        "A recurring charge as proof of current subscription terms."
+      ],
+      "paths": [
+        {
+          "path": "subscription",
+          "schemaUri": "https://enbox.id/modules/subscriptions/v1/schemas/subscription",
+          "utterance": "My music subscription renews on January 3 for 10 USD.",
+          "distinguish": "A recurring service contract does not establish a posted charge."
+        }
+      ]
+    },
+    {
+      "id": "symptoms",
+      "module": "https://enbox.id/modules/symptoms/v1",
+      "label": "Symptoms",
+      "category": "Health and fitness",
+      "summary": "User-reported symptom episodes with onset, severity and context.",
+      "keywords": [
+        "symptom log",
+        "headache started",
+        "pain episode"
+      ],
+      "sensitive": true,
+      "identity": "Match the reported symptom episode and observation interval.",
+      "exclude": [
+        "An inferred diagnosis or an unreported symptom."
+      ],
+      "paths": [
+        {
+          "path": "episode",
+          "schemaUri": "https://enbox.id/modules/symptoms/v1/schemas/episode",
+          "utterance": "Log a headache that started this morning.",
+          "distinguish": "Record the reported experience and its timing. A diagnosis requires the user’s explicit assertion and belongs in Health Profile."
+        }
+      ]
+    },
+    {
+      "id": "tasks",
+      "module": "https://enbox.id/modules/tasks/v1",
+      "label": "Tasks",
+      "category": "General personal records",
+      "summary": "An action the user intends to complete, including a deadline or reminder.",
+      "keywords": [
+        "remind me",
+        "to-do",
+        "checklist",
+        "action item",
+        "deadline"
+      ],
+      "sensitive": false,
+      "identity": "Match the selected task record, project and intended action.",
+      "exclude": [
+        "A calendar appointment or habit check-in as the same task fact."
+      ],
+      "paths": [
+        {
+          "path": "task",
+          "schemaUri": "https://enbox.id/modules/tasks/v1/schemas/task",
+          "utterance": "Remind me to send Jules the photos by Friday.",
+          "distinguish": "Use Events for a scheduled occurrence. Resolve relative dates in the user’s timezone before preparing the record."
+        },
+        {
+          "path": "state",
+          "schemaUri": "https://enbox.id/modules/tasks/v1/schemas/state",
+          "utterance": "Remind me an hour before the deadline on my existing passport renewal task.",
+          "distinguish": "Resolve the existing task record ID and store the alert in the user’s private state. A client schedules delivery."
+        },
+        {
+          "path": "space/task",
+          "schemaUri": "https://enbox.id/modules/tasks/v1/schemas/task",
+          "utterance": "Add a task to our household space to water the plants.",
+          "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match.",
+          "parent": {
+            "module": "https://enbox.id/modules/collaboration/v1",
+            "path": "space"
+          }
+        }
+      ]
+    },
+    {
+      "id": "time-entries",
+      "module": "https://enbox.id/modules/time-entries/v1",
+      "label": "Time Entries",
+      "category": "General personal records",
+      "summary": "Time actually spent on an activity, optionally linked to an existing project or task.",
+      "keywords": [
+        "time log",
+        "hours worked",
+        "track time"
+      ],
+      "sensitive": true,
+      "identity": "Match the actual activity interval and source timer/import identifier.",
+      "exclude": [
+        "Planned task duration as time already spent."
+      ],
+      "paths": [
+        {
+          "path": "entry",
+          "schemaUri": "https://enbox.id/modules/time-entries/v1/schemas/entry",
+          "utterance": "I spent 45 minutes working on the bathroom renovation today.",
+          "distinguish": "Store the observed time and link the project. A planned duration or a calendar slot alone is not elapsed work."
+        }
+      ]
+    },
+    {
+      "id": "transactions",
+      "module": "https://enbox.id/modules/transactions/v1",
+      "label": "Transactions",
+      "category": "Money and investing",
+      "summary": "Actual ledger movements on a specified financial account.",
+      "keywords": [
+        "posted debit",
+        "credited",
+        "bank statement",
+        "ledger transaction"
+      ],
+      "sensitive": true,
+      "identity": "Match the Financial Accounts parent and imported transaction identifier or selected ledger entry.",
+      "exclude": [
+        "A bill, budget target, wishlist interest or position snapshot as a completed movement of money."
+      ],
+      "paths": [
+        {
+          "path": "account/transaction",
+          "schemaUri": "https://enbox.id/modules/transactions/v1/schemas/transaction",
+          "utterance": "My checking account shows a 42 USD debit from the bike shop.",
+          "distinguish": "Use the selected account and original transaction evidence. A spending target or quote is not a posted charge.",
+          "parent": {
+            "module": "https://enbox.id/modules/financial-accounts/v1",
+            "path": "account"
+          }
+        }
+      ]
+    },
+    {
+      "id": "trips",
+      "module": "https://enbox.id/modules/trips/v1",
+      "label": "Trips",
+      "category": "Travel and outdoors",
+      "summary": "A trip the user is planning and its itinerary.",
+      "keywords": [
+        "itinerary",
+        "my trip",
+        "trip planning"
+      ],
+      "sensitive": true,
+      "identity": "Match the selected trip and itinerary item purpose.",
+      "exclude": [
+        "Copying private reservations or identity documents into the trip audience automatically."
+      ],
+      "paths": [
+        {
+          "path": "trip",
+          "schemaUri": "https://enbox.id/modules/trips/v1/schemas/trip",
+          "utterance": "Start planning my trip to Lisbon.",
+          "distinguish": "A service booking with a confirmation number goes to Reservations."
+        },
+        {
+          "path": "trip/item",
+          "schemaUri": "https://enbox.id/modules/trips/v1/schemas/item",
+          "utterance": "Add a visit to the tile museum to my Lisbon itinerary.",
+          "distinguish": "Link existing places, bookings and calendar events only when relevant.",
+          "parent": {
+            "module": "https://enbox.id/modules/trips/v1",
+            "path": "trip"
+          }
+        }
+      ]
+    },
+    {
+      "id": "utilities",
+      "module": "https://enbox.id/modules/utilities/v1",
+      "label": "Utilities",
+      "category": "Home and belongings",
+      "summary": "Household service accounts, physical meters and actual meter readings.",
+      "keywords": [
+        "meter reading",
+        "electric meter",
+        "utility service",
+        "water meter"
+      ],
+      "sensitive": true,
+      "identity": "Match the provider service account and physical meter identifier.",
+      "exclude": [
+        "A utility-service account as the same entity as a financial account."
+      ],
+      "paths": [
+        {
+          "path": "account",
+          "schemaUri": "https://enbox.id/modules/utilities/v1/schemas/account",
+          "utterance": "Record my water service account for the new apartment.",
+          "distinguish": "Resolve the service and residence. Financial Accounts holds banking or brokerage account identities."
+        },
+        {
+          "path": "account/meter/reading",
+          "schemaUri": "https://enbox.id/modules/utilities/v1/schemas/reading",
+          "utterance": "My water meter read 18,402 litres today.",
+          "distinguish": "Select the meter. The amount billed goes in Bills only from separate billing evidence.",
+          "parent": {
+            "module": "https://enbox.id/modules/utilities/v1",
+            "path": "account/meter"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vehicles",
+      "module": "https://enbox.id/modules/vehicles/v1",
+      "label": "Vehicles",
+      "category": "Home and belongings",
+      "summary": "Vehicle-specific identifiers, registration issuances and actual mileage on an existing asset.",
+      "keywords": [
+        "vehicle registration",
+        "license plate",
+        "licence plate",
+        "odometer",
+        "vin"
+      ],
+      "sensitive": true,
+      "identity": "Resolve the Belongings item and vehicle. Match a registration by issuing jurisdiction, plate or registration number, and issuance period. Plate numbers can recur.",
+      "exclude": [
+        "Duplicating manufacturer/model/ownership facts or treating a planned trip as odometer history."
+      ],
+      "paths": [
+        {
+          "path": "item/vehicle",
+          "schemaUri": "https://enbox.id/modules/vehicles/v1/schemas/vehicle",
+          "utterance": "Record the VIN for my car.",
+          "distinguish": "Use the existing Belongings item for the car’s manufacturer and model.",
+          "parent": {
+            "module": "https://enbox.id/modules/belongings/v1",
+            "path": "item"
+          }
+        },
+        {
+          "path": "item/vehicle/registration",
+          "schemaUri": "https://enbox.id/modules/vehicles/v1/schemas/registration",
+          "utterance": "Save the plate and expiration date from my car registration.",
+          "distinguish": "A vehicle registration identifies a vehicle and its issuing jurisdiction. A driver’s licence identifies a person.",
+          "parent": {
+            "module": "https://enbox.id/modules/vehicles/v1",
+            "path": "item/vehicle"
+          }
+        },
+        {
+          "path": "item/vehicle/odometer",
+          "schemaUri": "https://enbox.id/modules/vehicles/v1/schemas/odometer",
+          "utterance": "My odometer read 31,000 km this morning.",
+          "distinguish": "An intended trip distance does not establish an odometer reading.",
+          "parent": {
+            "module": "https://enbox.id/modules/vehicles/v1",
+            "path": "item/vehicle"
+          }
+        }
+      ]
+    },
+    {
+      "id": "warranties",
+      "module": "https://enbox.id/modules/warranties/v1",
+      "label": "Warranties",
+      "category": "Home and belongings",
+      "summary": "Coverage from a manufacturer or retailer and claims for a selected owned item.",
+      "keywords": [
+        "manufacturer warranty",
+        "warranty claim",
+        "coverage period"
+      ],
+      "sensitive": true,
+      "identity": "Resolve the Belongings item and warranty provider/policy period.",
+      "exclude": [
+        "A general insurance policy or an unverified claim outcome."
+      ],
+      "paths": [
+        {
+          "path": "item/warranty",
+          "schemaUri": "https://enbox.id/modules/warranties/v1/schemas/warranty",
+          "utterance": "My washing machine has a two-year manufacturer warranty.",
+          "distinguish": "Resolve its existing Belongings item and coverage terms. Separately purchased insurance stays in Insurance.",
+          "parent": {
+            "module": "https://enbox.id/modules/belongings/v1",
+            "path": "item"
+          }
+        },
+        {
+          "path": "item/warranty/claim",
+          "schemaUri": "https://enbox.id/modules/warranties/v1/schemas/claim",
+          "utterance": "Record the warranty claim I filed for that washing machine.",
+          "distinguish": "A fault report alone does not establish a claim or a completed repair.",
+          "parent": {
+            "module": "https://enbox.id/modules/warranties/v1",
+            "path": "item/warranty"
+          }
+        }
+      ]
+    },
+    {
+      "id": "workouts",
+      "module": "https://enbox.id/modules/workouts/v1",
+      "label": "Workouts",
+      "category": "Health and fitness",
+      "summary": "Exercise actually performed and explicitly created training routines.",
+      "keywords": [
+        "i ran",
+        "my workout",
+        "training routine",
+        "finished a run"
+      ],
+      "sensitive": true,
+      "identity": "Match the actual workout occurrence and selected routine.",
+      "exclude": [
+        "A routine or scheduled exercise as completed activity."
+      ],
+      "paths": [
+        {
+          "path": "workout",
+          "schemaUri": "https://enbox.id/modules/workouts/v1/schemas/workout",
+          "utterance": "I finished a 5 km run this morning.",
+          "distinguish": "A training goal and an intended workout do not establish a session."
+        },
+        {
+          "path": "routine",
+          "schemaUri": "https://enbox.id/modules/workouts/v1/schemas/routine",
+          "utterance": "Save this three-exercise routine for my next gym session.",
+          "distinguish": "A reusable routine is distinct from an observed workout."
+        }
+      ]
+    }
+  ]
+}

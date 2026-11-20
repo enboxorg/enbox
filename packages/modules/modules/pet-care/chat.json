@@ -1,0 +1,29 @@
+{
+  "summary": "An individual animal, its care observations and reported veterinary visits.",
+  "targets": [
+    {
+      "path": "pet",
+      "utterance": "Save my cat’s microchip information.",
+      "distinguish": "Resolve the particular animal and preserve the supplied ID."
+    },
+    {
+      "path": "pet/care",
+      "utterance": "Log feeding Miso this evening.",
+      "distinguish": "Select the pet and distinguish performed care from a reminder."
+    },
+    {
+      "path": "pet/vetRecord",
+      "utterance": "Record Miso’s visit to the vet this morning.",
+      "distinguish": "Select the animal and record only observations or instructions as supplied."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "my dog",
+      "my cat",
+      "vet visit",
+      "pet care"
+    ],
+    "sensitive": true
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/shared-expenses/v1/schemas/expense",
+  "title": "ExpenseData",
+  "description": "Shared Expenses: expense record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "amount": {
+      "$ref": "#/definitions/expenseMoney"
+    },
+    "paidBy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "shares": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "participantId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "amount": {
+            "$ref": "#/definitions/expenseMoney"
+          }
+        },
+        "required": [
+          "participantId",
+          "amount"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "receipt": {
+      "$ref": "#/definitions/expenseRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/expenseSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "description",
+    "amount",
+    "paidBy",
+    "shares"
+  ],
+  "examples": [
+    {
+      "description": "Dinner",
+      "amount": {
+        "amount": "60",
+        "currency": "GBP"
+      },
+      "paidBy": "alex",
+      "shares": [
+        {
+          "participantId": "alex",
+          "amount": {
+            "amount": "30",
+            "currency": "GBP"
+          }
+        },
+        {
+          "participantId": "sam",
+          "amount": {
+            "amount": "30",
+            "currency": "GBP"
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "expenseMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "expenseRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "expenseSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/warranties/v1/schemas/claim",
+  "title": "ClaimData",
+  "description": "Warranties: claim record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "openedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "issue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "opened",
+        "submitted",
+        "accepted",
+        "rejected",
+        "resolved",
+        "cancelled"
+      ]
+    },
+    "resolution": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "resolvedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/claimRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/claimSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "issue",
+    "state"
+  ],
+  "examples": [
+    {
+      "issue": "Motor stopped working",
+      "state": "opened"
+    }
+  ],
+  "definitions": {
+    "claimRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "claimSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

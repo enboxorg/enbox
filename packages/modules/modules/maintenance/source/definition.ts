@@ -1,0 +1,57 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/maintenance/v1',
+  published : true,
+  uses      : {
+    belongings: 'https://enbox.id/modules/belongings/v1',
+  },
+  types: {
+    plan: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/maintenance/v1/schemas/plan',
+    },
+    service: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/maintenance/v1/schemas/service',
+    },
+  },
+  structure: {
+    item: {
+      $ref : 'belongings:item',
+      plan : {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'belongings:item/editor',
+            can  : ['create', 'read', 'co-update', 'co-delete'],
+          },
+          {
+            role : 'belongings:item/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+      service: {
+        $size: {
+          max: 1048576,
+        },
+        $immutable : true,
+        $actions   : [
+          {
+            role : 'belongings:item/editor',
+            can  : ['create', 'read', 'delete'],
+          },
+          {
+            role : 'belongings:item/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

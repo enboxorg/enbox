@@ -1,0 +1,76 @@
+{
+  "id": "budgets",
+  "name": "Budgets",
+  "category": "Money and investing",
+  "description": "Period-based spending plans, category allocations, and planned limits.",
+  "moduleUri": "https://enbox.id/modules/budgets/v1",
+  "exportName": "BudgetsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Keep my dining-out budget at \u00a3150 this month."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "budget",
+      "type": "budget",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/budgets/v1/schemas/budget",
+      "schemaFile": "schemas/budget.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "budget/allocation",
+      "type": "allocation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/budgets/v1/schemas/allocation",
+      "schemaFile": "schemas/allocation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "budget/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/budgets/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "budget/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/budgets/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected budget period and currency.",
+    "exclude": [
+      "Recorded spending that belongs in Transactions."
+    ],
+    "workflow": "Maintain planned limits; reconcile actual spending from linked accounts and ledger records."
+  }
+}

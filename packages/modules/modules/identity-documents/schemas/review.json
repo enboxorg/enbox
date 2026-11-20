@@ -1,0 +1,479 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/review",
+  "title": "ReviewData",
+  "description": "Immutable review of an issuance or its extraction. A corrected decision can revise the classification, fields, or both.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "corrected",
+        "rejected"
+      ]
+    },
+    "extraction": {
+      "$ref": "#/definitions/reviewRecordReference"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "#/definitions/reviewNoteText"
+    },
+    "source": {
+      "$ref": "#/definitions/reviewSource"
+    },
+    "labels": {
+      "$ref": "#/definitions/reviewLabels"
+    },
+    "documentType": {
+      "type": "string",
+      "enum": [
+        "passport",
+        "national-id",
+        "state-id",
+        "drivers-licence",
+        "other",
+        "unknown"
+      ],
+      "description": "Kind of the physical or digital identity document. Use unknown until the evidence identifies a kind."
+    },
+    "corrections": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "holder": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "fullName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "givenNames": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "minItems": 1,
+              "maxItems": 20
+            },
+            "familyName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "personalNumber": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "Identifier of the holder as printed. Preserve leading zeros."
+            },
+            "dateOfBirth": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10,
+              "format": "date"
+            },
+            "nationalities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3,
+                "pattern": "^[A-Z]{2,3}$"
+              },
+              "minItems": 1,
+              "maxItems": 10
+            },
+            "address": {
+              "$ref": "#/definitions/reviewAddress"
+            }
+          }
+        },
+        "issuer": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "country": {
+              "type": "string",
+              "pattern": "^[A-Z]{2,3}$",
+              "description": "Use the supplied two- or three-letter country code. Preserve the source evidence for other representations."
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "documentNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Identifier of this document issuance. Store passport, ID card and licence numbers here as strings."
+        },
+        "issueDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "drivingPrivileges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "validFrom": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "validUntil": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 10,
+                "format": "date"
+              },
+              "restrictions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "minItems": 0,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "description": "One item per printed licence class. Preserve jurisdiction-specific designations and restrictions."
+        },
+        "passportTypeCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Document type code as printed on the passport. Omit when absent."
+        }
+      }
+    }
+  },
+  "required": [
+    "reviewedAt",
+    "decision"
+  ],
+  "examples": [
+    {
+      "reviewedAt": "2026-01-15T12:05:00Z",
+      "extraction": {
+        "recordId": "example-extraction"
+      },
+      "decision": "corrected",
+      "corrections": {
+        "documentNumber": "000DEMO123"
+      },
+      "reason": "Compared the document number with the scan."
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "corrected"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "corrections"
+            ]
+          },
+          {
+            "required": [
+              "documentType"
+            ]
+          }
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "corrections"
+              ]
+            },
+            {
+              "required": [
+                "documentType"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "corrections"
+        ],
+        "properties": {
+          "corrections": {
+            "type": "object",
+            "required": [
+              "drivingPrivileges"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "documentType"
+        ],
+        "properties": {
+          "documentType": {
+            "const": "drivers-licence"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "corrections"
+        ],
+        "properties": {
+          "corrections": {
+            "type": "object",
+            "required": [
+              "passportTypeCode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "documentType"
+        ],
+        "properties": {
+          "documentType": {
+            "const": "passport"
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "reviewRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "reviewSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/reviewRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "reviewNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "reviewLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "reviewAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formatted": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "street": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "locality": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "postalCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "countryCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "required": [],
+      "minProperties": 1
+    }
+  }
+}

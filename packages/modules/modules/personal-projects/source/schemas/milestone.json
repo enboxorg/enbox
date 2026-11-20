@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/personal-projects/v1/schemas/milestone",
+  "title": "MilestoneData",
+  "description": "Personal Projects: milestone record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "dueOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "completedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "active",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/milestoneRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "sortOrder": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/milestoneSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "examples": [
+    {
+      "name": "Replace worn parts",
+      "state": "planned"
+    }
+  ],
+  "definitions": {
+    "milestoneRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "milestoneSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

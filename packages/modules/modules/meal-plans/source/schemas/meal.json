@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/meal-plans/v1/schemas/meal",
+  "title": "MealData",
+  "description": "Meal Plans: meal record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "date": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "slot": {
+      "type": "string",
+      "enum": [
+        "breakfast",
+        "lunch",
+        "dinner",
+        "snack",
+        "other"
+      ]
+    },
+    "servings": {
+      "type": "number",
+      "minimum": 0.01,
+      "maximum": 10000
+    },
+    "recipe": {
+      "$ref": "#/definitions/mealRecordReference"
+    },
+    "eaters": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/mealRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "prepared",
+        "cancelled"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/mealSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "date",
+    "slot"
+  ],
+  "examples": [
+    {
+      "name": "Lentil soup",
+      "date": "2026-01-15",
+      "slot": "dinner",
+      "servings": 2
+    }
+  ],
+  "definitions": {
+    "mealRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "mealSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

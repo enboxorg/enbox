@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/plants/v1/schemas/plant",
+  "title": "PlantData",
+  "description": "Plants: plant record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "species": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "acquiredOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "careInstructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "light": {
+      "type": "string",
+      "enum": [
+        "low",
+        "indirect",
+        "direct",
+        "mixed"
+      ]
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/plantRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "growing",
+        "dormant",
+        "given-away",
+        "dead"
+      ]
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/plantAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/plantSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Monstera",
+      "location": "Living room"
+    }
+  ],
+  "definitions": {
+    "plantAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "plantRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "plantSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "summary": "Trip packing checklists with bags, travellers and packed state.",
+  "targets": [
+    {
+      "path": "list",
+      "utterance": "Start a packing list for our ski trip.",
+      "distinguish": "The itinerary belongs in Trips. A packing list describes items to take."
+    },
+    {
+      "path": "list/item",
+      "utterance": "Put two spare shirts on my carry-on packing list.",
+      "distinguish": "Resolve the list. An item to buy goes in Groceries or Shopping Wishlists based on purchase intent."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "packing list",
+      "carry-on",
+      "pack for trip"
+    ],
+    "sensitive": false
+  }
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "path": "contact",
+    "encoding": "json",
+    "data": {
+      "displayName": "Alex Example"
+    }
+  },
+  {
+    "path": "contact/endpoint",
+    "encoding": "json",
+    "data": {
+      "kind": "email",
+      "value": "alex@example.com"
+    }
+  },
+  {
+    "path": "contact/interaction",
+    "encoding": "json",
+    "data": {
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "kind": "call",
+      "summary": "Discussed the weekend plan."
+    }
+  },
+  {
+    "path": "group",
+    "encoding": "json",
+    "data": {
+      "name": "Family"
+    }
+  },
+  {
+    "path": "group/entry",
+    "encoding": "json",
+    "data": {
+      "contact": {
+        "recordId": "example-record"
+      }
+    }
+  }
+]

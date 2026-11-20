@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/medical-records/v1/schemas/visit",
+  "title": "VisitData",
+  "description": "Medical Records: visit record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "date": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "clinician": {
+      "$ref": "#/definitions/visitRecordReference"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "reportedFindings": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/visitRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "event": {
+      "$ref": "#/definitions/visitRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/visitSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "date",
+    "provider"
+  ],
+  "examples": [
+    {
+      "date": "2026-01-15",
+      "provider": "Example Clinic"
+    }
+  ],
+  "definitions": {
+    "visitRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "visitSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

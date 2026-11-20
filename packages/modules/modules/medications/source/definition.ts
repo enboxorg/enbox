@@ -1,0 +1,41 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/medications/v1',
+  published : true,
+  types     : {
+    medication: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/medications/v1/schemas/medication',
+    },
+    regimen: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/medications/v1/schemas/regimen',
+    },
+    dose: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/medications/v1/schemas/dose',
+    },
+  },
+  structure: {
+    medication: {
+      $size: {
+        max: 1048576,
+      },
+      regimen: {
+        $size: {
+          max: 1048576,
+        },
+      },
+      dose: {
+        $size: {
+          max: 1048576,
+        },
+        $immutable: true,
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

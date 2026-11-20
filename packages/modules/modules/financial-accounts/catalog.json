@@ -1,0 +1,41 @@
+{
+  "id": "financial-accounts",
+  "name": "Financial Accounts",
+  "category": "Money and investing",
+  "description": "Financial account identity shared by ledger and portfolio applications.",
+  "moduleUri": "https://enbox.id/modules/financial-accounts/v1",
+  "exportName": "FinancialAccountsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Keep my brokerage account details."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "account",
+      "type": "account",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "role": false,
+      "immutable": false,
+      "singleton": false,
+      "schema": "https://enbox.id/modules/financial-accounts/v1/schemas/account",
+      "schemaFile": "schemas/account.json"
+    }
+  ],
+  "notes": [
+    "This module owns account identity and metadata. Transactions and Investment Holdings attach their own records; installing either does not require the other.",
+    "A bank or brokerage account is distinct from a utility-service or online-login account."
+  ],
+  "capture": {
+    "identity": "Use the selected account record; institution and lastFour narrow candidates but are not globally unique.",
+    "exclude": [
+      "Utility accounts, login accounts, or a duplicate account created separately for a portfolio."
+    ],
+    "workflow": "Own financial account identity once; attach Transactions and Investment Holdings independently."
+  }
+}

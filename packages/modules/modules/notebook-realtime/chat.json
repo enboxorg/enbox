@@ -1,0 +1,12 @@
+{
+  "summary": "Live editing sessions attached to an existing notebook page.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "collaborate live",
+      "notebook session"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Open live editing for an existing Notebook page. Reuse its membership and generate session keys through the realtime client."
+}

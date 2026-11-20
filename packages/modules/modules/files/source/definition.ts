@@ -1,0 +1,64 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+import { roleDefinition } from '../../../src/authoring/roles.js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/files/v1',
+  published : true,
+  types     : {
+    file: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/files/v1/schemas/file',
+    },
+    content: {
+      dataFormats        : ['application/octet-stream'],
+      encryptionRequired : true,
+    },
+    editor: {
+      schema             : 'https://enbox.id/modules/files/v1/schemas/editor',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+    viewer: {
+      schema             : 'https://enbox.id/modules/files/v1/schemas/viewer',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+  },
+  structure: {
+    file: {
+      $size: {
+        max: 1048576,
+      },
+      $actions: [
+        {
+          role : 'file/editor',
+          can  : ['read', 'co-update'],
+        },
+        {
+          role : 'file/viewer',
+          can  : ['read'],
+        },
+      ],
+      content: {
+        $size: {
+          max: 104857600,
+        },
+        $immutable : true,
+        $actions   : [
+          {
+            role : 'file/editor',
+            can  : ['create', 'read', 'delete'],
+          },
+          {
+            role : 'file/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+      editor : roleDefinition('file/editor'),
+      viewer : roleDefinition('file/viewer'),
+    },
+  },
+} as const satisfies ModuleDefinition;

@@ -1,0 +1,23 @@
+{
+  "summary": "A trip the user is planning and its itinerary.",
+  "targets": [
+    {
+      "path": "trip",
+      "utterance": "Start planning my trip to Lisbon.",
+      "distinguish": "A service booking with a confirmation number goes to Reservations."
+    },
+    {
+      "path": "trip/item",
+      "utterance": "Add a visit to the tile museum to my Lisbon itinerary.",
+      "distinguish": "Link existing places, bookings and calendar events only when relevant."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "itinerary",
+      "my trip",
+      "trip planning"
+    ],
+    "sensitive": true
+  }
+}

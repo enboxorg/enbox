@@ -1,0 +1,28 @@
+{
+  "summary": "Study prompts, answer cards, deck membership and observed review history.",
+  "targets": [
+    {
+      "path": "card",
+      "utterance": "Make a flashcard: capital of Senegal on the front, Dakar on the back.",
+      "distinguish": "Store the supplied prompt and answer. A learning outcome or course schedule belongs to Goals or Learning Plans."
+    },
+    {
+      "path": "deck",
+      "utterance": "Create a deck called West African capitals.",
+      "distinguish": "Use a deck only when the user wants a reusable set of cards."
+    },
+    {
+      "path": "deck/entry",
+      "utterance": "Add that existing Senegal flashcard to my geography deck.",
+      "distinguish": "Resolve the card and the destination deck before saving membership."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "flashcard",
+      "study deck",
+      "spaced repetition"
+    ],
+    "sensitive": false
+  }
+}

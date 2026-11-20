@@ -1,0 +1,28 @@
+[
+  {
+    "path": "account",
+    "encoding": "json",
+    "data": {
+      "provider": "Example Water",
+      "service": "water"
+    }
+  },
+  {
+    "path": "account/meter",
+    "encoding": "json",
+    "data": {
+      "identifier": "WATER-01",
+      "unit": "m3",
+      "kind": "cumulative"
+    }
+  },
+  {
+    "path": "account/meter/reading",
+    "encoding": "json",
+    "data": {
+      "value": "1842",
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "method": "manual"
+    }
+  }
+]

@@ -1,0 +1,73 @@
+[
+  {
+    "path": "document",
+    "encoding": "json",
+    "data": {
+      "label": "Driving licence",
+      "documentType": "drivers-licence",
+      "reviewState": "reviewed",
+      "fields": {
+        "holder": {
+          "fullName": "Alex Example"
+        },
+        "issuer": {
+          "name": "Example licensing authority",
+          "region": "Example region"
+        },
+        "documentNumber": "000DEMO123",
+        "expiryDate": "2031-04-15",
+        "drivingPrivileges": [
+          {
+            "category": "B",
+            "restrictions": [
+              "Corrective lenses"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "recordId": "example-scan"
+        }
+      ]
+    }
+  },
+  {
+    "path": "document/extraction",
+    "encoding": "json",
+    "data": {
+      "sources": [
+        {
+          "recordId": "example-scan"
+        }
+      ],
+      "extractedAt": "2026-01-15T12:00:00Z",
+      "extractor": "demo-import",
+      "state": "partial",
+      "documentType": "drivers-licence",
+      "fields": {
+        "documentNumber": "000DEM0123",
+        "drivingPrivileges": [
+          {
+            "category": "B"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "document/review",
+    "encoding": "json",
+    "data": {
+      "reviewedAt": "2026-01-15T12:05:00Z",
+      "extraction": {
+        "recordId": "example-extraction"
+      },
+      "decision": "corrected",
+      "corrections": {
+        "documentNumber": "000DEMO123"
+      },
+      "reason": "Compared the document number with the scan."
+    }
+  }
+]

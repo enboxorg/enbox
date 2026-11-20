@@ -1,0 +1,19 @@
+{
+  "summary": "Membership, loyalty, transit and admission passes, including validity and issuer.",
+  "targets": [
+    {
+      "path": "pass",
+      "utterance": "Save the membership number and expiry on my library card.",
+      "distinguish": "Ordinary membership evidence goes here. Government-issued personal identification goes in Identity Documents; issuer-signed credentials use the wallet workflow."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "library card",
+      "loyalty pass",
+      "transit pass",
+      "admission"
+    ],
+    "sensitive": true
+  }
+}

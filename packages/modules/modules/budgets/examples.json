@@ -1,0 +1,33 @@
+[
+  {
+    "path": "budget",
+    "encoding": "json",
+    "data": {
+      "name": "January",
+      "startsOn": "2026-01-01",
+      "endsOn": "2026-01-31",
+      "currency": "GBP"
+    }
+  },
+  {
+    "path": "budget/allocation",
+    "encoding": "json",
+    "data": {
+      "category": "dining",
+      "limit": {
+        "amount": "150",
+        "currency": "GBP"
+      }
+    }
+  },
+  {
+    "path": "budget/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "budget/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

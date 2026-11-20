@@ -1,0 +1,24 @@
+{
+  "summary": "An explicitly tracked repeating practice and its actual check-ins.",
+  "targets": [
+    {
+      "path": "habit",
+      "utterance": "I want to track my daily stretching habit.",
+      "distinguish": "One-off actions go to Tasks."
+    },
+    {
+      "path": "habit/checkIn",
+      "utterance": "I did my morning stretching today. Mark my habit complete.",
+      "distinguish": "Resolve the habit and date. Repetition alone is insufficient evidence of completion."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "habit",
+      "streak",
+      "check in",
+      "daily practice"
+    ],
+    "sensitive": false
+  }
+}

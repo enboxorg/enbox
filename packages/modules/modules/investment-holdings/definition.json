@@ -1,0 +1,52 @@
+{
+  "module": "https://enbox.id/modules/investment-holdings/v1",
+  "published": true,
+  "uses": {
+    "accounts": "https://enbox.id/modules/financial-accounts/v1"
+  },
+  "types": {
+    "position": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/position"
+    },
+    "lot": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/lot"
+    },
+    "trade": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/investment-holdings/v1/schemas/trade"
+    }
+  },
+  "structure": {
+    "account": {
+      "$ref": "accounts:account",
+      "position": {
+        "$size": {
+          "max": 1048576
+        },
+        "lot": {
+          "$size": {
+            "max": 1048576
+          },
+          "$immutable": true
+        },
+        "trade": {
+          "$size": {
+            "max": 1048576
+          },
+          "$immutable": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "module": "https://enbox.id/modules/vehicles/v1",
+  "published": true,
+  "uses": {
+    "belongings": "https://enbox.id/modules/belongings/v1"
+  },
+  "types": {
+    "vehicle": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/vehicle"
+    },
+    "registration": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/registration"
+    },
+    "odometer": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/odometer"
+    },
+    "energy": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/vehicles/v1/schemas/energy"
+    }
+  },
+  "structure": {
+    "item": {
+      "$ref": "belongings:item",
+      "vehicle": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "belongings:item/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update"
+            ]
+          },
+          {
+            "role": "belongings:item/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ],
+        "registration": {
+          "$size": {
+            "max": 65536
+          }
+        },
+        "odometer": {
+          "$size": {
+            "max": 1048576
+          },
+          "$immutable": true,
+          "$actions": [
+            {
+              "role": "belongings:item/editor",
+              "can": [
+                "create",
+                "read",
+                "delete"
+              ]
+            },
+            {
+              "role": "belongings:item/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        },
+        "energy": {
+          "$size": {
+            "max": 1048576
+          },
+          "$immutable": true,
+          "$actions": [
+            {
+              "role": "belongings:item/editor",
+              "can": [
+                "create",
+                "read",
+                "delete"
+              ]
+            },
+            {
+              "role": "belongings:item/viewer",
+              "can": [
+                "read"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "gifts",
+  "name": "Gifts",
+  "category": "Food and shopping",
+  "description": "Recipients, occasions, gift ideas, budget, and purchase/wrapping/giving state.",
+  "moduleUri": "https://enbox.id/modules/gifts/v1",
+  "exportName": "GiftsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "A cookbook could be a good birthday gift for Sam."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "plan",
+      "type": "plan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/gifts/v1/schemas/plan",
+      "schemaFile": "schemas/plan.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "plan/idea",
+      "type": "idea",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/gifts/v1/schemas/idea",
+      "schemaFile": "schemas/idea.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected gift plan, recipient, and occasion.",
+    "exclude": [
+      "Sharing private gifting intent with a wishlist's audience automatically."
+    ],
+    "workflow": "Keep recipient and gifting decisions private. Reference an existing wishlist item instead of copying its name, URL and product price; link actual purchases separately."
+  },
+  "notes": [
+    "A gift idea can reference an existing Shopping Wishlists list/item through wishlistItem. Linked ideas keep gifting state private and cannot duplicate name, URL, or product price fields.",
+    "Use a standalone name/URL/price only when no existing wishlist item is selected. Linking does not grant the wishlist audience access to the gift plan."
+  ]
+}

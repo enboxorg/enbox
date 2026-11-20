@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/bills/v1/schemas/payment",
+  "title": "PaymentData",
+  "description": "Bills: payment record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "$ref": "#/definitions/paymentMoney"
+    },
+    "paidAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "transaction": {
+      "$ref": "#/definitions/paymentRecordReference"
+    },
+    "confirmation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/paymentSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "amount",
+    "paidAt"
+  ],
+  "examples": [
+    {
+      "amount": {
+        "amount": "12.50",
+        "currency": "USD"
+      },
+      "paidAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "paymentMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "paymentRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "paymentSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "kind": "mapping-guidance",
+  "notation": "Each profile maps external property names to fields on one Enbox record. Brackets denote array members. The limits describe required context, value conversions and information to retain in the source document. Executable adapters are documented in INTERCHANGE.md.",
+  "profiles": [
+    {
+      "module": "purchases",
+      "path": "purchase",
+      "externalType": "Schema.org Order",
+      "sources": [
+        "https://schema.org/Order"
+      ],
+      "fields": {
+        "seller.name": "merchant",
+        "orderNumber": "orderNumber",
+        "orderDate": "purchasedAt",
+        "orderStatus": "state",
+        "orderDelivery.trackingUrl": "trackingUrl"
+      },
+      "limits": "Select the user’s order first. orderDate needs an offset-aware date-time to populate purchasedAt. Map a known status such as OrderCancelled to cancelled. For multiple deliveries retain each original shipment; the local tracking URL holds one value. An order establishes neither a posted payment nor a separate receipt."
+    },
+    {
+      "module": "purchases",
+      "path": "purchase/item",
+      "externalType": "Schema.org OrderItem",
+      "sources": [
+        "https://schema.org/OrderItem",
+        "https://schema.org/Product"
+      ],
+      "fields": {
+        "orderedItem.name": "name",
+        "orderedItem.sku": "sku",
+        "orderQuantity": "quantity.value"
+      },
+      "limits": "In an Order, each orderedItem represented as an OrderItem becomes a child of that order. Use the nested product SKU in the merchant’s namespace. Convert a supported finite decimal to a decimal string and supply the unit from the line semantics. Preserve fractional precision; route bare Product items separately."
+    },
+    {
+      "module": "bills",
+      "path": "bill",
+      "externalType": "Schema.org Invoice",
+      "sources": [
+        "https://schema.org/Invoice",
+        "https://schema.org/MonetaryAmount"
+      ],
+      "fields": {
+        "provider.name": "payee",
+        "description": "description",
+        "paymentDueDate": "dueOn",
+        "totalPaymentDue.value": "amount.amount",
+        "totalPaymentDue.currency": "amount.currency",
+        "paymentStatus": "state"
+      },
+      "limits": "Select the provider only when they are the payee. Map monetary values only with their explicit currency and decimal precision. Convert a due date-time to the intended local calendar date with user agreement. PaymentDue maps to due. PaymentComplete alone supplies neither a payment instant nor a payment record."
+    },
+    {
+      "module": "belongings",
+      "path": "item",
+      "externalType": "Schema.org IndividualProduct",
+      "sources": [
+        "https://schema.org/IndividualProduct",
+        "https://schema.org/Product"
+      ],
+      "fields": {
+        "name": "name",
+        "serialNumber": "serialNumber",
+        "manufacturer.name": "manufacturer",
+        "model.name": "model",
+        "category": "category"
+      },
+      "limits": "Resolve a concrete owned item using the user’s statement and its identifier. A merchant’s product page alone only describes a product. Flatten only the selected manufacturer, model name and textual category; preserve multiple categories and product-level identifiers in the source."
+    },
+    {
+      "module": "shopping-wishlists",
+      "path": "list/item",
+      "externalType": "Schema.org Product",
+      "sources": [
+        "https://schema.org/Product"
+      ],
+      "fields": {
+        "name": "name",
+        "url": "url",
+        "brand.name": "brand",
+        "model.name": "model",
+        "color": "variant.color",
+        "material": "variant.material",
+        "size": "variant.size"
+      },
+      "limits": "Requires an explicitly selected wishlist, product variant, and user-supplied purchase intent. Flatten scalar descriptive values. An advertised Offer price is a seller’s price and requires a separate user statement to become a personal targetPrice."
+    },
+    {
+      "module": "vehicles",
+      "path": "item/vehicle",
+      "externalType": "Schema.org Vehicle",
+      "sources": [
+        "https://schema.org/Vehicle"
+      ],
+      "fields": {
+        "vehicleIdentificationNumber": "vin",
+        "fuelType": "fuelType"
+      },
+      "limits": "Create the vehicle detail under an identified Belongings item and map kind from the known vehicle class. Map only an unambiguous fuel type to a supported enum. Manufacturer and model belong on the parent item. A VIN identifies the vehicle but does not establish registration or ownership."
+    },
+    {
+      "module": "reservations",
+      "path": "reservation",
+      "externalType": "Schema.org FlightReservation",
+      "sources": [
+        "https://schema.org/FlightReservation",
+        "https://schema.org/Flight"
+      ],
+      "fields": {
+        "reservationId": "confirmationCode",
+        "provider.name": "provider",
+        "reservationStatus": "state",
+        "reservationFor.flightNumber": "serviceNumber",
+        "reservationFor.departureTime": "startsAt",
+        "reservationFor.arrivalTime": "endsAt",
+        "reservationFor.departureAirport.iataCode": "origin",
+        "reservationFor.arrivalAirport.iataCode": "destination",
+        "totalPrice": "price.amount",
+        "priceCurrency": "price.currency"
+      },
+      "limits": "Resolve a real booking and a single Flight leg. Use flight as kind. Map ReservationConfirmed to confirmed and ReservationCancelled to cancelled. Only map scalar price with explicit currency and timestamps with explicit offsets. Retain multi-leg tickets, passenger records and fare breakdowns separately."
+    },
+    {
+      "module": "trips",
+      "path": "trip",
+      "externalType": "Schema.org Trip",
+      "sources": [
+        "https://schema.org/Trip",
+        "https://schema.org/ItemList"
+      ],
+      "fields": {
+        "name": "name",
+        "itinerary.itemListElement[].item.name": "destinations[]",
+        "departureTime": "startsOn",
+        "arrivalTime": "endsOn"
+      },
+      "limits": "The itinerary mapping assumes an ordered ItemList of ListItems containing Places. Preserve the source order. A local day requires a known timezone and date; a time of day alone cannot populate it. The trip state comes from explicit travel intent. Local dates and destination names cannot reconstruct the source times and places."
+    },
+    {
+      "module": "media-library",
+      "path": "work",
+      "externalType": "Schema.org Book",
+      "sources": [
+        "https://schema.org/Book"
+      ],
+      "fields": {
+        "name": "name",
+        "author[].name": "creator[].name",
+        "isbn": "isbn",
+        "bookEdition": "bookEdition",
+        "publisher.name": "publisher.name",
+        "numberOfPages": "numberOfPages",
+        "datePublished": "datePublished"
+      },
+      "limits": "Select @type Book and match a particular edition. Preserve qualified publication dates and the supplied name/URL for each supported creator. A title or ISBN identifies bibliographic metadata; personal queue intent, reading sessions and annotations come from the user."
+    },
+    {
+      "module": "tasks",
+      "path": "task",
+      "externalType": "iCalendar VTODO",
+      "sources": [
+        "https://www.rfc-editor.org/rfc/rfc5545.html#section-3.6.2"
+      ],
+      "fields": {
+        "SUMMARY": "title",
+        "DESCRIPTION": "description",
+        "DUE (DATE)": "dueOn",
+        "DUE (DATE-TIME)": "dueAt",
+        "COMPLETED": "completedAt",
+        "STATUS": "state"
+      },
+      "limits": "Interpret calendar date and date-time according to the property type. Resolve floating or TZID times before creating an instant. Map NEEDS-ACTION, IN-PROCESS, COMPLETED and CANCELLED to todo, in-progress, done and cancelled respectively. Preserve UID, recurrence, reminders and timezone components externally when exchanging a full calendar."
+    },
+    {
+      "module": "measurements",
+      "path": "measurement",
+      "externalType": "FHIR R4 Observation",
+      "sources": [
+        "https://hl7.org/fhir/R4/observation.html"
+      ],
+      "fields": {
+        "code.text": "kind",
+        "effectiveDateTime": "measuredAt",
+        "valueQuantity.value": "value",
+        "valueQuantity.unit": "unit",
+        "component[].code.text": "components[].name",
+        "component[].valueQuantity.value": "components[].value",
+        "component[].valueQuantity.unit": "components[].unit"
+      },
+      "limits": "Choose scalar or component quantities with known units and a full timestamp for the correct person. Preserve decimal lexemes. Retain status, coding systems, unit codes, comparator, reference ranges, source and subject references in the FHIR record. An Enbox decimal plus label cannot reconstruct a clinical Observation."
+    },
+    {
+      "module": "medications",
+      "path": "medication",
+      "externalType": "FHIR R4 MedicationStatement",
+      "sources": [
+        "https://hl7.org/fhir/R4/medicationstatement.html"
+      ],
+      "fields": {
+        "medicationCodeableConcept.text": "name",
+        "status": "state"
+      },
+      "limits": "Use the medication the subject reports taking. Map active, on-hold and stopped to current, paused and stopped. For medicationReference resolve the resource first. Preserve indication, coding, subject and provenance externally. A statement about use supplies no individual dose timestamp."
+    },
+    {
+      "module": "medical-records",
+      "path": "immunization",
+      "externalType": "FHIR R4 Immunization",
+      "sources": [
+        "https://hl7.org/fhir/R4/immunization.html"
+      ],
+      "fields": {
+        "vaccineCode.text": "vaccine",
+        "occurrenceDateTime": "administeredOn",
+        "lotNumber": "lotNumber"
+      },
+      "limits": "Require a completed vaccination for the selected person. Derive a date only when the original identifies the local day. Retain the original timing precision and coding, and populate assertion from actual provenance. A not-done report cannot be imported as an administered vaccine."
+    },
+    {
+      "module": "health-profile",
+      "path": "profile/allergy",
+      "externalType": "FHIR R4 AllergyIntolerance",
+      "sources": [
+        "https://hl7.org/fhir/R4/allergyintolerance.html"
+      ],
+      "fields": {
+        "code.text": "substance",
+        "reaction[].manifestation[].text": "reaction",
+        "reaction[].severity": "severity",
+        "recordedDate": "recordedOn"
+      },
+      "limits": "Map only a confirmed match for the selected person and a single explicitly described reaction. The local scalar reaction/severity cannot express multiple manifestations or reaction histories. Extract the recorded day from a date with known locality. Preserve clinicalStatus, verificationStatus, coding and provenance, and derive the assertion from the stated source."
+    },
+    {
+      "module": "workouts",
+      "path": "workout",
+      "externalType": "Schema.org ExerciseAction",
+      "sources": [
+        "https://schema.org/ExerciseAction"
+      ],
+      "fields": {
+        "name": "name",
+        "startTime": "startedAt",
+        "endTime": "endedAt"
+      },
+      "limits": "Capture the user’s actual exercise session when its time is known. Planned exercise belongs to a routine or calendar. Convert offset-aware date-times only; preserve participant identity, route and richer activity metrics externally. An open interval requires a start time and supplies no completed duration."
+    },
+    {
+      "module": "bookmarks",
+      "path": "bookmark",
+      "externalType": "Schema.org BookmarkAction",
+      "sources": [
+        "https://schema.org/BookmarkAction"
+      ],
+      "fields": {
+        "object.name": "title",
+        "object.url": "url"
+      },
+      "limits": "Capture an explicit save of a named web resource with one URL. Preserve user consent and intent separately. DID-relative record targets require a separate DWN mapping; a bookmarked Book page does not establish reading progress."
+    },
+    {
+      "module": "groceries",
+      "path": "list/item",
+      "externalType": "Schema.org ItemList / ListItem",
+      "sources": [
+        "https://schema.org/ItemList",
+        "https://schema.org/ListItem"
+      ],
+      "fields": {
+        "itemListElement[].item.name": "name",
+        "itemListElement[].position": "sortOrder"
+      },
+      "limits": "Choose the intended shopping list and resolve each item before applying the order. Numeric position can be retained; a textual list item needs user interpretation. A generic ordered collection supplies neither grocery state nor actual pantry inventory."
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "summary": "A payable obligation with a payee, amount or due date.",
+  "targets": [
+    {
+      "path": "bill",
+      "utterance": "My electricity bill is due on December 12.",
+      "distinguish": "A due bill does not confirm payment. A scheduled subscription renewal describes contract terms."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "bill due",
+      "electricity bill",
+      "invoice due",
+      "payee"
+    ],
+    "sensitive": true
+  }
+}

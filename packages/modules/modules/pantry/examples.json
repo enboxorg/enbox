@@ -1,0 +1,43 @@
+[
+  {
+    "path": "pantry",
+    "encoding": "json",
+    "data": {
+      "name": "Kitchen pantry"
+    }
+  },
+  {
+    "path": "pantry/item",
+    "encoding": "json",
+    "data": {
+      "name": "Chickpeas",
+      "quantity": {
+        "value": "3",
+        "unit": "can"
+      },
+      "storage": "cupboard"
+    }
+  },
+  {
+    "path": "pantry/item/change",
+    "encoding": "json",
+    "data": {
+      "kind": "used",
+      "quantity": {
+        "value": "1",
+        "unit": "can"
+      },
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "pantry/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "pantry/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

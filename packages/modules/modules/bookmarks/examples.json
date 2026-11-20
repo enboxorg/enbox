@@ -1,0 +1,47 @@
+[
+  {
+    "path": "bookmark",
+    "encoding": "json",
+    "data": {
+      "title": "Example saved resource",
+      "url": "https://example.com/article"
+    }
+  },
+  {
+    "path": "folder",
+    "encoding": "json",
+    "data": {
+      "name": "Reading list"
+    }
+  },
+  {
+    "path": "folder/entry",
+    "encoding": "json",
+    "data": {
+      "bookmark": {
+        "recordId": "example-record"
+      },
+      "order": 1
+    }
+  },
+  {
+    "path": "bookmark/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "bookmark/viewer",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "folder/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "folder/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

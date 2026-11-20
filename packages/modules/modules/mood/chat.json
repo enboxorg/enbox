@@ -1,0 +1,18 @@
+{
+  "summary": "Dated check-ins about feelings, mood and energy as reported by the user.",
+  "targets": [
+    {
+      "path": "checkIn",
+      "utterance": "Log my mood this morning as mixed.",
+      "distinguish": "Only log a check-in the user meant to track. A physical symptom episode or measured reading has a separate workflow."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "mood check-in",
+      "log my mood",
+      "how I felt"
+    ],
+    "sensitive": true
+  }
+}

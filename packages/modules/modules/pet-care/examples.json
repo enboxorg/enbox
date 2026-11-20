@@ -1,0 +1,36 @@
+[
+  {
+    "path": "pet",
+    "encoding": "json",
+    "data": {
+      "name": "Luna",
+      "species": "cat"
+    }
+  },
+  {
+    "path": "pet/care",
+    "encoding": "json",
+    "data": {
+      "kind": "fed",
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "pet/vetRecord",
+    "encoding": "json",
+    "data": {
+      "visitedOn": "2026-01-15",
+      "clinic": "Example Veterinary Clinic"
+    }
+  },
+  {
+    "path": "pet/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "pet/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

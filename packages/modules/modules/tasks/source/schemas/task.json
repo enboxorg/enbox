@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/tasks/v1/schemas/task",
+  "title": "TaskData",
+  "description": "Tasks: task record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "todo",
+        "in-progress",
+        "done",
+        "cancelled"
+      ]
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    "dueOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "dueAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "assignees": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "project": {
+      "$ref": "#/definitions/taskRecordReference"
+    },
+    "parentTask": {
+      "$ref": "#/definitions/taskRecordReference"
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/taskRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "recurrence": {
+      "$ref": "#/definitions/taskRecurrence"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/taskSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "title",
+    "state"
+  ],
+  "examples": [
+    {
+      "title": "Call the dentist",
+      "state": "todo",
+      "dueOn": "2026-01-15"
+    }
+  ],
+  "not": {
+    "required": [
+      "dueOn",
+      "dueAt"
+    ]
+  },
+  "definitions": {
+    "taskRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "taskRecurrence": {
+      "$ref": "https://enbox.id/schemas/common/recurrence/v1"
+    },
+    "taskSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

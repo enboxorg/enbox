@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/routes/v1/schemas/route",
+  "title": "RouteData",
+  "description": "Routes: route record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "walk",
+        "run",
+        "cycle",
+        "drive",
+        "transit",
+        "other"
+      ]
+    },
+    "distance": {
+      "$ref": "#/definitions/routeQuantity"
+    },
+    "estimatedSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 31536000
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "geometryFile": {
+      "$ref": "#/definitions/routeRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/routeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "mode"
+  ],
+  "examples": [
+    {
+      "name": "Station to hotel",
+      "mode": "walk"
+    }
+  ],
+  "definitions": {
+    "routeQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "routeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "routeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

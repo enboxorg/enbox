@@ -1,0 +1,45 @@
+[
+  {
+    "path": "item/vehicle",
+    "encoding": "json",
+    "data": {
+      "kind": "car"
+    }
+  },
+  {
+    "path": "item/vehicle/registration",
+    "encoding": "json",
+    "data": {
+      "plateNumber": "00-DEMO",
+      "jurisdiction": {
+        "country": "CA",
+        "region": "Ontario"
+      },
+      "issuedOn": "2026-02-01",
+      "expiresOn": "2027-01-31"
+    }
+  },
+  {
+    "path": "item/vehicle/odometer",
+    "encoding": "json",
+    "data": {
+      "distance": {
+        "value": "42000",
+        "unit": "mile"
+      },
+      "recordedAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "item/vehicle/energy",
+    "encoding": "json",
+    "data": {
+      "kind": "charge",
+      "quantity": {
+        "value": "25",
+        "unit": "kWh"
+      },
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  }
+]

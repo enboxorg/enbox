@@ -1,0 +1,24 @@
+{
+  "summary": "Exercise actually performed and explicitly created training routines.",
+  "targets": [
+    {
+      "path": "workout",
+      "utterance": "I finished a 5 km run this morning.",
+      "distinguish": "A training goal and an intended workout do not establish a session."
+    },
+    {
+      "path": "routine",
+      "utterance": "Save this three-exercise routine for my next gym session.",
+      "distinguish": "A reusable routine is distinct from an observed workout."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "i ran",
+      "my workout",
+      "training routine",
+      "finished a run"
+    ],
+    "sensitive": true
+  }
+}

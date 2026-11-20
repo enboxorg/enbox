@@ -1,0 +1,23 @@
+{
+  "summary": "Private cycle dates and observations recorded within an identified cycle.",
+  "targets": [
+    {
+      "path": "cycle",
+      "utterance": "Log the start of my period yesterday.",
+      "distinguish": "Resolve the user’s date. A predicted next date is not a reported cycle start."
+    },
+    {
+      "path": "cycle/observation",
+      "utterance": "Add today’s bleeding observation to this cycle.",
+      "distinguish": "Use the selected cycle; record only reported cycle-specific details. Keep unrelated symptoms in Symptoms."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "cycle dates",
+      "period started",
+      "cycle tracking"
+    ],
+    "sensitive": true
+  }
+}

@@ -1,164 +1,490 @@
 # @enbox/modules
 
-> **Research Preview** -- Enbox is under active development. APIs may change without notice.
+> **Research Preview** — Enbox is under active development. Module contracts are versioned; APIs may change.
 
-Ready-to-use DWN module definitions for the Enbox ecosystem. Each module ships with:
+Complete reusable modules for personal DWN data. Each module has its own
+[artifact directory](modules/index.json), containing a raw definition, strict
+JSON Schemas, capture metadata, valid examples, and usage documentation. Typed
+exports include literal definitions, data types, validating codecs, and explicit
+dependency artifacts.
 
-- A raw `ModuleDefinition` constant (for example, `ProfileDefinition`)
-- A typed module via `defineModule()` (for example, `ProfileModule`)
-- TypeScript data shape types (for example, `ProfileData`)
-- Runtime codecs mapping type names to application values
-- JSON Schema files in `schemas/` for validation and code generation
-- `$recordLimit` annotations on natural singleton types
-
-## Installation
+## Installation and use
 
 ```bash
 bun add @enbox/modules
 ```
 
-## Quick Start
+Prefer individual subpaths for applications using a small subset:
 
 ```ts
-import { createConnectionStore, defineApplicationManifest } from '@enbox/api';
-import { ProfileModule } from '@enbox/modules';
+import { defineApplicationManifest } from '@enbox/api';
+import { GroceriesModule } from '@enbox/modules/groceries';
 
-const application = defineApplicationManifest({
-  modules: [ProfileModule],
-} as const);
-const store = createConnectionStore({ application, password: 'secret' });
-
-let snapshot = await store.initialize();
-if (snapshot.phase === 'disconnected') {
-  snapshot = await store.connectVault({ createIdentity: true });
-}
-if (snapshot.phase !== 'connected') {
-  throw snapshot.error ?? new Error('Connection was not established.');
-}
-
-const profile = snapshot.enbox.using(ProfileModule);
-
-await profile.records.create('profile', {
-  data: { displayName: 'Bob', bio: 'Building the decentralized web' },
+const application = defineApplicationManifest({ modules: [GroceriesModule] });
+// Register application in your connection store and obtain a connected enbox.
+const groceries = enbox.using(GroceriesModule);
+const list = await groceries.records.create('list', {
+  data: { name: 'Weekly groceries' },
 });
-
-const { records: profiles } = await profile.records.query('profile');
-console.log(await profiles[0].value()); // ProfileData
-
-await store.disconnect();
-await store.dispose();
+const item = await groceries.records.create('list/item', {
+  parentContextId: list.contextId,
+  data: {
+    name: 'Lemons',
+    state: 'needed',
+    quantity: { value: '2', unit: 'piece' },
+  },
+});
+await item.update({ data: { name: 'Lemons', state: 'purchased' } });
 ```
 
-## Module Catalog
-
-### Profile
-
-**URI**: `https://identity.foundation/modules/profile`
-**Published**: yes
-**Import**: `ProfileModule`, `ProfileDefinition`
-
-Public identity information with avatar and hero images and external links.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `profile` | `ProfileData` | **yes** | 10 KB max |
-| `profile/avatar` | `AvatarData` (Blob) | **yes** | 12 MB max, image formats |
-| `profile/hero` | `HeroData` (Blob) | **yes** | 24 MB max, image formats |
-| `profile/link` | `LinkData` | no | Links nested under profile |
+Named module exports are also available from the package root. Data-type aliases
+at the root are prefixed by the module name, such as `GroceriesItemData`; the
+individual subpath exports the local `ItemData` name.
 
 ```ts
-type ProfileData = { displayName: string; bio?: string; tagline?: string; location?: string; website?: string; pronouns?: string };
-type AvatarData  = Blob; // no JSON schema -- binary only
-type HeroData    = Blob; // no JSON schema -- binary only
-type LinkData    = { url: string; title: string; icon?: string; sortOrder?: number };
+import { GroceriesModule, type GroceriesItemData } from '@enbox/modules';
+import type { ItemData } from '@enbox/modules/groceries';
 ```
 
----
+## Choosing records from a conversation
 
-### Preferences
+Enbox and Briand publish one module catalogue. The application artifact index,
+typed module registry, conversational discovery index and Briand bundle have
+the same module URIs. Each entry identifies the record paths eligible for a
+generic write. Entries for operations such as credential presentation, public
+profile publication or wallet connection describe the application workflow.
 
-**URI**: `https://identity.foundation/modules/preferences`
-**Published**: no (owner-only)
-**Import**: `PreferencesModule`, `PreferencesDefinition`
+Identity Documents owns one document record per issued driver's licence,
+passport or national ID. Its type selects the applicable fields, and each
+extraction or review belongs to the selected document. Media Library owns media
+items and user activity across books, films, games, music and podcasts.
+Bookmarks holds a saved URL or a link to a record.
 
-User configuration and settings. The `privacy` type uses `encryptionRequired: true` for at-rest encryption.
+Where authority or record lifetime differs, the catalogue describes the
+relationship. A private Gifts plan can link an item in a shareable Shopping
+Wishlist. Learning Plans attaches a curriculum to an existing Goals record.
+Conversations can be selected for an authorized domain conversation or an
+explicit archive. Briand workspace history uses Briand's workspace service.
+Relationships stores the user's relationship assertions. DWN role assignments
+and grants continue to govern actual access.
 
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `theme` | `ThemeData` | **yes** | |
-| `locale` | `LocaleData` | **yes** | |
-| `privacy` | `PrivacyData` | **yes** | Encrypted at rest |
-| `notification` | `NotificationData` | no | Multiple channels, tagged by `channel` |
+See [chat routing](CHAT-DIRECTORY.md) and [JSON interchange](INTERCHANGE.md).
+
+## Module library
+
+The table lists concrete paths owned by each module. Paths beneath a foreign
+parent use the dependency's existing record as their parent. See a module's
+guide for payload representations, exact roles and actions.
+
+<!-- module-library:start -->
+
+### Food and shopping
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Food Diary](modules/food-diary/README.md) | `@enbox/modules/food-diary` | `entry` |  |
+| [Gifts](modules/gifts/README.md) | `@enbox/modules/gifts` | `plan`, `plan/idea` |  |
+| [Groceries](modules/groceries/README.md) | `@enbox/modules/groceries` | `list`, `list/item`, `space/list`, `space/list/item` | `list/editor`, `list/viewer` |
+| [Meal Plans](modules/meal-plans/README.md) | `@enbox/modules/meal-plans` | `plan`, `plan/meal`, `space/plan`, `space/plan/meal` | `plan/editor`, `plan/viewer` |
+| [Pantry](modules/pantry/README.md) | `@enbox/modules/pantry` | `pantry`, `pantry/item`, `pantry/item/change` | `pantry/editor`, `pantry/viewer` |
+| [Purchases](modules/purchases/README.md) | `@enbox/modules/purchases` | `purchase`, `purchase/item`, `purchase/return` |  |
+| [Recipes](modules/recipes/README.md) | `@enbox/modules/recipes` | `recipe`, `recipe/variation` | `recipe/editor`, `recipe/viewer` |
+| [Shopping Wishlists](modules/shopping-wishlists/README.md) | `@enbox/modules/shopping-wishlists` | `list`, `list/item` | `list/editor`, `list/viewer` |
+
+### General personal records
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Bookmarks](modules/bookmarks/README.md) | `@enbox/modules/bookmarks` | `bookmark`, `folder`, `folder/entry` | `bookmark/editor`, `bookmark/viewer`, `folder/editor`, `folder/viewer` |
+| [Collaboration](modules/collaboration/README.md) | `@enbox/modules/collaboration` | `space` | `space/admin`, `space/editor`, `space/viewer` |
+| [Files](modules/files/README.md) | `@enbox/modules/files` | `file`, `file/content` | `file/editor`, `file/viewer` |
+| [Notebook](modules/notebook/README.md) | `@enbox/modules/notebook` | `notebook`, `notebook/page`, `notebook/page/delta`, `notebook/page/attachment` | `notebook/page/admin`, `notebook/page/editor`, `notebook/page/viewer` |
+| [Notebook Realtime](modules/notebook-realtime/README.md) | `@enbox/modules/notebook-realtime` | `page/live`, `page/live/session` |  |
+| [Tasks](modules/tasks/README.md) | `@enbox/modules/tasks` | `task`, `task/checklistItem`, `state`, `space/task`, `space/task/checklistItem` | `task/editor`, `task/viewer` |
+| [Time Entries](modules/time-entries/README.md) | `@enbox/modules/time-entries` | `entry` |  |
+
+### Health and fitness
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Cycle Tracking](modules/cycle-tracking/README.md) | `@enbox/modules/cycle-tracking` | `cycle`, `cycle/observation` |  |
+| [Health Profile](modules/health-profile/README.md) | `@enbox/modules/health-profile` | `profile`, `profile/condition`, `profile/allergy` |  |
+| [Measurements](modules/measurements/README.md) | `@enbox/modules/measurements` | `measurement` |  |
+| [Medical Records](modules/medical-records/README.md) | `@enbox/modules/medical-records` | `document`, `visit`, `immunization` |  |
+| [Medications](modules/medications/README.md) | `@enbox/modules/medications` | `medication`, `medication/regimen`, `medication/dose` |  |
+| [Mood](modules/mood/README.md) | `@enbox/modules/mood` | `checkIn` |  |
+| [Sleep](modules/sleep/README.md) | `@enbox/modules/sleep` | `session` |  |
+| [Symptoms](modules/symptoms/README.md) | `@enbox/modules/symptoms` | `episode` |  |
+| [Workouts](modules/workouts/README.md) | `@enbox/modules/workouts` | `routine`, `workout`, `workout/exercise` |  |
+
+### Home and belongings
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Belongings](modules/belongings/README.md) | `@enbox/modules/belongings` | `item` | `item/editor`, `item/viewer` |
+| [Housing](modules/housing/README.md) | `@enbox/modules/housing` | `residence`, `residence/occupancy`, `residence/lease` |  |
+| [Maintenance](modules/maintenance/README.md) | `@enbox/modules/maintenance` | `item/plan`, `item/service` |  |
+| [Pet Care](modules/pet-care/README.md) | `@enbox/modules/pet-care` | `pet`, `pet/care`, `pet/vetRecord` | `pet/editor`, `pet/viewer` |
+| [Plants](modules/plants/README.md) | `@enbox/modules/plants` | `plant`, `plant/care` | `plant/editor`, `plant/viewer` |
+| [Utilities](modules/utilities/README.md) | `@enbox/modules/utilities` | `account`, `account/meter`, `account/meter/reading` |  |
+| [Vehicles](modules/vehicles/README.md) | `@enbox/modules/vehicles` | `item/vehicle`, `item/vehicle/registration`, `item/vehicle/odometer`, `item/vehicle/energy` |  |
+| [Warranties](modules/warranties/README.md) | `@enbox/modules/warranties` | `item/warranty`, `item/warranty/claim` |  |
+
+### Identity and digital life
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Connect](modules/connect/README.md) | `@enbox/modules/connect` | `wallet` |  |
+| [Credentials](modules/credentials/README.md) | `@enbox/modules/credentials` | `credential`, `credential/artifact`, `credential/verification`, `presentation` |  |
+| [Devices](modules/devices/README.md) | `@enbox/modules/devices` | `item/device`, `item/device/configuration` |  |
+| [Identity Documents](modules/identity-documents/README.md) | `@enbox/modules/identity-documents` | `document`, `document/extraction`, `document/review` |  |
+| [Insurance](modules/insurance/README.md) | `@enbox/modules/insurance` | `policy`, `policy/subject`, `policy/claim` |  |
+| [Online Accounts](modules/online-accounts/README.md) | `@enbox/modules/online-accounts` | `account`, `account/identityLink` |  |
+| [Preferences](modules/preferences/README.md) | `@enbox/modules/preferences` | `theme`, `locale`, `privacy`, `notification`, `accessibility`, `food`, `travel`, `communication` |  |
+| [Profiles](modules/profile/README.md) | `@enbox/modules/profile` | `profile`, `profile/link`, `profile/avatar`, `profile/hero` |  |
+
+### Media and learning
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Flashcards](modules/flashcards/README.md) | `@enbox/modules/flashcards` | `card`, `deck`, `deck/entry`, `studySet`, `studySet/cardState`, `studySet/cardState/review` | `card/editor`, `card/viewer`, `deck/editor`, `deck/viewer` |
+| [Learning Plans](modules/learning-plans/README.md) | `@enbox/modules/learning-plans` | `goal/plan`, `goal/plan/activity`, `goal/plan/activity/progress` |  |
+| [Media Library](modules/media-library/README.md) | `@enbox/modules/media-library` | `work`, `work/activity`, `work/annotation`, `series`, `series/episode`, `series/episode/activity`, `series/episode/annotation`, `series/annotation` |  |
+
+### Money and investing
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Bills](modules/bills/README.md) | `@enbox/modules/bills` | `bill`, `bill/payment` |  |
+| [Budgets](modules/budgets/README.md) | `@enbox/modules/budgets` | `budget`, `budget/allocation` | `budget/editor`, `budget/viewer` |
+| [Debts and Loans](modules/debts-loans/README.md) | `@enbox/modules/debts-loans` | `loan`, `loan/repayment` |  |
+| [Financial Accounts](modules/financial-accounts/README.md) | `@enbox/modules/financial-accounts` | `account` |  |
+| [Investment Holdings](modules/investment-holdings/README.md) | `@enbox/modules/investment-holdings` | `account/position`, `account/position/lot`, `account/position/trade` |  |
+| [Receipts](modules/receipts/README.md) | `@enbox/modules/receipts` | `receipt`, `receipt/item`, `receipt/extraction` |  |
+| [Shared Expenses](modules/shared-expenses/README.md) | `@enbox/modules/shared-expenses` | `group`, `group/expense`, `group/settlement` | `group/editor`, `group/viewer` |
+| [Stock Watchlists](modules/stock-watchlists/README.md) | `@enbox/modules/stock-watchlists` | `watchlist`, `watchlist/instrument`, `watchlist/instrument/note` | `watchlist/editor`, `watchlist/viewer` |
+| [Subscriptions](modules/subscriptions/README.md) | `@enbox/modules/subscriptions` | `subscription`, `subscription/change` |  |
+| [Transactions](modules/transactions/README.md) | `@enbox/modules/transactions` | `account/transaction` |  |
+
+### People and personal life
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Contacts](modules/contacts/README.md) | `@enbox/modules/contacts` | `contact`, `contact/endpoint`, `contact/interaction`, `group`, `group/entry` |  |
+| [Conversations](modules/conversations/README.md) | `@enbox/modules/conversations` | `conversation`, `conversation/message`, `conversation/message/reaction`, `state` | `conversation/editor`, `conversation/viewer` |
+| [Events](modules/events/README.md) | `@enbox/modules/events` | `event`, `event/exception`, `event/response`, `state` | `event/editor`, `event/viewer`, `event/attendee` |
+| [Goals](modules/goals/README.md) | `@enbox/modules/goals` | `goal`, `goal/progress` |  |
+| [Habits](modules/habits/README.md) | `@enbox/modules/habits` | `habit`, `habit/checkIn` |  |
+| [Personal Projects](modules/personal-projects/README.md) | `@enbox/modules/personal-projects` | `project`, `project/milestone` | `project/editor`, `project/viewer` |
+| [Relationships](modules/relationships/README.md) | `@enbox/modules/relationships` | `follow`, `connection`, `restriction` |  |
+
+### Travel and outdoors
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Cards and Passes](modules/cards-passes/README.md) | `@enbox/modules/cards-passes` | `pass` |  |
+| [Packing](modules/packing/README.md) | `@enbox/modules/packing` | `list`, `list/bag`, `list/item` | `list/editor`, `list/viewer` |
+| [Places](modules/places/README.md) | `@enbox/modules/places` | `place` | `place/editor`, `place/viewer` |
+| [Reservations](modules/reservations/README.md) | `@enbox/modules/reservations` | `reservation`, `reservation/change` |  |
+| [Routes](modules/routes/README.md) | `@enbox/modules/routes` | `route`, `route/waypoint`, `route/track` | `route/editor`, `route/viewer` |
+| [Trips](modules/trips/README.md) | `@enbox/modules/trips` | `trip`, `trip/item` | `trip/editor`, `trip/viewer` |
+
+### Work and learning
+
+| Module | Import subpath | Records | Roles |
+| --- | --- | --- | --- |
+| [Career History](modules/career-history/README.md) | `@enbox/modules/career-history` | `work`, `education` |  |
+
+<!-- module-library:end -->
+
+## Discovery and raw artifacts
 
 ```ts
-type ThemeData        = { mode: 'light' | 'dark' | 'system'; accentColor?: string; fontSize?: 'small' | 'medium' | 'large' };
-type LocaleData       = { language: string; region?: string; timezone?: string; dateFormat?: string; hourCycle?: '12h' | '24h' };
-type PrivacyData      = { cookieConsent: { analytics: boolean; marketing: boolean; functional: boolean }; shareUsageData: boolean };
-type NotificationData = { channel: string; enabled: boolean; quietHoursStart?: string; quietHoursEnd?: string };
+import { getModuleCatalogEntry, searchModuleCatalog } from '@enbox/modules/catalog';
+
+const matches = searchModuleCatalog('groceries');
+const entry = getModuleCatalogEntry('groceries');
+// entry.definition: complete authored ModuleDefinition
+// entry.records: actual local paths, payload schemas, formats, and policies
+// entry.examples: structured examples for every path (including required tags)
+// entry.capture: identity matching, excluded concepts, and write workflow
 ```
 
-### Connect
+Discovery searches metadata, not personal records. Loading a catalog entry does
+not grant permission or write data. An AI can inspect the actual schema, match an
+existing record, validate a proposed value, and apply the user's save policy.
+Facts, intentions, corrections, and hypothetical statements must remain distinct.
+Each entry's `capture` contract explains identity matching, excluded neighboring
+concepts, and its write workflow. This guidance confers no authority; actual
+access still comes from the selected context, role, and grants.
 
-**URI**: `https://identity.foundation/modules/connect`
-**Published**: yes
-**Import**: `ConnectModule`, `ConnectDefinition`
-
-Wallet and app discovery information.
-
-| Type | Data Shape | Singleton | Notes |
-|------|-----------|-----------|-------|
-| `wallet` | `WalletData` | **yes** | Publicly readable |
+Raw artifacts are also public package subpaths:
 
 ```ts
-type WalletData = { webWallets: string[] };
+import definition from '@enbox/modules/artifacts/groceries/definition.json' with { type: 'json' };
+import schema from '@enbox/modules/artifacts/groceries/schemas/item.json' with { type: 'json' };
 ```
 
-## JSON Schemas
+`@enbox/modules/artifacts/index.json` lists individual artifact locations. Each
+module's `catalog.json` names its definition, schemas, actual paths, dependencies,
+and examples. No aggregate file is the sole source of module definitions.
 
-Each module type with an `application/json` data format has a corresponding JSON Schema file in `schemas/<module>/<type>.json`. These schemas:
+## Composition
 
-- Match the TypeScript data shapes exactly
-- Use Draft-07 (`$schema: "http://json-schema.org/draft-07/schema#"`)
-- Have `$id` URIs matching the `schema` field in the module definition
-- Are compatible with `@enbox/module-codegen` for TypeScript type generation
-
-```text
-schemas/
-  profile/       profile.json, link.json
-  preferences/   theme.json, locale.json, privacy.json, notification.json
-  connect/       wallet.json
-```
-
-Binary-only types (`avatar`, `hero`) do not have JSON Schemas since they store raw image data.
-
-## Singleton Records
-
-Types annotated with `$recordLimit: { max: 1 }` expose one deterministic occupant per parent scope through Query, Read, Count, and subscription snapshots:
-
-- Create the record with `records.create()` and load it with `records.query()`.
-- Update the returned `Record<T>` explicitly with `record.update()`.
-- Competing valid writes remain stored but hidden from the projected population and may become visible if the current occupant is deleted.
-- Currently annotated singletons: `profile`, `avatar`, `hero`, `theme`, `locale`, `privacy`, `wallet`.
-
-## Exports
-
-All modules re-export from the package root:
+Warranties, Maintenance, Vehicles, and Devices attach local children to a
+Belongings `item`. Transactions and Investment Holdings attach independently to a Financial Accounts
+`account`. Learning Plans owns plans and activities attached to the selected Goals record. Notebook Realtime
+attaches live collaboration records to a Notebook `notebook/page`.
 
 ```ts
-import {
-  // Profile
-  ProfileModule, ProfileDefinition,
-  type ProfileData, type AvatarData, type HeroData, type LinkData,
+import { BelongingsModule } from '@enbox/modules/belongings';
+import { WarrantiesModule } from '@enbox/modules/warranties';
 
-  // Preferences
-  PreferencesModule, PreferencesDefinition,
-  type ThemeData, type LocaleData, type PrivacyData, type NotificationData,
-
-  // Connect
-  ConnectModule, ConnectDefinition,
-  type WalletData,
-} from '@enbox/modules';
+const item = await enbox.using(BelongingsModule).records.create('item', {
+  data: { name: 'Washing machine', state: 'owned' },
+});
+await enbox.using(WarrantiesModule).records.create('item/warranty', {
+  parentContextId: item.contextId,
+  data: { provider: 'Example Appliances', expiresOn: '2029-01-15' },
+});
 ```
+
+The base item remains owned by Belongings; the warranty belongs to Warranties.
+`item` is a virtual attachment in the consumer and cannot be created or queried
+as a consumer record. Dependencies are supplied by the typed artifact and
+installed in provider order. Reads, queries, and observations stay scoped to the
+owning module. See [module composition](../../docs/MODULE-COMPOSITION.md).
+
+Composition attaches new owned children; it does not copy or override a provider's
+definition. A consumer declares `uses`, attaches with a DWN structure reference
+such as `$ref: "notebook:notebook/page"`, and explicitly authorizes provider roles
+such as `notebook:notebook/page/editor`. Provider roles retain their original
+context scope. A role on one page does not grant access to a sibling page or its
+realtime records.
+
+Bookmarks, document scans, purchase evidence, and presentation credentials use
+payload links when the target's identity and lifecycle are independent. A link
+with an omitted `tenantDid` is relative to the DID owning the referring record,
+including when another user reads a replica. Copying a relative link to another
+owner requires preserving or explicitly rebinding that meaning.
+
+## Access, encryption, and lifecycle
+
+Personal content paths require DWN encryption. They are owner-only unless
+explicit role actions or delegated grants authorize another principal. Public
+Profile/Connect behavior and the existing owner-only plaintext preference paths
+are retained; privacy and the new preference profiles are encrypted.
+
+Shared modules declare contextual `editor` and `viewer` roles. The owner issues
+role records with the member's DID in the record descriptor's `recipient`, an
+empty `{}` payload, and the direct parent's `contextId`. Membership records are
+immutable and the recipient can read or remove their own assignment. Each data
+path's action list specifies the member's powers. `update`, `delete`, and `prune`
+require authorship; `co-update`, `co-delete`, and `co-prune` can affect another
+author's records when an applicable action rule permits it. The
+`who: "recipient", can: ["co-delete"]` rule on a role record permits only its
+recipient to leave that assignment, without invoking `moduleRole`. It does not
+let viewers remove other viewers. The owner may revoke any assignment.
+
+Viewers cannot create or change shared content. Events uses a distinct `attendee`
+role for author-managed RSVP responses. Editors can jointly edit shared list
+state, such as grocery items, but authored contributions and immutable history
+do not grant deletion of other writers' records. Parent contexts do not grant
+pruning that would bypass those protections. Shared Expenses keeps the group
+roster owner-managed and each expense author-managed. Individual module guides
+and `entry.records[].actions` expose every path's additional authority.
+
+Notebook Realtime sessions intentionally store plaintext ephemeral public peer
+keys so members can authenticate live writers. They never contain private keys.
+
+For managed invitations and following, use the optional
+[`@enbox/contexts`](https://github.com/enboxorg/enbox-contexts) companion API.
+A structural dependency does not implicitly grant provider-data access, and a
+payload link never transfers its target's permissions.
+
+`published` controls discovery of the definition, not publication of records.
+Private information belongs in encrypted payloads, not unencrypted tags. The
+Preferences notification path retains its required `channel` tag, supplied in
+its example.
+
+Immutable records cannot be updated, including by the owner. Deletion still
+follows the action rules. `$recordLimit` provides a deterministic visible
+population; it does not guarantee that competing creates are rejected. Pruning
+follows structural children across modules, while linked records remain
+independent. Root sharing contexts remain under owner lifecycle control.
+
+## Data conventions
+
+- Money is `{ amount: string, currency: string }`. Decimal strings preserve the
+  supplied amount; transaction direction is explicit instead of inferred from a
+  floating-point sign. Currency conversion and reconciliation are application work.
+- Quantities include an explicit decimal string and unit. Missing quantities stay
+  absent rather than silently becoming zero or one.
+- Dates use `YYYY-MM-DD`; instants use validated RFC 3339 date-time strings. Source
+  time and user timezone matter when resolving relative chat expressions.
+- JSON objects reject unknown fields, invalid enum values, malformed dates/URLs,
+  and other declared constraints on both encode and decode. Codecs do not coerce
+  types, insert defaults, or strip invalid fields.
+- JSON Schemas are bundled Draft-07 documents with local references. A reference
+  such as `#/definitions/fileRecordReference` correctly resolves inside the same
+  schema document. The document's `$id` and DWN type's `schema` are full URI
+  identities; the local fragment need not become a full URL. These schema
+  references are independent of DWN composition references such as
+  `notebook:notebook/page`. See [JSON Schema reference resolution](https://json-schema.org/understanding-json-schema/structuring).
+- Profile retains its wallet-pinned definition and plain JSON/blob codecs from
+  `@enbox/modules@0.2.124`; existing public profiles and links may contain extension fields.
+- For the other modules, JSON payload validation runs in the codecs. The DWN enforces descriptor schema
+  identity, formats, size, encryption, lifecycle, and authorization; it cannot
+  inspect encrypted JSON to validate payload fields. A record link's syntax does
+  not prove that its target exists, has the expected parent/type, or is readable.
+- Source metadata is provenance information, not an authorization grant or proof
+  that an assertion is true. Financial totals, references to other records, and
+  clinical interpretations need their application's appropriate reconciliation.
+- Tasks and Events store alert preferences, including private state for shared
+  records. Applications schedule/deliver alerts; installing a module does not run
+  a scheduler.
+
+## Notebook interoperability
+
+Notebook and Notebook Realtime preserve the executable definitions in
+[notesd](https://github.com/enboxorg/notesd/blob/377645c881b0d1a86710130957cc5d583b249c8f/src/features/notebooks/module.ts)
+and its [realtime extension](https://github.com/enboxorg/notesd/blob/377645c881b0d1a86710130957cc5d583b249c8f/src/features/notebooks/realtime-module.ts).
+The owner manages notebook and page metadata. Editors append immutable
+`@enbox/crdt` yjs1 frames; administrators can also squash the log. Page members
+can inspect writer assignments, while the viewer roster remains private.
+
+Page attachments use `recordCodecs.fileEnvelope({ formatId: 'notesd',
+maxContentBytes: 50_000_000 })`: filename, MIME type, and bytes are encrypted
+together. The attachment schema URI identifies this binary contract; there is
+no JSON Schema for its bytes. The catalog's `codec` metadata and `file-envelope`
+examples describe the representation. Delta examples contain real CRDT frames,
+which applications materialize into text with `@enbox/crdt`.
+
+Realtime imports the existing page and its roles. The owner advertises the live
+session; editors and administrators create and delete their own session records.
+Installing this extension adds no page-writing or membership-management powers.
+
+## Identity documents and credentials
+
+Identity Documents stores document-specific fields, scan references, extraction
+results, and review/correction history. Front/back or replacement scans can refer
+to independent Files records. OCR execution is an application integration; the
+module provides its structured storage contract.
+
+Credentials preserves native issuer-secured bytes in immutable artifact records
+and separates them from editable local metadata. Verification records identify
+which artifact was checked and when. Presentations can reference multiple
+credentials and record requested/approved disclosures. The bundled credential
+example is a signed, self-issued demonstration, not a government assertion.
+
+Payload/schema validation does not perform issuer-signature verification, establish
+holder binding, or certify extracted ID fields. Credential verification and
+presentation integrations must evaluate the native artifact, its status, issuer
+policy, holder binding, and request context. Selective disclosure depends on the
+credential's securing format. Private signing keys remain in the agent's key
+management boundary, not account/device/credential metadata fields.
+
+## Reusable authoring and functional examples
+
+Use `@enbox/modules/authoring` for reusable source while publishing complete,
+concrete contracts:
+
+- `roleDefinition(path, options)` emits immutable empty membership assignments.
+  Recipients can leave their own role. Owner-only issuance/revocation is the
+  default; roster readers and any other issuers/revokers are explicit options.
+- `attachModuleDefinition(options)` selects one concrete source root, substitutes
+  explicit provider-role bindings, rebinds local actor paths, and excludes local
+  memberships and private sibling state. Root creation/deletion actions are
+  supplied explicitly. Conflicting aliases, unknown roles, dependency cycles,
+  and invalid ancestry fail validation.
+- `addModuleAttachment(options)` adds a second location for the same owned
+  payload under a provider context. Groceries, Meal Plans and Tasks each keep
+  independent roots and a `space/...` tree in the same module. The independent
+  root defines its local membership, and the space tree uses Collaboration
+  assignments scoped to the selected space.
+- `realtimeDefinition(options)` binds the owner-managed advertisement and
+  writer-owned sessions to an explicit provider, parent path, and ordered role set.
+  Notebook Realtime uses it while preserving the notesd wire definition exactly.
+- `bundleSchema(source, sharedSchemas)` expands registered value contracts into
+  local Draft-07 definitions. Local aliases remain stable; unknown references,
+  contract overrides, naming collisions and cycles are rejected.
+
+These are authoring helpers. Run codegen to obtain literal-preserving typed
+module exports, then have applications import the published standard module.
+A template does not make independently chosen module URIs share records.
+
+```ts
+import { roleDefinition, bundleSchema, sharedSchemas } from '@enbox/modules/authoring';
+
+const viewer = roleDefinition('document/viewer');
+const schema = bundleSchema({
+  $id: 'https://example.com/schemas/item/v1',
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    price: { $ref: 'https://enbox.id/schemas/common/money/v1' },
+  },
+}, sharedSchemas);
+```
+
+The [executable application examples](examples/README.md) exercise household,
+notebook, and portfolio workflows. The household adds `@enbox/contexts` through
+its existing `defineContextModule` API; no invitation or follow-journal paths
+are hidden inside the domain definitions. A space admin can maintain metadata
+and moderate feature content as explicitly authorized; the owner manages the
+membership roster and space pruning.
+
+Device manufacturer, model, serial number and ownership state belong to the
+parent Belongings item. Devices keeps operational state and dated configuration
+snapshots; all asset repairs use Maintenance. Vehicles likewise reads common
+manufacturer/model identity from Belongings. Financial Accounts owns the account
+identity used by both Transactions and Investment Holdings.
+
+## Development
+
+Author each module in its own `modules/<id>/source/definition.ts` and
+`source/schemas/*.json`, alongside its `catalog.json`, `chat.json` and `examples.json`.
+A source module may export a `schemas` map to reuse another module's source
+schemas. Common value schemas live in
+`src/schema-values/` and are exported at `@enbox/modules/schemas/*.json`.
+
+Generation emits the complete `definition.json`, self-contained `schemas/*.json`,
+validating codecs, literal TypeScript declarations and README for each module.
+Edit authoring inputs rather than generated artifacts. Record paths use the DWN's
+alphabetic segments (including camelCase); schema filenames use kebab-case.
+
+From a monorepo checkout, build workspace prerequisites, then:
+
+```bash
+cd packages/modules
+bun run generate
+bun run build
+bun run test:node
+```
+
+Generation uses `@enbox/module-codegen` to produce literal typed definitions,
+CSP-safe standalone validators, and codecs in `src/generated/`, along with
+individual entrypoints and documentation. `bun run check:generated` verifies
+freshness without changing repository artifacts. Shared schema URIs resolve
+only against the supplied local registry; generation never fetches arbitrary URLs. Schema examples, invalid payloads, type contracts,
+real encrypted DWN round-trips, authorization, and composition/lifecycle behavior
+are exercised by the test suite.
+
+The build-time generator uses the workspace codegen source; adding a direct
+codegen package dependency here would introduce a workspace cycle through its
+browser development dependency. Runtime consumers need neither the generator,
+Ajv, Prettier, nor a runtime schema compiler.
+
+Releasable changes use a patch changeset. The existing release workflow publishes
+`@enbox/modules`; a hosted directory can consume the packaged individual catalog
+artifacts. Publishing to npm does not automatically register an unrelated hosted
+service.
+
+## Profile reader
+
+`createProfileReader` remains available from the package root and
+`@enbox/modules/profile-reader` for reading public profile data through connected
+or anonymous Enbox record surfaces.
 
 ## License
 

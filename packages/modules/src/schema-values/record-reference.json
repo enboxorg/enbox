@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/record-reference/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "recordId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "tenantDid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    },
+    "moduleUri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "modulePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "contextId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "messageCid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "recordId"
+  ],
+  "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+}

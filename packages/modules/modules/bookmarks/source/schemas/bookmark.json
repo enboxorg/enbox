@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/bookmarks/v1/schemas/bookmark",
+  "title": "BookmarkData",
+  "description": "Bookmarks: bookmark record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "record": {
+      "$ref": "#/definitions/bookmarkRecordReference"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "savedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "saved",
+        "reading",
+        "read",
+        "archived"
+      ]
+    },
+    "snapshot": {
+      "$ref": "#/definitions/bookmarkRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/bookmarkSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "examples": [
+    {
+      "title": "Example saved resource",
+      "url": "https://example.com/article"
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "url"
+      ],
+      "not": {
+        "required": [
+          "record"
+        ]
+      }
+    },
+    {
+      "required": [
+        "record"
+      ],
+      "not": {
+        "required": [
+          "url"
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "bookmarkRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "bookmarkSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

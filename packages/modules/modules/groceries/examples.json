@@ -1,0 +1,50 @@
+[
+  {
+    "path": "list",
+    "encoding": "json",
+    "data": {
+      "name": "Weekly groceries"
+    }
+  },
+  {
+    "path": "list/item",
+    "encoding": "json",
+    "data": {
+      "name": "Lemons",
+      "quantity": {
+        "value": "2",
+        "unit": "piece"
+      },
+      "state": "needed"
+    }
+  },
+  {
+    "path": "list/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "list/viewer",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "space/list",
+    "encoding": "json",
+    "data": {
+      "name": "Weekly groceries"
+    }
+  },
+  {
+    "path": "space/list/item",
+    "encoding": "json",
+    "data": {
+      "name": "Lemons",
+      "quantity": {
+        "value": "2",
+        "unit": "piece"
+      },
+      "state": "needed"
+    }
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "summary": "A particular physical item owned by the user, with serial, manufacturer and ownership details.",
+  "targets": [
+    {
+      "path": "item",
+      "utterance": "Save the serial number on my new laptop.",
+      "distinguish": "A product the user might buy goes to Shopping Wishlists. Repairs and vehicle registration refer back to the existing item."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "serial number",
+      "my appliance",
+      "asset inventory",
+      "my laptop"
+    ],
+    "sensitive": true
+  }
+}

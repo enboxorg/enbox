@@ -1,0 +1,215 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/preferences/v1/schemas/travel",
+  "title": "TravelData",
+  "description": "Preferences: travel record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "preferredSeat": {
+      "type": "string",
+      "enum": [
+        "aisle",
+        "window",
+        "middle",
+        "no-preference"
+      ]
+    },
+    "homeAirport": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3,
+      "pattern": "^[A-Z]{3}$"
+    },
+    "preferredModes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "walk",
+          "cycle",
+          "rail",
+          "bus",
+          "car",
+          "flight"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 6
+    },
+    "accessibilityNeeds": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "#/definitions/travelNoteText"
+    },
+    "source": {
+      "$ref": "#/definitions/travelSource"
+    },
+    "labels": {
+      "$ref": "#/definitions/travelLabels"
+    }
+  },
+  "required": [],
+  "examples": [
+    {
+      "preferredSeat": "aisle"
+    }
+  ],
+  "minProperties": 1,
+  "anyOf": [
+    {
+      "required": [
+        "preferredSeat"
+      ]
+    },
+    {
+      "required": [
+        "homeAirport"
+      ]
+    },
+    {
+      "required": [
+        "preferredModes"
+      ]
+    },
+    {
+      "required": [
+        "accessibilityNeeds"
+      ]
+    }
+  ],
+  "definitions": {
+    "travelRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "travelSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/travelRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "travelNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "travelLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  }
+}

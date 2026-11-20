@@ -1,0 +1,50 @@
+{
+  "id": "debts-loans",
+  "name": "Debts and Loans",
+  "category": "Money and investing",
+  "description": "Money borrowed or lent, counterparties, agreed terms, balances, and repayments.",
+  "moduleUri": "https://enbox.id/modules/debts-loans/v1",
+  "exportName": "DebtsLoansModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I lent Alex \u00a340 yesterday."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "loan",
+      "type": "loan",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/debts-loans/v1/schemas/loan",
+      "schemaFile": "schemas/loan.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "loan/repayment",
+      "type": "repayment",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/debts-loans/v1/schemas/repayment",
+      "schemaFile": "schemas/repayment.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the agreement and counterparties; similar amounts do not identify the same loan.",
+    "exclude": [
+      "Treating a planned repayment as a completed transfer."
+    ],
+    "workflow": "Maintain terms and repayment evidence, linking actual transactions."
+  }
+}

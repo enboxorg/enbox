@@ -1,0 +1,369 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/events/v1/schemas/event",
+  "title": "EventData",
+  "description": "Events: event record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "startsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "endsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "endsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "timeZone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "recurrence": {
+      "$ref": "#/definitions/eventRecurrence"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "place": {
+      "$ref": "#/definitions/eventRecordReference"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "did": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+          },
+          "contact": {
+            "$ref": "#/definitions/eventRecordReference"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "confirmed",
+        "cancelled",
+        "completed"
+      ]
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/eventRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "#/definitions/eventNoteText"
+    },
+    "source": {
+      "$ref": "#/definitions/eventSource"
+    },
+    "labels": {
+      "$ref": "#/definitions/eventLabels"
+    },
+    "calendarUid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Stable iCalendar UID identifying the source event."
+    },
+    "calendarDtstamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "UTC iCalendar DTSTAMP from the source component. Preserve on import for export and external revision comparisons."
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "examples": [
+    {
+      "title": "Dinner with Alex",
+      "startsAt": "2026-01-16T19:00:00Z",
+      "timeZone": "Europe/London"
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "startsAt"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "startsOn"
+            ]
+          },
+          {
+            "required": [
+              "endsOn"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "required": [
+        "startsOn"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "startsAt"
+            ]
+          },
+          {
+            "required": [
+              "endsAt"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "dependencies": {
+    "calendarDtstamp": [
+      "calendarUid"
+    ]
+  },
+  "definitions": {
+    "eventRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "eventRecurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frequency": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly"
+          ]
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "weekdays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "MO",
+              "TU",
+              "WE",
+              "TH",
+              "FR",
+              "SA",
+              "SU"
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 7
+        },
+        "until": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "frequency"
+      ],
+      "not": {
+        "required": [
+          "until",
+          "count"
+        ]
+      }
+    },
+    "eventSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/eventRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "eventNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "eventLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  }
+}

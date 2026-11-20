@@ -1,0 +1,18 @@
+{
+  "summary": "User-reported symptom episodes with onset, severity and context.",
+  "targets": [
+    {
+      "path": "episode",
+      "utterance": "Log a headache that started this morning.",
+      "distinguish": "Record the reported experience and its timing. A diagnosis requires the user’s explicit assertion and belongs in Health Profile."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "symptom log",
+      "headache started",
+      "pain episode"
+    ],
+    "sensitive": true
+  }
+}

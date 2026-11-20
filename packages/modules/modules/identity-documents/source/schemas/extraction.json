@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/extraction",
+  "title": "ExtractionData",
+  "description": "One immutable extraction attempt. documentType records the observed classification when available.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/extractionRecordReference"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "extractedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "extractor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "extractorVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ]
+    },
+    "rawText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/extractionSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "sources",
+    "extractedAt",
+    "extractor",
+    "state"
+  ],
+  "examples": [
+    {
+      "sources": [
+        {
+          "recordId": "example-scan"
+        }
+      ],
+      "extractedAt": "2026-01-15T12:00:00Z",
+      "extractor": "demo-import",
+      "state": "partial",
+      "documentType": "drivers-licence",
+      "fields": {
+        "documentNumber": "000DEM0123",
+        "drivingPrivileges": [
+          {
+            "category": "B"
+          }
+        ]
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ],
+        "not": {
+          "required": [
+            "fields"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "fields"
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "extractionRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "extractionSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

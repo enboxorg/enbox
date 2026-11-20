@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/document",
+  "title": "DocumentData",
+  "description": "One identity document issuance. Keep common holder and issuer details with the document number and validity period.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/documentRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "reviewState": {
+      "type": "string",
+      "enum": [
+        "unreviewed",
+        "reviewed",
+        "corrected",
+        "rejected"
+      ]
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/documentAlert"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/documentSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "label",
+    "documentType",
+    "reviewState"
+  ],
+  "examples": [
+    {
+      "label": "Driving licence",
+      "documentType": "drivers-licence",
+      "reviewState": "reviewed",
+      "fields": {
+        "holder": {
+          "fullName": "Alex Example"
+        },
+        "issuer": {
+          "name": "Example licensing authority",
+          "region": "Example region"
+        },
+        "documentNumber": "000DEMO123",
+        "expiryDate": "2031-04-15",
+        "drivingPrivileges": [
+          {
+            "category": "B",
+            "restrictions": [
+              "Corrective lenses"
+            ]
+          }
+        ]
+      },
+      "sources": [
+        {
+          "recordId": "example-scan"
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "documentAlert": {
+      "$ref": "https://enbox.id/schemas/common/alert/v1"
+    },
+    "documentRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "documentSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

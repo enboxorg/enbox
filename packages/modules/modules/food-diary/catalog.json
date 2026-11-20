@@ -1,0 +1,37 @@
+{
+  "id": "food-diary",
+  "name": "Food Diary",
+  "category": "Food and shopping",
+  "description": "Meals actually eaten, portions, times, and observations.",
+  "moduleUri": "https://enbox.id/modules/food-diary/v1",
+  "exportName": "FoodDiaryModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I had oatmeal and a banana for breakfast."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "entry",
+      "type": "entry",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/food-diary/v1/schemas/entry",
+      "schemaFile": "schemas/entry.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the actual eating occasion and source observation.",
+    "exclude": [
+      "A planned meal or a shopping-list item."
+    ],
+    "workflow": "Record consumption as observed; link recipes or plans without claiming the plan was eaten."
+  }
+}

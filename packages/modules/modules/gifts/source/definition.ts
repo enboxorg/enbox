@@ -1,0 +1,30 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/gifts/v1',
+  published : true,
+  types     : {
+    plan: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/gifts/v1/schemas/plan',
+    },
+    idea: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/gifts/v1/schemas/idea',
+    },
+  },
+  structure: {
+    plan: {
+      $size: {
+        max: 1048576,
+      },
+      idea: {
+        $size: {
+          max: 1048576,
+        },
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

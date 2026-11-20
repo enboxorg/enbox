@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/events/v1/schemas/exception",
+  "title": "ExceptionData",
+  "description": "Events: exception record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "originalStart": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "originalDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "cancelled": {
+      "type": "boolean"
+    },
+    "newStartsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "newEndsAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "newStartsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "newEndsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/exceptionSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [],
+  "examples": [
+    {
+      "originalDate": "2026-01-15",
+      "cancelled": true
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "originalStart"
+      ],
+      "not": {
+        "required": [
+          "originalDate"
+        ]
+      }
+    },
+    {
+      "required": [
+        "originalDate"
+      ],
+      "not": {
+        "required": [
+          "originalStart"
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "exceptionRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "exceptionSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

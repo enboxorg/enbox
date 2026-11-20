@@ -1,0 +1,19 @@
+{
+  "summary": "Recurring service terms, trial periods, prices and renewal dates.",
+  "targets": [
+    {
+      "path": "subscription",
+      "utterance": "My music subscription renews on January 3 for 10 USD.",
+      "distinguish": "A recurring service contract does not establish a posted charge."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "subscription",
+      "renews",
+      "trial ends",
+      "billing cycle"
+    ],
+    "sensitive": true
+  }
+}

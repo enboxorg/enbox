@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/workouts/v1/schemas/exercise",
+  "title": "ExerciseData",
+  "description": "Workouts: exercise record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "resistance": {
+            "$ref": "#/definitions/exerciseQuantity"
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 604800
+          },
+          "distance": {
+            "$ref": "#/definitions/exerciseQuantity"
+          }
+        },
+        "required": [],
+        "minProperties": 1
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "durationSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 604800
+    },
+    "distance": {
+      "$ref": "#/definitions/exerciseQuantity"
+    },
+    "sortOrder": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/exerciseSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Running",
+      "durationSeconds": 1800,
+      "distance": {
+        "value": "5",
+        "unit": "km"
+      }
+    }
+  ],
+  "definitions": {
+    "exerciseQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "exerciseRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "exerciseSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

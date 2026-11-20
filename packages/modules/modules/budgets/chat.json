@@ -1,0 +1,23 @@
+{
+  "summary": "Planned spending limits for a period and category. Actual charges belong to the financial account ledger.",
+  "targets": [
+    {
+      "path": "budget",
+      "utterance": "Set a EUR budget for our January expenses.",
+      "distinguish": "Ask for the period and currency before creating a budget. A bill names a separate obligation."
+    },
+    {
+      "path": "budget/allocation",
+      "utterance": "Cap January dining out at 150 euros.",
+      "distinguish": "Select the existing budget. A limit alone supplies no payment or purchase."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "budget",
+      "spending limit",
+      "allocate"
+    ],
+    "sensitive": true
+  }
+}

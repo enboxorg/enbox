@@ -1,0 +1,78 @@
+{
+  "id": "profile",
+  "name": "Profiles",
+  "category": "Identity and digital life",
+  "description": "The user's self-authored display identity, biography, images, and links.",
+  "moduleUri": "https://identity.foundation/modules/profile",
+  "exportName": "ProfileModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Update my public bio to this text."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "profile",
+      "type": "profile",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://identity.foundation/schemas/profile/profile",
+      "schemaFile": "schemas/profile.json",
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "profile/link",
+      "type": "link",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://identity.foundation/schemas/profile/link",
+      "schemaFile": "schemas/link.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "profile/avatar",
+      "type": "avatar",
+      "dataFormats": [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp"
+      ],
+      "encryptionRequired": false,
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    },
+    {
+      "path": "profile/hero",
+      "type": "hero",
+      "dataFormats": [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp"
+      ],
+      "encryptionRequired": false,
+      "role": false,
+      "immutable": false,
+      "singleton": true
+    }
+  ],
+  "capture": {
+    "identity": "Match the owner's self-published profile and selected profile links.",
+    "exclude": [
+      "Private contact-book annotations about other people."
+    ],
+    "workflow": "Publish deliberate profile fields and media using the established public profile paths."
+  }
+}

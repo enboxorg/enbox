@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "transport": {
+      "type": "string"
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "topicKey": {
+      "type": "string"
+    },
+    "peerKey": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "transport",
+    "endpoint",
+    "topic",
+    "topicKey",
+    "peerKey"
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/notebook-realtime/v1/live",
+  "title": "LiveData",
+  "description": "NotebookRealtime: page/live; compatible with notesd notebook v1."
+}

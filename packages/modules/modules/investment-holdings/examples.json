@@ -1,0 +1,31 @@
+[
+  {
+    "path": "account/position",
+    "encoding": "json",
+    "data": {
+      "instrument": {
+        "symbol": "NVDA",
+        "assetClass": "stock"
+      },
+      "quantity": "10",
+      "asOf": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "account/position/lot",
+    "encoding": "json",
+    "data": {
+      "quantity": "10",
+      "acquiredOn": "2026-01-15"
+    }
+  },
+  {
+    "path": "account/position/trade",
+    "encoding": "json",
+    "data": {
+      "kind": "buy",
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "quantity": "10"
+    }
+  }
+]

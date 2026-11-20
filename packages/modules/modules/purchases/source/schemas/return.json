@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/purchases/v1/schemas/return",
+  "title": "ReturnData",
+  "description": "Purchases: return record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/returnRecordReference"
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "requestedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "authorized",
+        "shipped",
+        "received",
+        "refunded",
+        "rejected",
+        "cancelled"
+      ]
+    },
+    "returnBy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "trackingUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "refund": {
+      "$ref": "#/definitions/returnMoney"
+    },
+    "transaction": {
+      "$ref": "#/definitions/returnRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/returnSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "items",
+    "reason",
+    "state"
+  ],
+  "examples": [
+    {
+      "items": [
+        {
+          "recordId": "example-record"
+        }
+      ],
+      "reason": "Wrong size",
+      "state": "requested"
+    }
+  ],
+  "definitions": {
+    "returnMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "returnRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "returnSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

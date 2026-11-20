@@ -1,0 +1,63 @@
+{
+  "id": "places",
+  "name": "Places",
+  "category": "Travel and outdoors",
+  "description": "Saved locations, addresses, coordinates, and personal annotations.",
+  "moduleUri": "https://enbox.id/modules/places/v1",
+  "exportName": "PlacesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Save this cafe as a place I'd like to visit."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "place",
+      "type": "place",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/places/v1/schemas/place",
+      "schemaFile": "schemas/place.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "place/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/places/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "place/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/places/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match coordinates, address or a qualified external place identifier.",
+    "exclude": [
+      "A planned visit as proof of being at a place."
+    ],
+    "workflow": "Maintain place metadata and links; keep events and route observations in their own records."
+  }
+}

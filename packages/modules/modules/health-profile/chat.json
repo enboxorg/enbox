@@ -1,0 +1,24 @@
+{
+  "summary": "Health assertions the user explicitly reports, including allergies.",
+  "targets": [
+    {
+      "path": "profile/allergy",
+      "utterance": "I have a peanut allergy. Remember that for me.",
+      "distinguish": "Select the person’s health profile. A stated dislike or dietary choice belongs to Preferences."
+    },
+    {
+      "path": "profile/condition",
+      "utterance": "My clinician diagnosed asthma. Add that to my health profile.",
+      "distinguish": "Preserve who made the assertion. Symptoms alone do not establish a diagnosis."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "allergic",
+      "allergy",
+      "diagnosed",
+      "health condition"
+    ],
+    "sensitive": true
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/pantry/v1/schemas/change",
+  "title": "ChangeData",
+  "description": "Pantry: change record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "added",
+        "used",
+        "discarded",
+        "counted"
+      ]
+    },
+    "quantity": {
+      "$ref": "#/definitions/changeQuantity"
+    },
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "purchase": {
+      "$ref": "#/definitions/changeRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/changeSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "quantity",
+    "occurredAt"
+  ],
+  "examples": [
+    {
+      "kind": "used",
+      "quantity": {
+        "value": "1",
+        "unit": "can"
+      },
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "changeQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "changeRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "changeSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

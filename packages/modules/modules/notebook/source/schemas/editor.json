@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/notebook/v1/editor",
+  "title": "EditorData",
+  "description": "Notebook: notebook/page/editor; compatible with notesd notebook v1.",
+  "$ref": "https://enbox.id/schemas/common/role-assignment/v1"
+}

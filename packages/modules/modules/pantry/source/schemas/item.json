@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/pantry/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Pantry: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "quantity": {
+      "$ref": "#/definitions/itemQuantity"
+    },
+    "storage": {
+      "type": "string",
+      "enum": [
+        "cupboard",
+        "fridge",
+        "freezer",
+        "other"
+      ]
+    },
+    "expiryDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "openedDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "brand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "barcode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "purchase": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Chickpeas",
+      "quantity": {
+        "value": "3",
+        "unit": "can"
+      },
+      "storage": "cupboard"
+    }
+  ],
+  "definitions": {
+    "itemQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

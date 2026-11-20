@@ -1,0 +1,37 @@
+{
+  "id": "symptoms",
+  "name": "Symptoms",
+  "category": "Health and fitness",
+  "description": "User-reported symptom episodes, onset, duration, severity, and context.",
+  "moduleUri": "https://enbox.id/modules/symptoms/v1",
+  "exportName": "SymptomsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "The headache started after lunch."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "episode",
+      "type": "episode",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/symptoms/v1/schemas/episode",
+      "schemaFile": "schemas/episode.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the reported symptom episode and observation interval.",
+    "exclude": [
+      "An inferred diagnosis or an unreported symptom."
+    ],
+    "workflow": "Record user-reported observations and context, retaining uncertainty and source evidence."
+  }
+}

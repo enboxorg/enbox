@@ -1,0 +1,20 @@
+{
+  "summary": "An actual order, its fulfilment, items or returns.",
+  "targets": [
+    {
+      "path": "purchase",
+      "utterance": "My new headphones shipped under order A123.",
+      "distinguish": "Use Receipts for merchant-issued evidence and Transactions for a posted payment."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "order number",
+      "my order",
+      "shipped",
+      "return window",
+      "delivery tracking"
+    ],
+    "sensitive": true
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "id": "shopping-wishlists",
+  "name": "Shopping Wishlists",
+  "category": "Food and shopping",
+  "description": "Desired products, variants, quantity, priority, budget, and retailer links.",
+  "moduleUri": "https://enbox.id/modules/shopping-wishlists/v1",
+  "exportName": "ShoppingWishlistsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I'm looking for a blue rain jacket in size medium."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "list",
+      "type": "list",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shopping-wishlists/v1/schemas/list",
+      "schemaFile": "schemas/list.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/shopping-wishlists/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/shopping-wishlists/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "list/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/shopping-wishlists/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected list and product variant/source.",
+    "exclude": [
+      "An expression of interest as a completed purchase or current inventory."
+    ],
+    "workflow": "Maintain desired items and target prices; link actual purchases when they occur."
+  }
+}

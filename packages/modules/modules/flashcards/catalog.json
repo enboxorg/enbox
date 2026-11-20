@@ -1,0 +1,154 @@
+{
+  "id": "flashcards",
+  "name": "Flashcards",
+  "category": "Media and learning",
+  "description": "Study cards, decks or grouping references, and private review state/history.",
+  "moduleUri": "https://enbox.id/modules/flashcards/v1",
+  "exportName": "FlashcardsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Make a flashcard for this Spanish word."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "card",
+      "type": "card",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/card",
+      "schemaFile": "schemas/card.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "deck",
+      "type": "deck",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/deck",
+      "schemaFile": "schemas/deck.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "deck/entry",
+      "type": "entry",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/entry",
+      "schemaFile": "schemas/entry.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "studySet",
+      "type": "studySet",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/study-set",
+      "schemaFile": "schemas/study-set.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "studySet/cardState",
+      "type": "cardState",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/card-state",
+      "schemaFile": "schemas/card-state.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "studySet/cardState/review",
+      "type": "review",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/review",
+      "schemaFile": "schemas/review.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "card/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "card/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "deck/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "deck/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/flashcards/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected card and deck membership; text alone need not identify a unique card.",
+    "exclude": [
+      "Duplicating learning goals or converting a review attempt into a new card."
+    ],
+    "workflow": "Maintain cards and deck references; append study reviews under the user's private study state."
+  }
+}

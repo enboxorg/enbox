@@ -101,6 +101,9 @@ temp/
 
 # Generated files
 generated/
+# Standard module TypeScript sources are committed and checked for freshness.
+!packages/modules/src/generated/
+!packages/modules/src/generated/**
 
 # DWN-specific files and directories
 # LevelDB data stores

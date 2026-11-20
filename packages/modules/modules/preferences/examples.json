@@ -1,0 +1,72 @@
+[
+  {
+    "path": "theme",
+    "encoding": "json",
+    "data": {
+      "mode": "system"
+    }
+  },
+  {
+    "path": "locale",
+    "encoding": "json",
+    "data": {
+      "language": "en",
+      "timezone": "Europe/London"
+    }
+  },
+  {
+    "path": "privacy",
+    "encoding": "json",
+    "data": {
+      "cookieConsent": {
+        "analytics": false,
+        "marketing": false,
+        "functional": true
+      },
+      "shareUsageData": false
+    }
+  },
+  {
+    "path": "notification",
+    "encoding": "json",
+    "data": {
+      "channel": "app",
+      "enabled": true
+    },
+    "tags": {
+      "channel": "app"
+    }
+  },
+  {
+    "path": "accessibility",
+    "encoding": "json",
+    "data": {
+      "reduceMotion": true
+    }
+  },
+  {
+    "path": "food",
+    "encoding": "json",
+    "data": {
+      "likes": [
+        "lentils"
+      ]
+    }
+  },
+  {
+    "path": "travel",
+    "encoding": "json",
+    "data": {
+      "preferredSeat": "aisle"
+    }
+  },
+  {
+    "path": "communication",
+    "encoding": "json",
+    "data": {
+      "preferredChannels": [
+        "app"
+      ]
+    }
+  }
+]

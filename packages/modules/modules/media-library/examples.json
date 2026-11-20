@@ -1,0 +1,94 @@
+[
+  {
+    "path": "work",
+    "encoding": "json",
+    "data": {
+      "@type": "Book",
+      "name": "The Dispossessed",
+      "creator": [
+        {
+          "name": "Ursula K. Le Guin"
+        }
+      ],
+      "intent": "queued"
+    }
+  },
+  {
+    "path": "work/activity",
+    "encoding": "json",
+    "data": {
+      "kind": "progress",
+      "mode": "read",
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "position": {
+        "unit": "page",
+        "value": 80
+      }
+    }
+  },
+  {
+    "path": "work/annotation",
+    "encoding": "json",
+    "data": {
+      "kind": "review",
+      "rating": {
+        "value": 4,
+        "scale": 5
+      },
+      "body": "I enjoyed the alternating chapters."
+    }
+  },
+  {
+    "path": "series",
+    "encoding": "json",
+    "data": {
+      "@type": "PodcastSeries",
+      "name": "Field Notes",
+      "feedUrl": "https://example.org/podcasts/field-notes/feed.xml",
+      "following": true
+    }
+  },
+  {
+    "path": "series/episode",
+    "encoding": "json",
+    "data": {
+      "@type": "PodcastEpisode",
+      "name": "Urban gardens",
+      "guid": "episode-014",
+      "episodeNumber": 14
+    }
+  },
+  {
+    "path": "series/episode/activity",
+    "encoding": "json",
+    "data": {
+      "kind": "progress",
+      "mode": "listen",
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "position": {
+        "unit": "seconds",
+        "value": 425
+      }
+    }
+  },
+  {
+    "path": "series/episode/annotation",
+    "encoding": "json",
+    "data": {
+      "kind": "note",
+      "body": "Look up the raised-bed plan.",
+      "position": {
+        "unit": "seconds",
+        "value": 415
+      }
+    }
+  },
+  {
+    "path": "series/annotation",
+    "encoding": "json",
+    "data": {
+      "kind": "review",
+      "body": "Field recordings make the show distinctive."
+    }
+  }
+]

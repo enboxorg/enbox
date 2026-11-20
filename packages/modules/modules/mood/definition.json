@@ -1,0 +1,20 @@
+{
+  "module": "https://enbox.id/modules/mood/v1",
+  "published": true,
+  "types": {
+    "checkIn": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/mood/v1/schemas/check-in"
+    }
+  },
+  "structure": {
+    "checkIn": {
+      "$size": {
+        "max": 1048576
+      }
+    }
+  }
+}

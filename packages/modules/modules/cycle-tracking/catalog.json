@@ -1,0 +1,50 @@
+{
+  "id": "cycle-tracking",
+  "name": "Cycle Tracking",
+  "category": "Health and fitness",
+  "description": "User-reported menstrual cycles, dates, symptoms, and related observations.",
+  "moduleUri": "https://enbox.id/modules/cycle-tracking/v1",
+  "exportName": "CycleTrackingModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "My period started today."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "cycle",
+      "type": "cycle",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/cycle-tracking/v1/schemas/cycle",
+      "schemaFile": "schemas/cycle.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "cycle/observation",
+      "type": "observation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/cycle-tracking/v1/schemas/observation",
+      "schemaFile": "schemas/observation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected cycle and observation date.",
+    "exclude": [
+      "Inferring a diagnosis or treating a prediction as an observed measurement."
+    ],
+    "workflow": "Record user observations and source dates without manufacturing missing symptoms or outcomes."
+  }
+}

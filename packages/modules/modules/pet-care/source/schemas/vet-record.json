@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/pet-care/v1/schemas/vet-record",
+  "title": "VetRecordData",
+  "description": "Pet Care: vetRecord record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "visitedOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "clinic": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "findings": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "cost": {
+      "$ref": "#/definitions/vetRecordMoney"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/vetRecordRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 50
+    },
+    "nextEvent": {
+      "$ref": "#/definitions/vetRecordRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/vetRecordSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "visitedOn",
+    "clinic"
+  ],
+  "examples": [
+    {
+      "visitedOn": "2026-01-15",
+      "clinic": "Example Veterinary Clinic"
+    }
+  ],
+  "definitions": {
+    "vetRecordMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "vetRecordRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "vetRecordSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

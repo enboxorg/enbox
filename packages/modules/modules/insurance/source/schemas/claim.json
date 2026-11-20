@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/insurance/v1/schemas/claim",
+  "title": "ClaimData",
+  "description": "Insurance: claim record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "incidentOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "reportedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "opened",
+        "submitted",
+        "reviewing",
+        "accepted",
+        "rejected",
+        "paid",
+        "closed"
+      ]
+    },
+    "claimedAmount": {
+      "$ref": "#/definitions/claimMoney"
+    },
+    "settledAmount": {
+      "$ref": "#/definitions/claimMoney"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/claimRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/claimSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "description",
+    "state"
+  ],
+  "examples": [
+    {
+      "description": "Water damage report",
+      "state": "opened"
+    }
+  ],
+  "definitions": {
+    "claimMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "claimRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "claimSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "id": "groceries",
+  "name": "Groceries",
+  "category": "Food and shopping",
+  "description": "Shopping lists, items, quantities, units, stores, substitutions, and purchased state.",
+  "moduleUri": "https://enbox.id/modules/groceries/v1",
+  "exportName": "GroceriesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "We need milk, oats, and two lemons."
+  ],
+  "dependencies": {
+    "collaboration": "https://enbox.id/modules/collaboration/v1"
+  },
+  "records": [
+    {
+      "path": "list",
+      "type": "list",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/list",
+      "schemaFile": "schemas/list.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "list/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "list/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "space/list",
+      "type": "list",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/list",
+      "schemaFile": "schemas/list.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "space/list/item",
+      "type": "item",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/groceries/v1/schemas/item",
+      "schemaFile": "schemas/item.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected list and item, including quantity/variant distinctions.",
+    "exclude": [
+      "Existing pantry inventory or an aspirational gift wishlist."
+    ],
+    "workflow": "Record shopping intent, then update purchase state when known; link purchases and pantry items instead of copying their histories."
+  },
+  "notes": [
+    "The same module and payload schemas support two ownership choices. Use list for an independent record or space/list when the user selects an existing Collaboration space. The selected space supplies its membership."
+  ]
+}

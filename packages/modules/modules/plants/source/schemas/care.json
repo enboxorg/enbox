@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/plants/v1/schemas/care",
+  "title": "CareData",
+  "description": "Plants: care record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "watered",
+        "fertilized",
+        "repotted",
+        "pruned",
+        "treated",
+        "observed"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "quantity": {
+      "$ref": "#/definitions/careQuantity"
+    },
+    "observation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "photos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/careRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/careSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "occurredAt"
+  ],
+  "examples": [
+    {
+      "kind": "repotted",
+      "occurredAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "careQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "careRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "careSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

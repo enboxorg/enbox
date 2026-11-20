@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/devices/v1/schemas/configuration",
+  "title": "ConfigurationData",
+  "description": "Devices: configuration record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "recordedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "operatingSystem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "osVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "timeZone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "language": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "backupLocation": {
+      "$ref": "#/definitions/configurationRecordReference"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/configurationSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name",
+    "recordedAt"
+  ],
+  "examples": [
+    {
+      "name": "Initial setup",
+      "recordedAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "configurationRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "configurationSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

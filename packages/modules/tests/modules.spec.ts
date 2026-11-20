@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { createEnboxTestContext } from '@enbox/api/testing';
 import { defineApplicationManifest } from '@enbox/api';
-import { ModulesConfigure, validateModuleDefinitionSchema } from '@enbox/dwn-sdk-js';
+import { Cid, ModulesConfigure, validateModuleDefinitionSchema } from '@enbox/dwn-sdk-js';
 
 import {
   ConnectDefinition,
@@ -13,6 +13,7 @@ import {
   PreferencesModule,
   ProfileDefinition,
   ProfileModule,
+  ProfileSchemas,
 } from '../src/index.js';
 
 describe('@enbox/modules', () => {
@@ -40,6 +41,13 @@ describe('@enbox/modules', () => {
   });
 
   describe('ProfileModule', () => {
+    it('matches the wallet-pinned Profile definition and published payload schemas', async () => {
+      // DAG-CBOR CIDs of the definition and schemas in the released @enbox/modules@0.2.124 tarball.
+      expect(await Cid.computeCid(ProfileDefinition)).toBe('bafyreiciwptfpkneykqwwateeokujvmnelv2joxhy2ntarpzl6dbvlzeki');
+      expect(await Cid.computeCid(ProfileSchemas.profile)).toBe('bafyreie5esj2qpzlvw5xjked6y4knjl2aaxmcdolrn6gszggq3zt2spjbi');
+      expect(await Cid.computeCid(ProfileSchemas.link)).toBe('bafyreifwubtd2gijhq7kbafksuobkrqdg7po26giksxouup3jn7trnrx34');
+    });
+
     it('should have the correct module URI', () => {
       expect(ProfileDefinition.module).toBe('https://identity.foundation/modules/profile');
     });
@@ -115,7 +123,9 @@ describe('@enbox/modules', () => {
     it('should bind the definition and codecs via defineModule()', () => {
       expect(PreferencesModule.definition).toEqual(PreferencesDefinition);
       expect(Object.isFrozen(PreferencesModule.definition)).toBe(true);
-      expect(Object.keys(PreferencesModule.codecs).sort()).toEqual(['locale', 'notification', 'privacy', 'theme']);
+      expect(Object.keys(PreferencesModule.codecs).sort()).toEqual([
+        'accessibility', 'communication', 'food', 'locale', 'notification', 'privacy', 'theme', 'travel',
+      ]);
     });
   });
 

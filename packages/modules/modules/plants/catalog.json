@@ -1,0 +1,76 @@
+{
+  "id": "plants",
+  "name": "Plants",
+  "category": "Home and belongings",
+  "description": "Plants, locations, care needs, watering/repotting history, and observations.",
+  "moduleUri": "https://enbox.id/modules/plants/v1",
+  "exportName": "PlantsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I repotted the monstera this morning."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "plant",
+      "type": "plant",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/plants/v1/schemas/plant",
+      "schemaFile": "schemas/plant.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "plant/care",
+      "type": "care",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/plants/v1/schemas/care",
+      "schemaFile": "schemas/care.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "plant/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/plants/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "plant/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/plants/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the individual plant, not only its species.",
+    "exclude": [
+      "A care schedule as evidence that watering happened."
+    ],
+    "workflow": "Maintain plant metadata and append actual care observations."
+  }
+}

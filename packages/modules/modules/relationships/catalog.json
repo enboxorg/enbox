@@ -1,0 +1,63 @@
+{
+  "id": "relationships",
+  "name": "Relationships",
+  "category": "People and personal life",
+  "description": "Explicit social connections, follows, requests/acceptances, blocks, and mutes.",
+  "moduleUri": "https://enbox.id/modules/relationships/v1",
+  "exportName": "RelationshipsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I want to follow this person's public updates."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "follow",
+      "type": "follow",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/relationships/v1/schemas/follow",
+      "schemaFile": "schemas/follow.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "connection",
+      "type": "connection",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/relationships/v1/schemas/connection",
+      "schemaFile": "schemas/connection.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "restriction",
+      "type": "restriction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/relationships/v1/schemas/restriction",
+      "schemaFile": "schemas/restriction.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the peer DID or explicit target and relationship kind.",
+    "exclude": [
+      "Granting record access because someone is a contact, follower or connection."
+    ],
+    "workflow": "Store relationship intent and restrictions; actual DWN authority still comes from roles or grants."
+  }
+}

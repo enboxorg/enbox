@@ -1,0 +1,25 @@
+{
+  "summary": "Personal government IDs, including driving licences, passports and national or state ID cards. Store one issuance, its reported fields, and the evidence behind them.",
+  "targets": [
+    {
+      "path": "document",
+      "utterance": "Extract the expiry date from this scan of my driver’s licence.",
+      "distinguish": "Match the person’s document issuance; use documentType=drivers-licence for a licence. Vehicle registration identifies a vehicle. Prepare scan-derived fields for review."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "government id",
+      "identity card",
+      "national id",
+      "state id",
+      "passport",
+      "driving licence",
+      "driving license",
+      "driver’s licence",
+      "driver license",
+      "drivers license"
+    ],
+    "sensitive": true
+  }
+}

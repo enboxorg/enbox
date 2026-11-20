@@ -1,0 +1,26 @@
+{
+  "module": "https://enbox.id/modules/transactions/v1",
+  "published": true,
+  "types": {
+    "transaction": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/transactions/v1/schemas/transaction"
+    }
+  },
+  "structure": {
+    "account": {
+      "$ref": "accounts:account",
+      "transaction": {
+        "$size": {
+          "max": 1048576
+        }
+      }
+    }
+  },
+  "uses": {
+    "accounts": "https://enbox.id/modules/financial-accounts/v1"
+  }
+}

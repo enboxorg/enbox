@@ -1,0 +1,15 @@
+[
+  {
+    "path": "account/transaction",
+    "encoding": "json",
+    "data": {
+      "kind": "expense",
+      "amount": {
+        "amount": "42",
+        "currency": "GBP"
+      },
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "category": "groceries"
+    }
+  }
+]

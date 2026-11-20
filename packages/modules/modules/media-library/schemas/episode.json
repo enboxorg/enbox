@@ -1,0 +1,341 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/media-library/v1/schemas/episode",
+  "title": "EpisodeData",
+  "description": "One episode under its actual series context. Use the parent to interpret a feed GUID, season or episode number.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "creator": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192,
+            "format": "uri"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "genre": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "identifier": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "propertyID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "propertyID",
+          "value"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 30
+    },
+    "datePublished": {
+      "type": "string",
+      "anyOf": [
+        {
+          "format": "date"
+        },
+        {
+          "format": "date-time"
+        },
+        {
+          "pattern": "^[0-9]{4}$"
+        }
+      ]
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "saved",
+        "queued",
+        "archived"
+      ]
+    },
+    "favorite": {
+      "type": "boolean"
+    },
+    "file": {
+      "$ref": "#/definitions/episodeRecordReference"
+    },
+    "purchase": {
+      "$ref": "#/definitions/episodeRecordReference"
+    },
+    "source": {
+      "$ref": "#/definitions/episodeProvenance"
+    },
+    "notes": {
+      "$ref": "#/definitions/episodeNoteText"
+    },
+    "labels": {
+      "$ref": "#/definitions/episodeLabels"
+    },
+    "@type": {
+      "type": "string",
+      "enum": [
+        "TVEpisode",
+        "PodcastEpisode"
+      ]
+    },
+    "episodeNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "seasonNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Publisher-supplied opaque identifier, scoped to the podcast feed."
+    },
+    "contentUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "durationSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 315360000
+    }
+  },
+  "required": [
+    "@type",
+    "name"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "@type": {
+            "not": {
+              "enum": [
+                "PodcastEpisode"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "guid"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "episodeRecordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tenantDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "moduleUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "modulePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "messageCid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "recordId"
+      ],
+      "description": "A DWN record link. An omitted tenantDid means the DID owning the referring record. A link grants no access."
+    },
+    "episodeProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user-statement",
+            "document-extraction",
+            "import",
+            "measurement",
+            "derived"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "format": "uri"
+        },
+        "record": {
+          "$ref": "#/definitions/episodeRecordReference"
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "observedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "actorDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        },
+        "extractor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "format": "date-time"
+        },
+        "reviewerDid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "episodeNoteText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32768
+    },
+    "episodeLabels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  }
+}

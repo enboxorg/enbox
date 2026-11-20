@@ -1,0 +1,45 @@
+[
+  {
+    "path": "notebook",
+    "encoding": "json",
+    "data": {
+      "name": "Personal notes"
+    }
+  },
+  {
+    "path": "notebook/page",
+    "encoding": "json",
+    "data": {
+      "title": "Weekend itinerary"
+    }
+  },
+  {
+    "path": "notebook/page/delta",
+    "encoding": "base64",
+    "data": "RUJYRAEEeWpzMQEB0MDM5QIABAEHY29udGVudBdUYWtlIHRoZSBtb3JuaW5nIHRyYWluLgA="
+  },
+  {
+    "path": "notebook/page/attachment",
+    "encoding": "file-envelope",
+    "data": {
+      "filename": "itinerary.txt",
+      "mimeType": "text/plain",
+      "contentBase64": "VGFrZSB0aGUgbW9ybmluZyB0cmFpbi4="
+    }
+  },
+  {
+    "path": "notebook/page/admin",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "notebook/page/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "notebook/page/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

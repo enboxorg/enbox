@@ -1,0 +1,13 @@
+{
+  "summary": "Explicitly saved message threads, their original authors and reactions.",
+  "targets": [],
+  "hints": {
+    "keywords": [
+      "archive conversation",
+      "import thread",
+      "message history"
+    ],
+    "sensitive": true
+  },
+  "workflow": "Open the conversation archive for an explicitly selected thread or import. Briand maintains its own chat history, and personal facts in a chat go to their respective domains."
+}

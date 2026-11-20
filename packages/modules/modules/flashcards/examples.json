@@ -1,0 +1,76 @@
+[
+  {
+    "path": "card",
+    "encoding": "json",
+    "data": {
+      "front": "hola",
+      "back": "hello",
+      "language": "es"
+    }
+  },
+  {
+    "path": "deck",
+    "encoding": "json",
+    "data": {
+      "name": "Spanish words"
+    }
+  },
+  {
+    "path": "deck/entry",
+    "encoding": "json",
+    "data": {
+      "card": {
+        "recordId": "example-record"
+      },
+      "order": 1
+    }
+  },
+  {
+    "path": "studySet",
+    "encoding": "json",
+    "data": {
+      "name": "Daily vocabulary",
+      "deck": {
+        "recordId": "example-record"
+      }
+    }
+  },
+  {
+    "path": "studySet/cardState",
+    "encoding": "json",
+    "data": {
+      "card": {
+        "recordId": "example-record"
+      },
+      "dueAt": "2026-01-15T12:00:00Z"
+    }
+  },
+  {
+    "path": "studySet/cardState/review",
+    "encoding": "json",
+    "data": {
+      "reviewedAt": "2026-01-15T12:00:00Z",
+      "rating": "good"
+    }
+  },
+  {
+    "path": "card/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "card/viewer",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "deck/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "deck/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

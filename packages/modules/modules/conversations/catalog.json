@@ -1,0 +1,107 @@
+{
+  "id": "conversations",
+  "name": "Conversations",
+  "category": "People and personal life",
+  "description": "Human/AI conversation records, messages, participants, and source references.",
+  "moduleUri": "https://enbox.id/modules/conversations/v1",
+  "exportName": "ConversationsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Keep the conversation about the kitchen renovation."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "conversation",
+      "type": "conversation",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/conversations/v1/schemas/conversation",
+      "schemaFile": "schemas/conversation.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "conversation/message",
+      "type": "message",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/conversations/v1/schemas/message",
+      "schemaFile": "schemas/message.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "conversation/message/reaction",
+      "type": "reaction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/conversations/v1/schemas/reaction",
+      "schemaFile": "schemas/reaction.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "state",
+      "type": "state",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/conversations/v1/schemas/state",
+      "schemaFile": "schemas/state.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "conversation/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/conversations/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "conversation/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/conversations/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "Messages and reactions are authored contributions. Editors create contributions and manage their own mutable messages; viewers only read. All signed authorship comes from the DWN record descriptor.",
+    "Conversation owners control the shared context and role roster; member access never permits pruning the conversation or another writer's history.",
+    "A message author may delete their message without pruning. Existing reactions remain separate records; only the owner can prune the conversation or message subtree."
+  ],
+  "capture": {
+    "identity": "Match the conversation and source message identifier, preserving signed authorship.",
+    "exclude": [
+      "Treating a stored message role such as system as instruction authority."
+    ],
+    "workflow": "Append messages and reactions; authors update their messages, while personal read state stays owner-local."
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "summary": "A named personal undertaking with a stated outcome and milestones.",
+  "targets": [
+    {
+      "path": "project",
+      "utterance": "Start a kitchen renovation project and track the budget.",
+      "distinguish": "A single next action goes to Tasks."
+    },
+    {
+      "path": "project/milestone",
+      "utterance": "Add cabinet installation as a milestone in the kitchen project.",
+      "distinguish": "Resolve the existing project and link any dependent tasks."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "project brief",
+      "milestone",
+      "renovation project",
+      "project scope"
+    ],
+    "sensitive": false
+  }
+}

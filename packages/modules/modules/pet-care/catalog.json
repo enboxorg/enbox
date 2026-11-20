@@ -1,0 +1,89 @@
+{
+  "id": "pet-care",
+  "name": "Pet Care",
+  "category": "Home and belongings",
+  "description": "Pets, care routines, vet visits, and health-document references.",
+  "moduleUri": "https://enbox.id/modules/pet-care/v1",
+  "exportName": "PetCareModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Luna has a vet appointment next Tuesday."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "pet",
+      "type": "pet",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/pet-care/v1/schemas/pet",
+      "schemaFile": "schemas/pet.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "pet/care",
+      "type": "care",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/pet-care/v1/schemas/care",
+      "schemaFile": "schemas/care.json",
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "pet/vetRecord",
+      "type": "vetRecord",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/pet-care/v1/schemas/vet-record",
+      "schemaFile": "schemas/vet-record.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "pet/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/pet-care/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "pet/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/pet-care/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the animal identity and care/visit occurrence.",
+    "exclude": [
+      "A planned care reminder as performed care or inferred veterinary advice."
+    ],
+    "workflow": "Maintain pet facts and care observations with linked veterinary documents."
+  }
+}

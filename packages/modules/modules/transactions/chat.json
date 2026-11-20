@@ -1,0 +1,19 @@
+{
+  "summary": "Actual ledger movements on a specified financial account.",
+  "targets": [
+    {
+      "path": "account/transaction",
+      "utterance": "My checking account shows a 42 USD debit from the bike shop.",
+      "distinguish": "Use the selected account and original transaction evidence. A spending target or quote is not a posted charge."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "posted debit",
+      "credited",
+      "bank statement",
+      "ledger transaction"
+    ],
+    "sensitive": true
+  }
+}

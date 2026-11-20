@@ -1,20 +1,153 @@
 ---
 title: "@enbox/modules"
-description: Module definitions and type-safe schema helpers for structuring data in Decentralized Web Nodes.
+description: Complete personal-data modules, validating codecs, schemas, and searchable discovery metadata.
 ---
 
-`@enbox/modules` provides pre-built module definitions, codecs, and readers for common DWN data.
+`@enbox/modules` provides complete definitions, payload schemas, and typed codecs
+for personal DWN data. Each module has its own import subpath and artifact
+directory, including examples and usage documentation.
 
 ## What it does
 
-- **Typed modules** — Ships ready-to-use definitions and runtime codecs for profiles, preferences, and wallet discovery.
+- **Typed modules** — Ships definitions for groceries, pantry stock, recipes,
+  investments, purchases, health records, travel, learning, identity documents,
+  credentials, and other personal data, alongside profiles and wallet discovery.
+- **Validating codecs** — JSON payloads are validated on both write and read.
+  The package bundles standalone validators without a runtime schema compiler.
 - **Profile reader** — Resolves and caches public profile data from other users' DWNs.
 - **JSON Schemas** — Publishes schemas alongside module data types for validation and code generation.
+- **Discovery metadata** — Exposes actual writable paths, schemas, examples, and
+  dependencies for applications and AI-assisted capture.
 
 ## When to use it
 
 - When you want to reuse a well-tested module definition rather than writing one from scratch
 - When you need to read another user's public profile without building a cache and retry layer
+
+## Use an individual module
+
+Register the module in your application's manifest. With a connected Enbox
+session, the record API infers its paths and payload types:
+
+```ts
+import { GroceriesModule } from '@enbox/modules/groceries';
+
+const groceries = enbox.using(GroceriesModule);
+const list = await groceries.records.create('list', {
+  data: { name: 'Weekly groceries' },
+});
+await groceries.records.create('list/item', {
+  parentContextId: list.contextId,
+  data: {
+    name: 'Lemons',
+    state: 'needed',
+    quantity: { value: '2', unit: 'piece' },
+  },
+});
+```
+
+Browse the [full module library](https://github.com/enboxorg/enbox/tree/main/packages/modules#module-library)
+for each module's record structure, examples, access policy, and dependencies.
+
+## Composed modules
+
+Warranties, Maintenance, Vehicles, and Devices attach records to a Belongings
+item. Transactions and Investment Holdings extend Financial Accounts. Learning Plans owns plans
+and activities attached to a Goals record. Notebook Realtime attaches to an existing Notebook page
+and reuses its contextual roles. Their typed artifacts carry the required provider
+definitions and codecs.
+
+```ts
+import { BelongingsModule } from '@enbox/modules/belongings';
+import { WarrantiesModule } from '@enbox/modules/warranties';
+
+const item = await enbox.using(BelongingsModule).records.create('item', {
+  data: { name: 'Washing machine', state: 'owned' },
+});
+await enbox.using(WarrantiesModule).records.create('item/warranty', {
+  parentContextId: item.contextId,
+  data: { provider: 'Example Appliances', expiresOn: '2029-01-15' },
+});
+```
+
+The base item keeps its identity. The consumer owns its warranty records and
+declares its own access rules; installing a dependency does not grant data access.
+
+## Reusable authoring and shared membership
+
+`@enbox/modules/authoring` provides role, attached-feature, realtime, and offline
+schema-bundling helpers. They generate complete concrete definitions; runtime
+records retain one owning module and explicit action rules.
+
+Groceries, Meal Plans and Tasks each support independent records and records
+in a selected Collaboration space. For example, Groceries owns both `list/item`
+and `space/list/item`. Each path uses the same item payload. The space location
+uses the existing household roster, and independent lists retain their own roles. Register the existing `@enbox/contexts`
+companion for invitations and follow journals. A role name never implies
+unlisted permissions, and space membership does not grant access to a sibling space.
+
+Device identity is stored once in Belongings, repairs in Maintenance, and
+financial-account identity in Financial Accounts. The catalogue's capture
+contracts explain record matching, excluded neighboring facts, and write workflows.
+
+## Chat and MCP discovery
+
+Applications, chat clients and MCP connectors discover the same standard module
+URIs. Use `@enbox/modules/chat-directory` for compact module descriptions and
+routing guidance. Use `@enbox/modules/directory/briand.json` for the corresponding
+complete bundles with URI-keyed schemas. A bundle's `capturePaths` lists the
+paths eligible for generic writes. A `workflow` describes operations that need
+an application or wallet. `chatTargetsFor(moduleUri)` returns eligible roots.
+Pass the selected parent's owning module and path for eligible child records.
+
+Identity Documents handles driver’s licences, passports and national IDs through
+one document hierarchy. Media Library handles owned or tracked titles across
+media formats. Gifts keeps private plans and can reference a shared wishlist item.
+Learning Plans adds activities to an existing goal. In Briand, workspace history
+stays in the workspace service. Select Conversations explicitly to manage an
+authorized conversation archive and Relationships to record social intent.
+
+The `@enbox/modules/interchange` entry point supports scoped jCard, jCal,
+Schema.org Recipe, GeoJSON Point and JSON Resume conversions.
+
+## Discover schemas and artifacts
+
+```ts
+import { getModuleCatalogEntry, searchModuleCatalog } from '@enbox/modules/catalog';
+
+const matches = searchModuleCatalog('groceries');
+const entry = getModuleCatalogEntry('groceries');
+// entry.definition, entry.records, and entry.examples describe the real module.
+```
+
+Raw definitions and schemas are also exported individually:
+
+```ts
+import definition from '@enbox/modules/artifacts/groceries/definition.json' with { type: 'json' };
+import schema from '@enbox/modules/artifacts/groceries/schemas/item.json' with { type: 'json' };
+```
+
+Personal content paths require encryption and remain private until their access
+rules or grants authorize another principal. Selected modules support
+owner-issued contextual editor/viewer roles. Definition publication and record
+publication are separate policies.
+
+Viewers have read access and may leave their own membership; they cannot remove
+other viewers. Owner-issued membership is immutable. Events uses a separate
+attendee role for RSVP. Editors can share list editing, while authored contributions
+use author-only updates/deletes. Each module guide and catalog record lists the
+exact additional actions.
+
+Notebook uses notesd's notebook/page hierarchy, immutable `@enbox/crdt` yjs1
+updates, and encrypted `notesd` file envelopes. Its optional realtime extension
+stores an encrypted owner-managed advertisement and plaintext sessions containing
+public peer keys. Page roles remain scoped to their original page.
+
+JSON Schema references such as `#/definitions/fileRecordReference` resolve inside
+the bundled schema; the schema `$id` and DWN type schema identities are full URIs.
+These payload references are separate from DWN composition's `alias:path`
+references. Codecs validate JSON on both encode and decode; the DWN does not
+inspect encrypted payload fields.
 
 ## Relationship to @enbox/api
 
@@ -30,4 +163,8 @@ from `@enbox/api` instead.
 | `ProfileModule` | Public profile, image, and link records |
 | `PreferencesModule` | Owner-only application preferences |
 | `ConnectModule` | Public wallet discovery information |
+| `NotebookModule`, `NotebookRealtimeModule` | notesd-compatible notebook storage and optional live collaboration |
+| `GroceriesModule`, `StockWatchlistsModule`, and other domain modules | Complete typed personal-data contracts |
+| `moduleCatalog` | Bundled definitions, actual record paths, schemas, and examples |
+| `getModuleCatalogEntry()`, `searchModuleCatalog()` | Discovery by identity or metadata text |
 | `createProfileReader()` | Cached public-profile reader for connected and anonymous records surfaces |

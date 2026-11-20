@@ -1,0 +1,193 @@
+{
+  "module": "https://enbox.id/modules/bookmarks/v1",
+  "published": true,
+  "types": {
+    "bookmark": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/bookmark"
+    },
+    "folder": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/folder"
+    },
+    "entry": {
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/entry"
+    },
+    "editor": {
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    },
+    "viewer": {
+      "schema": "https://enbox.id/modules/bookmarks/v1/schemas/viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false
+    }
+  },
+  "structure": {
+    "bookmark": {
+      "$size": {
+        "max": 1048576
+      },
+      "$actions": [
+        {
+          "role": "bookmark/editor",
+          "can": [
+            "read",
+            "co-update"
+          ]
+        },
+        {
+          "role": "bookmark/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "bookmark/editor",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "bookmark/viewer",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    },
+    "folder": {
+      "$size": {
+        "max": 1048576
+      },
+      "$actions": [
+        {
+          "role": "folder/editor",
+          "can": [
+            "read",
+            "co-update"
+          ]
+        },
+        {
+          "role": "folder/viewer",
+          "can": [
+            "read"
+          ]
+        }
+      ],
+      "entry": {
+        "$size": {
+          "max": 1048576
+        },
+        "$actions": [
+          {
+            "role": "folder/editor",
+            "can": [
+              "create",
+              "read",
+              "co-update",
+              "co-delete"
+            ]
+          },
+          {
+            "role": "folder/viewer",
+            "can": [
+              "read"
+            ]
+          }
+        ]
+      },
+      "editor": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "folder/editor",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      },
+      "viewer": {
+        "$role": true,
+        "$immutable": true,
+        "$size": {
+          "max": 2
+        },
+        "$actions": [
+          {
+            "who": "recipient",
+            "of": "folder/viewer",
+            "can": [
+              "read"
+            ]
+          },
+          {
+            "who": "recipient",
+            "can": [
+              "co-delete"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+[
+  {
+    "path": "plan",
+    "encoding": "json",
+    "data": {
+      "name": "Birthday gift for Sam",
+      "recipientName": "Sam",
+      "occasion": "birthday"
+    }
+  },
+  {
+    "path": "plan/idea",
+    "encoding": "json",
+    "data": {
+      "name": "Cookbook",
+      "state": "idea"
+    }
+  }
+]

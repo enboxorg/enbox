@@ -1,0 +1,68 @@
+# Housing
+
+Homes, address history, occupancy, leases, rent/deposit details, and document references.
+
+Module URI: `https://enbox.id/modules/housing/v1`
+
+Import `HousingModule`, `HousingDefinition`, `HousingCodecs`, and `HousingSchemas` from `@enbox/modules/housing`. `HousingCatalog` includes the actual writable paths, bundled schemas, and examples.
+
+## Artifacts
+
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
+- [Directory metadata](catalog.json)
+- [Complete record examples](examples.json)
+
+| Path | Representation | Data policy | Record policy |
+| --- | --- | --- | --- |
+| `residence` | [JSON Schema](schemas/residence.json) | Encrypted | Mutable |
+| `residence/occupancy` | [JSON Schema](schemas/occupancy.json) | Encrypted | Mutable |
+| `residence/lease` | [JSON Schema](schemas/lease.json) | Encrypted | Mutable |
+
+## Dependencies and ownership
+
+This module has no structural module dependencies. Payload links retain their targets' ownership and permissions.
+
+The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.
+
+## Actions
+
+The owner retains tenant authority. These rules describe additional authority. `update`, `delete`, and `prune` act on the signer's own authored records; their `co-` variants allow acting on other authors' records. A `who: recipient` rule is scoped to that record's recipient: `co-delete` on a role assignment allows self-removal, never removal of another recipient. Self-removal uses the actor rule without invoking `moduleRole`. Viewers are read-only apart from leaving their own membership.
+
+| Path | Additional authority |
+| --- | --- |
+| `residence` | Owner only |
+| `residence/occupancy` | Owner only |
+| `residence/lease` | Owner only |
+
+Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the residence address and occupancy/lease period.
+
+**Workflow:** Maintain residence and occupancy identity, linking agreements and related services.
+
+**Exclude:** A place bookmark or a utility account as the same entity.
+
+## Use
+
+Start with an authenticated Enbox session and include this module in the application's module manifest. Dependency artifacts are carried by the typed module and installed before consumers.
+
+```ts
+import { HousingModule } from '@enbox/modules/housing';
+
+const records = enbox.using(HousingModule).records;
+await records.create('residence', {
+  data: {
+  "name": "Home",
+  "address": {
+    "street": "10 Example Street",
+    "locality": "Example City",
+    "countryCode": "GB"
+  }
+},
+});
+```
+
+The JSON codecs validate on encode and decode. Examples are illustrative data; imported claims remain subject to their original provenance. See the [package guide](../../README.md) for shared reference, money, source, and access semantics.

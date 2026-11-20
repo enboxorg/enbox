@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/stock-watchlists/v1/schemas/instrument",
+  "title": "InstrumentData",
+  "description": "Stock Watchlists: instrument record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "instrument": {
+      "$ref": "#/definitions/instrumentInstrument"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "targetPrice": {
+      "$ref": "#/definitions/instrumentMoney"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "watching",
+        "archived"
+      ]
+    },
+    "addedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "research": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/instrumentRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/instrumentSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "instrument",
+    "state"
+  ],
+  "examples": [
+    {
+      "instrument": {
+        "symbol": "NVDA",
+        "assetClass": "stock"
+      },
+      "state": "watching"
+    }
+  ],
+  "definitions": {
+    "instrumentInstrument": {
+      "$ref": "https://enbox.id/schemas/common/instrument/v1"
+    },
+    "instrumentMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "instrumentRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "instrumentSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

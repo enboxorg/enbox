@@ -1,0 +1,37 @@
+{
+  "id": "mood",
+  "name": "Mood",
+  "category": "Health and fitness",
+  "description": "Explicitly reported mood, energy, stress, and contextual observations.",
+  "moduleUri": "https://enbox.id/modules/mood/v1",
+  "exportName": "MoodModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I'm feeling calm but low on energy today."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "checkIn",
+      "type": "checkIn",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/mood/v1/schemas/check-in",
+      "schemaFile": "schemas/check-in.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the user's check-in and observation time.",
+    "exclude": [
+      "An inferred mental-health diagnosis."
+    ],
+    "workflow": "Store expressed mood and context, linking a journal entry when one exists."
+  }
+}

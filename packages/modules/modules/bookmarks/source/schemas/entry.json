@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/bookmarks/v1/schemas/entry",
+  "title": "EntryData",
+  "description": "Bookmarks: entry record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "bookmark": {
+      "$ref": "#/definitions/entryRecordReference"
+    },
+    "folder": {
+      "$ref": "#/definitions/entryRecordReference"
+    },
+    "order": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "annotation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/entrySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "order"
+  ],
+  "examples": [
+    {
+      "bookmark": {
+        "recordId": "example-record"
+      },
+      "order": 1
+    }
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "bookmark"
+      ],
+      "not": {
+        "required": [
+          "folder"
+        ]
+      }
+    },
+    {
+      "required": [
+        "folder"
+      ],
+      "not": {
+        "required": [
+          "bookmark"
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "entryRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "entrySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

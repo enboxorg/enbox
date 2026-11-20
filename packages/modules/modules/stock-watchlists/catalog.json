@@ -1,0 +1,89 @@
+{
+  "id": "stock-watchlists",
+  "name": "Stock Watchlists",
+  "category": "Money and investing",
+  "description": "Instruments being watched, reasons, user-stated targets, and research references.",
+  "moduleUri": "https://enbox.id/modules/stock-watchlists/v1",
+  "exportName": "StockWatchlistsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Add NVDA to my watchlist."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "watchlist",
+      "type": "watchlist",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/watchlist",
+      "schemaFile": "schemas/watchlist.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "watchlist/instrument",
+      "type": "instrument",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/instrument",
+      "schemaFile": "schemas/instrument.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "watchlist/instrument/note",
+      "type": "note",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/note",
+      "schemaFile": "schemas/note.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "watchlist/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "watchlist/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/stock-watchlists/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "capture": {
+    "identity": "Match the selected watchlist and qualified instrument identifiers; names alone can be ambiguous.",
+    "exclude": [
+      "Interpreting interest or a target price as owned shares."
+    ],
+    "workflow": "Maintain research intent and authored observations; link positions only when ownership is separately established."
+  }
+}

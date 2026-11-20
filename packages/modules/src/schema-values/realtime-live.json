@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/realtime-live/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "transport": {
+      "type": "string"
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "topicKey": {
+      "type": "string"
+    },
+    "peerKey": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "transport",
+    "endpoint",
+    "topic",
+    "topicKey",
+    "peerKey"
+  ]
+}

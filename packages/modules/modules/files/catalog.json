@@ -1,0 +1,79 @@
+{
+  "id": "files",
+  "name": "Files",
+  "category": "General personal records",
+  "description": "File identity, metadata, content, and independently managed attachments.",
+  "moduleUri": "https://enbox.id/modules/files/v1",
+  "exportName": "FilesModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Keep this PDF with my other documents."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "file",
+      "type": "file",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/files/v1/schemas/file",
+      "schemaFile": "schemas/file.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "file/content",
+      "type": "content",
+      "dataFormats": [
+        "application/octet-stream"
+      ],
+      "encryptionRequired": true,
+      "role": false,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "file/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/files/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    },
+    {
+      "path": "file/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "schema": "https://enbox.id/modules/files/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json",
+      "role": true,
+      "immutable": true,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "A viewer may read file metadata and content, or leave their own viewer assignment. Role recipients cannot remove other members; the owner controls membership.",
+    "Editors may update shared file metadata, append immutable content revisions, and delete only their own revisions. They cannot delete or prune the file context and thereby erase other writers' revisions.",
+    "currentContent is a link to the selected file/content revision. Clients verify the target type and parent context when resolving it; JSON Schema validates the link shape, not the existence or authority of its target."
+  ],
+  "capture": {
+    "identity": "Match the selected file identity and known content digest; filenames alone are not unique.",
+    "exclude": [
+      "Copying a linked file merely because another module references it."
+    ],
+    "workflow": "Store encrypted content revisions and update currentContent deliberately; verify its target and parent when resolving it."
+  }
+}

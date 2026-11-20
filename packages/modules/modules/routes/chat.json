@@ -1,0 +1,28 @@
+{
+  "summary": "Planned paths and waypoints, and separate recorded tracks.",
+  "targets": [
+    {
+      "path": "route",
+      "utterance": "Save my walking route along the river.",
+      "distinguish": "A named route describes a path; a single destination belongs to Places."
+    },
+    {
+      "path": "route/waypoint",
+      "utterance": "Add the riverside gate as a waypoint.",
+      "distinguish": "Select the route and link the place when known."
+    },
+    {
+      "path": "route/track",
+      "utterance": "Save the actual track I recorded on that route.",
+      "distinguish": "Use recorded positions or source geometry. Link a workout when the user also logged exercise."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "route waypoint",
+      "GPS track",
+      "planned route"
+    ],
+    "sensitive": true
+  }
+}

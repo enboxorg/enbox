@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/utilities/v1/schemas/reading",
+  "title": "ReadingData",
+  "description": "Utilities: reading record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "value": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "recordedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "device",
+        "provider"
+      ]
+    },
+    "bill": {
+      "$ref": "#/definitions/readingRecordReference"
+    },
+    "photo": {
+      "$ref": "#/definitions/readingRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/readingSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "value",
+    "recordedAt"
+  ],
+  "examples": [
+    {
+      "value": "1842",
+      "recordedAt": "2026-01-15T12:00:00Z",
+      "method": "manual"
+    }
+  ],
+  "definitions": {
+    "readingRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "readingSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

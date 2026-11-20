@@ -1,0 +1,238 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/media-library/v1/schemas/activity",
+  "title": "ActivityData",
+  "description": "An immutable reading, playing, viewing, or listening observation. Position units distinguish pages, seconds, percent and named locations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "session",
+        "progress",
+        "completed"
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "read",
+        "listen",
+        "watch",
+        "play"
+      ]
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "endedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "durationSeconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 315360000
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "type": "string",
+          "enum": [
+            "page",
+            "seconds",
+            "percent",
+            "chapter",
+            "level"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      },
+      "required": [
+        "unit",
+        "value"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "unit": {
+                "enum": [
+                  "page"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unit": {
+                "enum": [
+                  "seconds"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 315360000
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unit": {
+                "enum": [
+                  "percent"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unit": {
+                "enum": [
+                  "chapter",
+                  "level"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            }
+          }
+        }
+      ]
+    },
+    "achievement": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "playbackSpeed": {
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": 16
+    },
+    "withContacts": {
+      "type": "array",
+      "items": {
+        "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "source": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    }
+  },
+  "required": [
+    "kind",
+    "mode",
+    "recordedAt"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "progress"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "position"
+            ]
+          },
+          {
+            "required": [
+              "achievement"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "achievement"
+        ]
+      },
+      "then": {
+        "properties": {
+          "mode": {
+            "const": "play"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "playbackSpeed"
+        ]
+      },
+      "then": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "listen",
+              "watch"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

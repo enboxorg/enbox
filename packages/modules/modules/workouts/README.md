@@ -1,0 +1,69 @@
+# Workouts
+
+Exercise sessions, routines, sets/reps, distance, duration, and performance.
+
+Module URI: `https://enbox.id/modules/workouts/v1`
+
+Import `WorkoutsModule`, `WorkoutsDefinition`, `WorkoutsCodecs`, and `WorkoutsSchemas` from `@enbox/modules/workouts`. `WorkoutsCatalog` includes the actual writable paths, bundled schemas, and examples.
+
+## Artifacts
+
+- [Complete raw definition](definition.json)
+- [Authoring source](source/definition.ts)
+- [Directory metadata](catalog.json)
+- [Complete record examples](examples.json)
+
+| Path | Representation | Data policy | Record policy |
+| --- | --- | --- | --- |
+| `routine` | [JSON Schema](schemas/routine.json) | Encrypted | Mutable |
+| `workout` | [JSON Schema](schemas/workout.json) | Encrypted | Mutable |
+| `workout/exercise` | [JSON Schema](schemas/exercise.json) | Encrypted | Mutable |
+
+## Dependencies and ownership
+
+This module has no structural module dependencies. Payload links retain their targets' ownership and permissions.
+
+The definition's `published` flag describes definition discovery. Record access is governed by the definition's explicit actions. Roles are assigned by the owner; a role's recipient is in the signed DWN descriptor, and its data is `{}`. Without assigned roles or grants, private paths remain owner-only. Record-specific action lists remain authoritative.
+
+## Actions
+
+The owner retains tenant authority. These rules describe additional authority. `update`, `delete`, and `prune` act on the signer's own authored records; their `co-` variants allow acting on other authors' records. A `who: recipient` rule is scoped to that record's recipient: `co-delete` on a role assignment allows self-removal, never removal of another recipient. Self-removal uses the actor rule without invoking `moduleRole`. Viewers are read-only apart from leaving their own membership.
+
+| Path | Additional authority |
+| --- | --- |
+| `routine` | Owner only |
+| `workout` | Owner only |
+| `workout/exercise` | Owner only |
+
+Immutable records reject updates. A singleton uses `$recordLimit` projection semantics; it does not reject every competing create. Pruning follows actual descendants, including composed descendants; data links do not cascade.
+
+## Capture contract
+
+**Identity:** Match the actual workout occurrence and selected routine.
+
+**Workflow:** Keep reusable routines and actual exercise observations distinct, linking route data.
+
+**Exclude:** A routine or scheduled exercise as completed activity.
+
+## Use
+
+Start with an authenticated Enbox session and include this module in the application's module manifest. Dependency artifacts are carried by the typed module and installed before consumers.
+
+```ts
+import { WorkoutsModule } from '@enbox/modules/workouts';
+
+const records = enbox.using(WorkoutsModule).records;
+await records.create('routine', {
+  data: {
+  "name": "Easy run",
+  "exercises": [
+    {
+      "name": "Running",
+      "durationSeconds": 1800
+    }
+  ]
+},
+});
+```
+
+The JSON codecs validate on encode and decode. Examples are illustrative data; imported claims remain subject to their original provenance. See the [package guide](../../README.md) for shared reference, money, source, and access semantics.

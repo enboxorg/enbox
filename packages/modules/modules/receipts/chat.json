@@ -1,0 +1,24 @@
+{
+  "summary": "Merchant receipts and their line items as evidence of a sale.",
+  "targets": [
+    {
+      "path": "receipt",
+      "utterance": "File this grocery receipt. The total was 18.40 USD.",
+      "distinguish": "Keep the merchant and currency as supplied. A receipt alone does not establish a particular posted account transaction."
+    },
+    {
+      "path": "receipt/item",
+      "utterance": "This line on my grocery receipt is 2.75 USD for apples.",
+      "distinguish": "Select the source receipt. Do not turn its items into a new shopping list."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "receipt",
+      "sales slip",
+      "subtotal",
+      "receipt number"
+    ],
+    "sensitive": true
+  }
+}

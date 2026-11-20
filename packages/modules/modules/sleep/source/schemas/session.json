@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/sleep/v1/schemas/session",
+  "title": "SessionData",
+  "description": "Sleep: session record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "startedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "endedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "night",
+        "nap",
+        "other"
+      ]
+    },
+    "quality": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "interruptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "startedAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "format": "date-time"
+          },
+          "durationMinutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "startedAt"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "self-report",
+        "device"
+      ]
+    },
+    "device": {
+      "$ref": "#/definitions/sessionRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/sessionSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "startedAt",
+    "endedAt"
+  ],
+  "examples": [
+    {
+      "startedAt": "2026-01-14T23:00:00Z",
+      "endedAt": "2026-01-15T07:00:00Z",
+      "kind": "night"
+    }
+  ],
+  "definitions": {
+    "sessionRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "sessionSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

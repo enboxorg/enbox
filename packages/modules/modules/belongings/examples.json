@@ -1,0 +1,22 @@
+[
+  {
+    "path": "item",
+    "encoding": "json",
+    "data": {
+      "name": "Washing machine",
+      "manufacturer": "Example Appliances",
+      "serialNumber": "ABC123",
+      "state": "owned"
+    }
+  },
+  {
+    "path": "item/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "item/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/purchases/v1/schemas/item",
+  "title": "ItemData",
+  "description": "Purchases: item record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "quantity": {
+      "$ref": "#/definitions/itemQuantity"
+    },
+    "unitPrice": {
+      "$ref": "#/definitions/itemMoney"
+    },
+    "sku": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "variant": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "belonging": {
+      "$ref": "#/definitions/itemRecordReference"
+    },
+    "deliveredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/itemSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "examples": [
+    {
+      "name": "Headphones",
+      "quantity": {
+        "value": "1",
+        "unit": "pair"
+      }
+    }
+  ],
+  "definitions": {
+    "itemMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "itemQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "itemRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "itemSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

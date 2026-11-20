@@ -1,0 +1,28 @@
+[
+  {
+    "path": "policy",
+    "encoding": "json",
+    "data": {
+      "name": "Home policy",
+      "kind": "home",
+      "provider": "Example Insurer",
+      "state": "active"
+    }
+  },
+  {
+    "path": "policy/subject",
+    "encoding": "json",
+    "data": {
+      "name": "Home",
+      "kind": "property"
+    }
+  },
+  {
+    "path": "policy/claim",
+    "encoding": "json",
+    "data": {
+      "description": "Water damage report",
+      "state": "opened"
+    }
+  }
+]

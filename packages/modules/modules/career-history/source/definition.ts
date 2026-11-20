@@ -1,0 +1,22 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/career-history/v1',
+  published : true,
+  types     : {
+    work: {
+      schema             : 'https://enbox.id/modules/career-history/v1/schemas/work',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
+    education: {
+      schema             : 'https://enbox.id/modules/career-history/v1/schemas/education',
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+    },
+  },
+  structure: {
+    work      : { $size: { max: 131072 } },
+    education : { $size: { max: 131072 } },
+  },
+} as const satisfies ModuleDefinition;

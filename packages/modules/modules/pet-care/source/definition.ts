@@ -1,0 +1,85 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+import { roleDefinition } from '../../../src/authoring/roles.js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/pet-care/v1',
+  published : true,
+  types     : {
+    pet: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/pet-care/v1/schemas/pet',
+    },
+    care: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/pet-care/v1/schemas/care',
+    },
+    vetRecord: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/pet-care/v1/schemas/vet-record',
+    },
+    editor: {
+      schema             : 'https://enbox.id/modules/pet-care/v1/schemas/editor',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+    viewer: {
+      schema             : 'https://enbox.id/modules/pet-care/v1/schemas/viewer',
+      dataFormats        : ['application/json'],
+      encryptionRequired : false,
+    },
+  },
+  structure: {
+    pet: {
+      $size: {
+        max: 1048576,
+      },
+      $actions: [
+        {
+          role : 'pet/editor',
+          can  : ['read', 'co-update'],
+        },
+        {
+          role : 'pet/viewer',
+          can  : ['read'],
+        },
+      ],
+      care: {
+        $size: {
+          max: 1048576,
+        },
+        $immutable : true,
+        $actions   : [
+          {
+            role : 'pet/editor',
+            can  : ['create', 'read', 'delete'],
+          },
+          {
+            role : 'pet/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+      vetRecord: {
+        $size: {
+          max: 1048576,
+        },
+        $actions: [
+          {
+            role : 'pet/editor',
+            can  : ['create', 'read', 'update', 'delete'],
+          },
+          {
+            role : 'pet/viewer',
+            can  : ['read'],
+          },
+        ],
+      },
+      editor : roleDefinition('pet/editor'),
+      viewer : roleDefinition('pet/viewer'),
+    },
+  },
+} as const satisfies ModuleDefinition;

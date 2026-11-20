@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/debts-loans/v1/schemas/repayment",
+  "title": "RepaymentData",
+  "description": "Debts and Loans: repayment record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "$ref": "#/definitions/repaymentMoney"
+    },
+    "paidAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "transaction": {
+      "$ref": "#/definitions/repaymentRecordReference"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "principal",
+        "interest",
+        "combined"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/repaymentSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "amount",
+    "paidAt"
+  ],
+  "examples": [
+    {
+      "amount": {
+        "amount": "10",
+        "currency": "GBP"
+      },
+      "paidAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "repaymentMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "repaymentRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "repaymentSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "id": "collaboration",
+  "name": "Collaboration",
+  "category": "General personal records",
+  "description": "An optional shared context and membership roster for independently installed feature modules.",
+  "moduleUri": "https://enbox.id/modules/collaboration/v1",
+  "exportName": "CollaborationModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "Create a shared household space."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "space",
+      "type": "space",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "role": false,
+      "immutable": false,
+      "singleton": false,
+      "schema": "https://enbox.id/modules/collaboration/v1/schemas/space",
+      "schemaFile": "schemas/space.json"
+    },
+    {
+      "path": "space/admin",
+      "type": "admin",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "role": true,
+      "immutable": true,
+      "singleton": false,
+      "schema": "https://enbox.id/modules/collaboration/v1/schemas/admin",
+      "schemaFile": "schemas/admin.json"
+    },
+    {
+      "path": "space/editor",
+      "type": "editor",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "role": true,
+      "immutable": true,
+      "singleton": false,
+      "schema": "https://enbox.id/modules/collaboration/v1/schemas/editor",
+      "schemaFile": "schemas/editor.json"
+    },
+    {
+      "path": "space/viewer",
+      "type": "viewer",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": false,
+      "role": true,
+      "immutable": true,
+      "singleton": false,
+      "schema": "https://enbox.id/modules/collaboration/v1/schemas/viewer",
+      "schemaFile": "schemas/viewer.json"
+    }
+  ],
+  "notes": [
+    "A space is a membership and lifecycle boundary, not a folder or bookmark collection. Use it only when attached features should share the same roster.",
+    "The owner issues and revokes membership and prunes spaces. An admin can update space metadata; feature modules explicitly declare any additional content authority. Admin does not inherit editor permissions.",
+    "Roles are plaintext empty assignments; recipients may leave their own role. The encrypted space metadata is readable by its contextual admin, editor, and viewer roles.",
+    "Use @enbox/contexts defineContextModule(CollaborationModule) for invitations and follow journals; those companions are not duplicated here."
+  ],
+  "capture": {
+    "identity": "Use the explicitly selected shared space record; its name alone is not unique.",
+    "exclude": [
+      "A bookmark folder or a request to grant membership inferred from conversation text."
+    ],
+    "workflow": "Create a deliberate membership/lifecycle boundary; the owner manages roles and each feature declares its own access."
+  }
+}

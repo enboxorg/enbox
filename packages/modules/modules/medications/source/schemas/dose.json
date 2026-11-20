@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/medications/v1/schemas/dose",
+  "title": "DoseData",
+  "description": "Medications: dose record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "occurredAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "taken",
+        "skipped",
+        "unknown"
+      ]
+    },
+    "quantity": {
+      "$ref": "#/definitions/doseQuantity"
+    },
+    "regimen": {
+      "$ref": "#/definitions/doseRecordReference"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/doseSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "occurredAt",
+    "state"
+  ],
+  "examples": [
+    {
+      "occurredAt": "2026-01-15T12:00:00Z",
+      "state": "taken"
+    }
+  ],
+  "definitions": {
+    "doseQuantity": {
+      "$ref": "https://enbox.id/schemas/common/quantity/v1"
+    },
+    "doseRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "doseSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

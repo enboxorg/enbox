@@ -1,0 +1,42 @@
+{
+  "id": "transactions",
+  "name": "Transactions",
+  "category": "Money and investing",
+  "description": "Personal income, expenses, transfers, amounts, currencies, dates, and counterparties.",
+  "moduleUri": "https://enbox.id/modules/transactions/v1",
+  "exportName": "TransactionsModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I spent \u00a342 on groceries today."
+  ],
+  "dependencies": {
+    "accounts": "https://enbox.id/modules/financial-accounts/v1"
+  },
+  "records": [
+    {
+      "path": "account/transaction",
+      "type": "transaction",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/transactions/v1/schemas/transaction",
+      "schemaFile": "schemas/transaction.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "Create the account with Financial Accounts, then append ledger entries using its contextId. Portfolio apps can use the same account without installing this ledger module."
+  ],
+  "capture": {
+    "identity": "Match the Financial Accounts parent and imported transaction identifier or selected ledger entry.",
+    "exclude": [
+      "A bill, budget target, wishlist interest or position snapshot as a completed movement of money."
+    ],
+    "workflow": "Record actual ledger facts and link supporting receipts; do not create a second account identity."
+  }
+}

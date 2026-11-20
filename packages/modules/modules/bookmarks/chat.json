@@ -1,0 +1,19 @@
+{
+  "summary": "A URL or DWN record the user wants to revisit.",
+  "targets": [
+    {
+      "path": "bookmark",
+      "utterance": "Save this recipe link for later.",
+      "distinguish": "Use Recipes when the user supplies the recipe itself. A DID-relative record link keeps its owner context."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "bookmark",
+      "save this link",
+      "read later",
+      "save this url"
+    ],
+    "sensitive": false
+  }
+}

@@ -1,0 +1,41 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/receipts/v1',
+  published : true,
+  types     : {
+    receipt: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/receipts/v1/schemas/receipt',
+    },
+    item: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/receipts/v1/schemas/item',
+    },
+    extraction: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/receipts/v1/schemas/extraction',
+    },
+  },
+  structure: {
+    receipt: {
+      $size: {
+        max: 1048576,
+      },
+      item: {
+        $size: {
+          max: 1048576,
+        },
+      },
+      extraction: {
+        $size: {
+          max: 1048576,
+        },
+        $immutable: true,
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

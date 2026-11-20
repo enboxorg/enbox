@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/warranties/v1/schemas/warranty",
+  "title": "WarrantyData",
+  "description": "Warranties: warranty record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "policyNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "startsOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "expiresOn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "coverage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "exclusions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "contact": {
+      "$ref": "#/definitions/warrantyRecordReference"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/warrantyRecordReference"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/warrantySource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "provider"
+  ],
+  "examples": [
+    {
+      "provider": "Example Appliances",
+      "startsOn": "2026-01-15",
+      "expiresOn": "2029-01-15"
+    }
+  ],
+  "definitions": {
+    "warrantyRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "warrantySource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

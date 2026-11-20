@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/shared-expenses/v1/schemas/settlement",
+  "title": "SettlementData",
+  "description": "Shared Expenses: settlement record.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "fromParticipant": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "toParticipant": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "amount": {
+      "$ref": "#/definitions/settlementMoney"
+    },
+    "paidAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "transaction": {
+      "$ref": "#/definitions/settlementRecordReference"
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/settlementSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "fromParticipant",
+    "toParticipant",
+    "amount",
+    "paidAt"
+  ],
+  "examples": [
+    {
+      "fromParticipant": "sam",
+      "toParticipant": "alex",
+      "amount": {
+        "amount": "30",
+        "currency": "GBP"
+      },
+      "paidAt": "2026-01-15T12:00:00Z"
+    }
+  ],
+  "definitions": {
+    "settlementMoney": {
+      "$ref": "https://enbox.id/schemas/common/money/v1"
+    },
+    "settlementRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "settlementSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

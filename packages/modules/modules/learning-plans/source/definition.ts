@@ -1,0 +1,47 @@
+import type { ModuleDefinition } from '@enbox/dwn-sdk-js';
+
+export const definition = {
+  module    : 'https://enbox.id/modules/learning-plans/v1',
+  published : true,
+  uses      : {
+    goals: 'https://enbox.id/modules/goals/v1',
+  },
+  types: {
+    plan: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/learning-plans/v1/schemas/plan',
+    },
+    activity: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/learning-plans/v1/schemas/activity',
+    },
+    progress: {
+      dataFormats        : ['application/json'],
+      encryptionRequired : true,
+      schema             : 'https://enbox.id/modules/learning-plans/v1/schemas/progress',
+    },
+  },
+  structure: {
+    goal: {
+      $ref : 'goals:goal',
+      plan : {
+        $size: {
+          max: 1048576,
+        },
+        activity: {
+          $size: {
+            max: 1048576,
+          },
+          progress: {
+            $size: {
+              max: 1048576,
+            },
+            $immutable: true,
+          },
+        },
+      },
+    },
+  },
+} as const satisfies ModuleDefinition;

@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/schemas/common/provenance/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "user-statement",
+        "document-extraction",
+        "import",
+        "measurement",
+        "derived"
+      ]
+    },
+    "uri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "format": "uri"
+    },
+    "record": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "messageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "observedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "actorDid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    },
+    "extractor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "extractorVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "reviewerDid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^did:[a-z0-9]+:[^\\s]+$"
+    }
+  },
+  "required": [
+    "kind"
+  ]
+}

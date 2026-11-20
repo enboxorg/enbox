@@ -1,0 +1,59 @@
+{
+  "id": "career-history",
+  "name": "Career History",
+  "category": "Work and learning",
+  "description": "Jobs held and education attended, captured from the owner\u2019s career timeline or r\u00e9sum\u00e9. Each work or education entry is a separately editable encrypted record.",
+  "moduleUri": "https://enbox.id/modules/career-history/v1",
+  "exportName": "CareerHistoryModule",
+  "status": "experimental",
+  "definitionFile": "definition.json",
+  "examplesFile": "examples.json",
+  "captureExamples": [
+    "I worked as a cartographer at Cedar Maps from September 2020 through 2023.",
+    "I attended North Coast College for geography from 2016 to 2020.",
+    "Update my existing Cedar Maps role with this accomplishment: I mapped 42 accessible trail entrances."
+  ],
+  "dependencies": {},
+  "records": [
+    {
+      "path": "work",
+      "type": "work",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/career-history/v1/schemas/work",
+      "schemaFile": "schemas/work.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    },
+    {
+      "path": "education",
+      "type": "education",
+      "dataFormats": [
+        "application/json"
+      ],
+      "encryptionRequired": true,
+      "schema": "https://enbox.id/modules/career-history/v1/schemas/education",
+      "schemaFile": "schemas/education.json",
+      "role": false,
+      "immutable": false,
+      "singleton": false
+    }
+  ],
+  "notes": [
+    "Each work record maps to one work[] item and each education record to one education[] item in [JSON Resume v1.0.0](https://github.com/jsonresume/resume-schema/blob/v1.0.0/schema.json). Export selected records in the user\u2019s preferred order.",
+    "Work fields are name (employer), position, location, description (employer description), url, startDate, endDate, summary and highlights. Education fields are institution, area, studyType, url, startDate, endDate, score (text, preserving the grading scale) and courses.",
+    "This profile requires the employer or institution name and accepts the standard named fields. An importer should surface extension fields or unsupported r\u00e9sum\u00e9 sections for review and retain the source file if the user wants the original.",
+    "An absent endDate means the user supplied no end date. Render current employment or a completed degree only when the user confirms it. Preserve year-only and month-only dates without guessing a day."
+  ],
+  "capture": {
+    "identity": "Use the selected role or study record. Otherwise compare employer and position, or institution and program, together with the supplied period. Two roles at one employer and two programs at one school may be separate records. Ask when several match.",
+    "exclude": [
+      "\u201cI hope to study geography\u201d is a learning goal. \u201cRemind me to apply\u201d is a task. A question about a career path establishes neither work experience nor enrollment.",
+      "A coworker\u2019s biography belongs to their contact only with a separate explicit request. A signed qualification belongs in Credentials."
+    ],
+    "workflow": "Create one record for each stated role or period of study. Apply corrections to the matched entry, keeping dates at the precision given. Keep course lists and highlights inside their JSON Resume entry."
+  }
+}

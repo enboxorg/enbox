@@ -1,0 +1,148 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "minProperties": 1,
+  "properties": {
+    "holder": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "givenNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "familyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "personalNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Identifier of the holder as printed. Preserve leading zeros."
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "format": "date"
+        },
+        "nationalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3,
+            "pattern": "^[A-Z]{2,3}$"
+          },
+          "minItems": 1,
+          "maxItems": 10
+        },
+        "address": {
+          "$ref": "https://enbox.id/schemas/common/address/v1"
+        }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "country": {
+          "type": "string",
+          "pattern": "^[A-Z]{2,3}$",
+          "description": "Use the supplied two- or three-letter country code. Preserve the source evidence for other representations."
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "documentNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Identifier of this document issuance. Store passport, ID card and licence numbers here as strings."
+    },
+    "issueDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "expiryDate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "format": "date"
+    },
+    "drivingPrivileges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "validFrom": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "format": "date"
+          },
+          "validUntil": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "format": "date"
+          },
+          "restrictions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "minItems": 0,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "category"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 100,
+      "description": "One item per printed licence class. Preserve jurisdiction-specific designations and restrictions."
+    },
+    "passportTypeCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16,
+      "description": "Document type code as printed on the passport. Omit when absent."
+    }
+  }
+}

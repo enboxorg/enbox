@@ -1,0 +1,30 @@
+{
+  "summary": "An action the user intends to complete, including a deadline or reminder.",
+  "targets": [
+    {
+      "path": "task",
+      "utterance": "Remind me to send Jules the photos by Friday.",
+      "distinguish": "Use Events for a scheduled occurrence. Resolve relative dates in the user’s timezone before preparing the record."
+    },
+    {
+      "path": "state",
+      "utterance": "Remind me an hour before the deadline on my existing passport renewal task.",
+      "distinguish": "Resolve the existing task record ID and store the alert in the user’s private state. A client schedules delivery."
+    },
+    {
+      "path": "space/task",
+      "utterance": "Add a task to our household space to water the plants.",
+      "distinguish": "Use the selected Collaboration space and the parent record at this path. Keep independent and household instances separate when resolving a match."
+    }
+  ],
+  "hints": {
+    "keywords": [
+      "remind me",
+      "to-do",
+      "checklist",
+      "action item",
+      "deadline"
+    ],
+    "sensitive": false
+  }
+}

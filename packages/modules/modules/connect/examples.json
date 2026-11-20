@@ -1,0 +1,11 @@
+[
+  {
+    "path": "wallet",
+    "encoding": "json",
+    "data": {
+      "webWallets": [
+        "https://wallet.example.com"
+      ]
+    }
+  }
+]

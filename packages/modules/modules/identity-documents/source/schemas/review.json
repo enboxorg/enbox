@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://enbox.id/modules/identity-documents/v1/schemas/review",
+  "title": "ReviewData",
+  "description": "Immutable review of an issuance or its extraction. A corrected decision can revise the classification, fields, or both.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reviewedAt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "format": "date-time"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "corrected",
+        "rejected"
+      ]
+    },
+    "extraction": {
+      "$ref": "#/definitions/reviewRecordReference"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "notes": {
+      "$ref": "https://enbox.id/schemas/common/note-text/v1"
+    },
+    "source": {
+      "$ref": "#/definitions/reviewSource"
+    },
+    "labels": {
+      "$ref": "https://enbox.id/schemas/common/labels/v1"
+    }
+  },
+  "required": [
+    "reviewedAt",
+    "decision"
+  ],
+  "examples": [
+    {
+      "reviewedAt": "2026-01-15T12:05:00Z",
+      "extraction": {
+        "recordId": "example-extraction"
+      },
+      "decision": "corrected",
+      "corrections": {
+        "documentNumber": "000DEMO123"
+      },
+      "reason": "Compared the document number with the scan."
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "corrected"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "corrections"
+            ]
+          },
+          {
+            "required": [
+              "documentType"
+            ]
+          }
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "corrections"
+              ]
+            },
+            {
+              "required": [
+                "documentType"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "reviewRecordReference": {
+      "$ref": "https://enbox.id/schemas/common/record-reference/v1"
+    },
+    "reviewSource": {
+      "$ref": "https://enbox.id/schemas/common/provenance/v1"
+    }
+  }
+}

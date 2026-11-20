@@ -1,0 +1,24 @@
+[
+  {
+    "path": "space",
+    "encoding": "json",
+    "data": {
+      "name": "Our household"
+    }
+  },
+  {
+    "path": "space/admin",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "space/editor",
+    "encoding": "json",
+    "data": {}
+  },
+  {
+    "path": "space/viewer",
+    "encoding": "json",
+    "data": {}
+  }
+]
