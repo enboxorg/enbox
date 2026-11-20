@@ -14,6 +14,7 @@ import { getRoleAudienceContextId } from '../core/module-role-records.js';
 import { Message } from '../core/message.js';
 import { ModulesGrantAuthorization } from '../core/modules-grant-authorization.js';
 import { PermissionGrant } from '../modules/permission-grant.js';
+import { Records } from '../utils/records.js';
 import { Time } from '../utils/time.js';
 import { validateModuleDefinitionSchema } from '../schema-validator.js';
 import { validateModuleTagSchemaDefinition } from '../utils/module-tags.js';
@@ -52,7 +53,8 @@ export class ModulesConfigure extends AbstractMessage<ModulesConfigureMessage> {
     ModulesConfigure.validateReservedEncryptionControlPath(message.descriptor?.definition);
     Message.validateJsonSchema(message);
     ModulesConfigure.validateModuleDefinition(message.descriptor.definition);
-    await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
+    const signaturePayload = await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
+    await Records.validateDelegatedGrantReferentialIntegrity(message, signaturePayload);
     Time.validateTimestamp(message.descriptor.messageTimestamp);
 
     return new ModulesConfigure(message);

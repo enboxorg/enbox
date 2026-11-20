@@ -8,6 +8,7 @@ import { DwnErrorCode } from './dwn-error.js';
 import { Encoder } from '../utils/encoder.js';
 import { EncryptionModule } from '../modules/encryption.js';
 import { Message } from './message.js';
+import { PermissionsModule } from '../modules/permissions.js';
 import { ROLE_AUDIENCE_DERIVATION_SCHEME } from '../utils/encryption.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 import { ENCRYPTION_CONTROL_AUDIENCE_PATH, ENCRYPTION_CONTROL_DELIVERY_PATH } from './constants.js';
@@ -402,6 +403,13 @@ function grantDependencyFromMessage(message: GenericMessage): DependencyRef | un
     }
   }
 
+  if (isPermissionsRevocationMessage(message)) {
+    const parentId = (message.descriptor as Record<string, unknown>).parentId;
+    if (typeof parentId === 'string') {
+      return { type: 'Grant', permissionGrantId: parentId };
+    }
+  }
+
   const descriptorGrantId = (message.descriptor as Record<string, unknown>).permissionGrantId;
   if (typeof descriptorGrantId === 'string') {
     return { type: 'Grant', permissionGrantId: descriptorGrantId };
@@ -602,6 +610,14 @@ function isEncryptionModuleMessage(message: GenericMessage): boolean {
   const descriptor = message.descriptor as Record<string, unknown>;
   return descriptor.interface === DwnInterfaceName.Records &&
     descriptor.module === EncryptionModule.uri;
+}
+
+function isPermissionsRevocationMessage(message: GenericMessage): boolean {
+  const descriptor = message.descriptor as Record<string, unknown>;
+  return descriptor.interface === DwnInterfaceName.Records &&
+    descriptor.method === DwnMethodName.Write &&
+    descriptor.module === PermissionsModule.uri &&
+    descriptor.modulePath === PermissionsModule.revocationPath;
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {

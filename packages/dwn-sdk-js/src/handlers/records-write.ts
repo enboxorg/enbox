@@ -338,19 +338,23 @@ export class RecordsWriteHandler implements MethodHandler {
   }
 
   /**
-   * Maps a `commitRecordsWrite()` failure to a 400 reply when the error is a recognized,
-   * client-facing validation failure; otherwise rethrows the original error.
+   * Maps a `commitRecordsWrite()` failure to a 400 or 401 reply when the error is a recognized,
+   * client-facing failure; otherwise rethrows the original error.
    */
   private mapCommitWriteErrorToReply(error: unknown): GenericMessageReply {
     if (error instanceof DwnError) {
+      const moduleStatusCode = EncryptionControl.mapErrorToStatusCode(error.code) ??
+        this.deps.coreModules?.mapErrorToStatusCode(error.code);
+      if (moduleStatusCode !== undefined) {
+        return messageReplyFromError(error, moduleStatusCode);
+      }
+
       if (error.code === DwnErrorCode.RecordsWriteMissingEncodedDataInPrevious ||
         error.code === DwnErrorCode.RecordsWriteMissingDataInPrevious ||
         error.code === DwnErrorCode.RecordsWriteNotAllowedAfterDelete ||
         error.code === DwnErrorCode.RecordsWriteDataCidMismatch ||
         error.code === DwnErrorCode.RecordsWriteDataSizeMismatch ||
-        error.code.startsWith('SchemaValidator') ||
-        EncryptionControl.mapErrorToStatusCode(error.code) !== undefined ||
-        this.deps.coreModules?.mapErrorToStatusCode(error.code) !== undefined) {
+        error.code.startsWith('SchemaValidator')) {
         return messageReplyFromError(error, 400);
       }
     }

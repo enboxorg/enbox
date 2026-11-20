@@ -286,6 +286,9 @@ export class PermissionsModule implements CoreModule {
     if (errorCode.startsWith('PermissionsModuleValidate')) {
       return 400;
     }
+    if (errorCode === DwnErrorCode.GrantAuthorizationGrantMissing) {
+      return 401;
+    }
     return undefined;
   }
 

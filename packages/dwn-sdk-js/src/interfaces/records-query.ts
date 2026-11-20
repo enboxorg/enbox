@@ -1,10 +1,9 @@
 import type { MessageSigner } from '../types/signer.js';
 import type { Pagination } from '../types/message-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { DataEncodedRecordsWriteMessage, RecordsFilter, RecordsQueryDescriptor, RecordsQueryMessage } from '../types/records-types.js';
+import type { DataEncodedRecordsWriteMessage, DateSort, RecordsFilter, RecordsQueryDescriptor, RecordsQueryMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
-import { DateSort } from '../types/records-types.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
@@ -36,15 +35,12 @@ export type RecordsQueryOptions = {
 export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
 
   public static async parse(message: RecordsQueryMessage): Promise<RecordsQuery> {
-
-    if (message.descriptor.filter.published === false) {
-      if (message.descriptor.dateSort === DateSort.PublishedAscending || message.descriptor.dateSort === DateSort.PublishedDescending) {
-        throw new DwnError(
-          DwnErrorCode.RecordsQueryParseFilterPublishedSortInvalid,
-          `queries must not filter for \`published:false\` and sort by ${message.descriptor.dateSort}`
-        );
-      }
-    }
+    Records.validatePublishedSort(
+      message.descriptor.filter,
+      message.descriptor.dateSort,
+      DwnErrorCode.RecordsQueryParseFilterPublishedSortInvalid,
+      'RecordsQuery',
+    );
 
     let signaturePayload;
     if (message.authorization !== undefined) {
@@ -94,14 +90,12 @@ export class RecordsQuery extends AbstractMessage<RecordsQueryMessage> {
       pagination       : options.pagination,
     };
 
-    if (options.filter.published === false) {
-      if (options.dateSort === DateSort.PublishedAscending || options.dateSort === DateSort.PublishedDescending) {
-        throw new DwnError(
-          DwnErrorCode.RecordsQueryCreateFilterPublishedSortInvalid,
-          `queries must not filter for \`published:false\` and sort by ${options.dateSort}`
-        );
-      }
-    }
+    Records.validatePublishedSort(
+      options.filter,
+      options.dateSort,
+      DwnErrorCode.RecordsQueryCreateFilterPublishedSortInvalid,
+      'RecordsQuery',
+    );
 
     // delete all descriptor properties that are `undefined` else the code will encounter the following IPLD issue when attempting to generate CID:
     // Error: `undefined` is not supported by the IPLD Data Model and cannot be encoded

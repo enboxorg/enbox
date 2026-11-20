@@ -1,16 +1,15 @@
 import type { MessageSigner } from '../types/signer.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
-import type { DataEncodedRecordsWriteMessage, RecordsFilter , RecordsReadDescriptor, RecordsReadMessage, RecordsWriteMessage } from '../types/records-types.js';
+import type { DataEncodedRecordsWriteMessage, DateSort, RecordsFilter , RecordsReadDescriptor, RecordsReadMessage, RecordsWriteMessage } from '../types/records-types.js';
 
 import { AbstractMessage } from '../core/abstract-message.js';
-import { DateSort } from '../types/records-types.js';
+import { DwnErrorCode } from '../core/dwn-error.js';
 import { Message } from '../core/message.js';
 import { PermissionGrant } from '../modules/permission-grant.js';
 import { Records } from '../utils/records.js';
 import { RecordsGrantAuthorization } from '../core/records-grant-authorization.js';
 import { removeUndefinedProperties } from '@enbox/common';
 import { Time } from '../utils/time.js';
-import { DwnError, DwnErrorCode } from '../core/dwn-error.js';
 import { DwnInterfaceName, DwnMethodName } from '../enums/dwn-interface-method.js';
 
 export type RecordsReadOptions = {
@@ -37,14 +36,12 @@ export type RecordsReadOptions = {
 export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
 
   public static async parse(message: RecordsReadMessage): Promise<RecordsRead> {
-    if (message.descriptor.filter.published === false) {
-      if (message.descriptor.dateSort === DateSort.PublishedAscending || message.descriptor.dateSort === DateSort.PublishedDescending) {
-        throw new DwnError(
-          DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid,
-          `reads must not filter for \`published:false\` and sort by ${message.descriptor.dateSort}`
-        );
-      }
-    }
+    Records.validatePublishedSort(
+      message.descriptor.filter,
+      message.descriptor.dateSort,
+      DwnErrorCode.RecordsReadParseFilterPublishedSortInvalid,
+      'RecordsRead',
+    );
 
     let signaturePayload;
     if (message.authorization !== undefined) {
@@ -73,14 +70,7 @@ export class RecordsRead extends AbstractMessage<RecordsReadMessage> {
       permissionGrantId: options.permissionGrantId
     });
 
-    if (options.filter.published === false) {
-      if (dateSort === DateSort.PublishedAscending || dateSort === DateSort.PublishedDescending) {
-        throw new DwnError(
-          DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid,
-          `reads must not filter for \`published:false\` and sort by ${dateSort}`
-        );
-      }
-    }
+    Records.validatePublishedSort(filter, dateSort, DwnErrorCode.RecordsReadCreateFilterPublishedSortInvalid, 'RecordsRead');
 
     const descriptor: RecordsReadDescriptor = {
       interface                 : DwnInterfaceName.Records,

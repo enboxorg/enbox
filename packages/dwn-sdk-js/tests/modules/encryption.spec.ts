@@ -650,11 +650,16 @@ describe('EncryptionModule', () => {
   });
 
   describe('mapErrorToStatusCode()', () => {
-    it('should map encryption validation errors to bad request', () => {
+    it('should map encryption and grant-key validation errors to their spec status codes', () => {
       const encryptionModule = new EncryptionModule();
 
       expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.EncryptionModuleValidateGrantKeyGrantScopeMismatch)).toBe(400);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBeUndefined();
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.ModuleAuthorizationModuleNotFound)).toBe(400);
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantMissing)).toBe(401);
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantNotYetActive)).toBe(401);
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBe(401);
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantRevoked)).toBe(401);
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.RecordsWriteDataCidMismatch)).toBeUndefined();
     });
   });
 

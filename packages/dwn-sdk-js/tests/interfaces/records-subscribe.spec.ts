@@ -1,4 +1,7 @@
 import dexModuleDefinition from '../vectors/module-definitions/dex.json' with { type: 'json' };
+
+import { DateSort } from '../../src/types/records-types.js';
+import { DwnErrorCode } from '../../src/core/dwn-error.js';
 import { Jws } from '../../src/utils/jws.js';
 import { RecordsSubscribe } from '../../src/interfaces/records-subscribe.js';
 import { TestDataGenerator } from '../utils/test-data-generator.js';
@@ -7,6 +10,22 @@ import { describe, expect, it } from 'bun:test';
 
 describe('RecordsSubscribe', () => {
   describe('create()', () => {
+    it('should not allow published to be set to false with a dateSort set to sorting by `PublishedAscending` or `PublishedDescending`', async () => {
+      for (const dateSort of [DateSort.PublishedAscending, DateSort.PublishedDescending]) {
+        const control = RecordsSubscribe.create({
+          filter: { schema: 'http://published-sort-schema', published: true },
+          dateSort,
+        });
+        await expect(control).resolves.toBeDefined();
+
+        const rejected = RecordsSubscribe.create({
+          filter: { schema: 'http://published-sort-schema', published: false },
+          dateSort,
+        });
+        await expect(rejected).rejects.toThrow(DwnErrorCode.RecordsSubscribeCreateFilterPublishedSortInvalid);
+      }
+    });
+
     it('should not allow published to be set to false with a datePublished filter also set', async () => {
       // test control
       const randomDate = TestDataGenerator.randomTimestamp();
