@@ -1,5 +1,5 @@
-import type { PaginationCursor } from '../../src/types/query-types.js';
 import type { RecordsWriteMessage } from '../../src/types/records-types.js';
+import type { Filter, PaginationCursor, RangeFilter } from '../../src/types/query-types.js';
 import type { KeyValues, MessageStore } from '../../src/index.js';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
@@ -786,6 +786,50 @@ export function testMessageStore(): void {
 
         const count = await messageStore.count(alice.did, [{ schema: schema1 }, { schema: schema2 }]);
         expect(count).toBe(7);
+      });
+
+      it('should apply zero and empty-string range bounds when querying and counting', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const emptyWrite = await TestDataGenerator.generateRecordsWrite({
+          data : new Uint8Array(0),
+          tags : { count: 0, label: '' },
+        });
+        const nonEmptyWrite = await TestDataGenerator.generateRecordsWrite({
+          data   : TestDataGenerator.randomBytes(10),
+          schema : 'https://schema.org/NonEmpty',
+          tags   : { count: 5, label: 'alpha' },
+        });
+        await messageStore.put(alice.did, emptyWrite.message, {
+          ...(await emptyWrite.recordsWrite.constructIndexes(true)),
+          schema: '',
+        });
+        await messageStore.put(alice.did, nonEmptyWrite.message, await nonEmptyWrite.recordsWrite.constructIndexes(true));
+
+        const expectFilterMatches = async (filter: Filter, expectedRecordIds: string[]): Promise<void> => {
+          const { messages } = await messageStore.query(alice.did, [filter]);
+          expect(messages.map(message => (message as RecordsWriteMessage).recordId)).toEqual(expectedRecordIds);
+          expect(await messageStore.count(alice.did, [filter])).toBe(expectedRecordIds.length);
+        };
+        const expectDataSizeMatches = (dataSize: RangeFilter, expectedRecordIds: string[]): Promise<void> =>
+          expectFilterMatches({ dataSize }, expectedRecordIds);
+        const expectSchemaMatches = (schema: RangeFilter, expectedRecordIds: string[]): Promise<void> =>
+          expectFilterMatches({ schema }, expectedRecordIds);
+
+        await expectDataSizeMatches({ gte: 0, lte: 0 }, [emptyWrite.message.recordId]);
+        await expectDataSizeMatches({ lte: 0 }, [emptyWrite.message.recordId]);
+        await expectDataSizeMatches({ gt: 0 }, [nonEmptyWrite.message.recordId]);
+        await expectDataSizeMatches({ lt: 0 }, []);
+
+        await expectSchemaMatches({ gte: '', lte: '' }, [emptyWrite.message.recordId]);
+        await expectSchemaMatches({ lte: '' }, [emptyWrite.message.recordId]);
+        await expectSchemaMatches({ gt: '' }, [nonEmptyWrite.message.recordId]);
+        await expectSchemaMatches({ lt: '' }, []);
+
+        await expectFilterMatches({ 'tag.count': { gte: 0, lte: 0 } }, [emptyWrite.message.recordId]);
+        await expectFilterMatches({ 'tag.count': { gt: 0 } }, [nonEmptyWrite.message.recordId]);
+        await expectFilterMatches({ 'tag.count': { lt: 0 } }, []);
+        await expectFilterMatches({ 'tag.label': { gte: '', lte: '' } }, [emptyWrite.message.recordId]);
+        await expectFilterMatches({ 'tag.label': { gt: '' } }, [nonEmptyWrite.message.recordId]);
       });
     });
 
