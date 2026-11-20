@@ -119,16 +119,17 @@ function processRangeFilterProperty<DB = DwnDatabaseType, TB extends keyof DB = 
     return;
   }
 
-  if (value.gt) {
+  // Compare against `undefined`: `0` and `''` are valid bounds.
+  if (value.gt !== undefined) {
     andOperands.push(eb(column, '>', sanitizedValue(value.gt)));
   }
-  if (value.gte) {
+  if (value.gte !== undefined) {
     andOperands.push(eb(column, '>=', sanitizedValue(value.gte)));
   }
-  if (value.lt) {
+  if (value.lt !== undefined) {
     andOperands.push(eb(column, '<', sanitizedValue(value.lt)));
   }
-  if (value.lte) {
+  if (value.lte !== undefined) {
     andOperands.push(eb(column, '<=', sanitizedValue(value.lte)));
   }
 }
