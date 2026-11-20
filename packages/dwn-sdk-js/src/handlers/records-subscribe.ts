@@ -1,14 +1,15 @@
 import type { GuardedSubscriptionHandler } from './guarded-subscription.js';
 import type { RecordsCollectionVisibility } from './records-collection.js';
 import type { ResolvedModuleRole } from '../core/module-authorization-action.js';
+import type { EventSubscription, ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
 import type { Filter, PaginationCursor } from '../types/query-types.js';
 import type { HandlerDependencies, MethodHandler } from '../types/method-handler.js';
-import type { ProgressGapInfo, ProgressToken, SubscriptionEvent, SubscriptionListener } from '../types/subscriptions.js';
 import type { RecordsQueryReplyEntry, RecordsSubscribeMessage, RecordsSubscribeReply } from '../types/records-types.js';
 
 import { attachInitialWrites } from '../utils/initial-write-attachment.js';
 import { createGuardedSubscriptionHandler } from './guarded-subscription.js';
 import { EncryptionControl } from '../core/encryption-control.js';
+import { executeUnlessAborted } from '../utils/abort.js';
 import { GrantAuthorization } from '../core/grant-authorization.js';
 import { isRecordLimitOccupant } from '../utils/record-limit-occupancy.js';
 import { Message } from '../core/message.js';
@@ -80,6 +81,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     const messageCid = await Message.getCid(message);
     const { cursor: eventLogCursor } = recordsSubscribe.message.descriptor;
+    if (eventFilters.length === 0) {
+      return this.handleEmptyVisibilitySubscription(tenant, messageCid, eventLogCursor, subscriptionHandler, subscriptionSignal);
+    }
+
     const guardedSubscriptionHandler = RecordsSubscribeHandler.createDeliveryGuard({
       deliveryAuthorization,
       deps: this.deps,
@@ -181,6 +186,58 @@ export class RecordsSubscribeHandler implements MethodHandler {
   }
 
   /**
+   * Handles subscriptions whose resolved visibility filter list is empty. Event logs interpret an
+   * empty filter array as "match everything", whereas an empty Records visibility filter list means
+   * no record can ever be visible to the requester, so avoid scanning stored rows or registering
+   * a live wake listener while still validating any cursor and delivering EOSE.
+   */
+  private async handleEmptyVisibilitySubscription(
+    tenant: string,
+    messageCid: string,
+    eventLogCursor: ProgressToken | undefined,
+    subscriptionHandler: SubscriptionListener,
+    subscriptionSignal?: AbortSignal,
+  ): Promise<RecordsSubscribeReply> {
+    let closed = false;
+    const subscription: EventSubscription = {
+      id    : messageCid,
+      close : async (): Promise<void> => { closed = true; },
+    };
+
+    if (eventLogCursor === undefined) {
+      subscriptionSignal?.throwIfAborted();
+      return {
+        status  : { code: 200, detail: 'OK' },
+        entries : [],
+        subscription,
+      };
+    }
+
+    try {
+      subscriptionSignal?.throwIfAborted();
+      await executeUnlessAborted(this.deps.eventLog!.read(tenant, { cursor: eventLogCursor, limit: 0 }), subscriptionSignal);
+      const bounds = await executeUnlessAborted(this.deps.eventLog!.getReplayBounds(tenant), subscriptionSignal);
+      const eoseCursor = bounds?.latest ?? eventLogCursor;
+
+      if (!closed && !subscriptionSignal?.aborted) {
+        const delivery = subscriptionHandler({ type: 'eose', cursor: eoseCursor });
+        if (subscriptionSignal === undefined) {
+          await delivery;
+        } else {
+          await executeUnlessAborted(Promise.resolve(delivery), subscriptionSignal);
+        }
+      }
+
+      return {
+        status: { code: 200, detail: 'OK' },
+        subscription,
+      };
+    } catch (error) {
+      return RecordsSubscribeHandler.mapCursorSubscribeErrorToReply(error);
+    }
+  }
+
+  /**
    * Handles cursor-mode subscription: catch-up from EventLog + EOSE + live. All catch-up,
    * buffering, dedup, and EOSE delivery are handled by the EventLog implementation. The handler
    * just passes the cursor and filters. The subscriptionHandler receives SubscriptionMessage
@@ -207,15 +264,19 @@ export class RecordsSubscribeHandler implements MethodHandler {
         subscription,
       };
     } catch (error) {
-      if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
-        const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
-        return {
-          status : { code: 410, detail: 'Progress token gap' },
-          error  : gapInfo === undefined ? undefined : { code: 'ProgressGap' as const, ...gapInfo },
-        };
-      }
-      return messageReplyFromError(error, 500);
+      return RecordsSubscribeHandler.mapCursorSubscribeErrorToReply(error);
     }
+  }
+
+  private static mapCursorSubscribeErrorToReply(error: unknown): RecordsSubscribeReply {
+    if (error instanceof DwnError && error.code === DwnErrorCode.EventLogProgressGap) {
+      const gapInfo = (error as any).gapInfo as ProgressGapInfo | undefined;
+      return {
+        status : { code: 410, detail: 'Progress token gap' },
+        error  : gapInfo === undefined ? undefined : { code: 'ProgressGap' as const, ...gapInfo },
+      };
+    }
+    return messageReplyFromError(error, 500);
   }
 
   /**
@@ -353,6 +414,10 @@ export class RecordsSubscribeHandler implements MethodHandler {
       fail: (code: DwnErrorCode, detail: string) => void,
     ): Promise<SubscriptionEvent | undefined> => {
       if (!await authorizeDelivery(fail)) {
+        return undefined;
+      }
+
+      if (eventFilters.length === 0) {
         return undefined;
       }
 

@@ -40,6 +40,10 @@ export class RecordsCountHandler implements MethodHandler {
     }
 
     const filters = buildRecordsSnapshotFilters(recordsCount, visibility);
+    if (filters.length === 0) {
+      return { status: { code: 200, detail: 'OK' }, count: 0 };
+    }
+
     const recordLimit = await resolveRecordLimitOccupancy({
       validationStateReader : this.deps.validationStateReader,
       tenant,

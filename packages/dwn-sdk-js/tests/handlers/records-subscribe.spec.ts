@@ -259,6 +259,79 @@ export function testRecordsSubscribeHandler(): void {
         await subscribeReply.subscription!.close();
       });
 
+      it('should return and deliver nothing to a non-owner whose filter names neither them as author nor as recipient', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+        await TestDataGenerator.installDefaultTestModule(dwn, alice);
+        const { cursor: cursorBeforeWrite } = await eventLog.read(alice.did);
+
+        const privateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, recipient: carol.did, schema: 'post' });
+        const privateWriteReply = await dwn.processMessage(alice.did, privateWrite.message, { dataStream: privateWrite.dataStream });
+        expect(privateWriteReply.status.code).toBe(202);
+
+        // Bob invokes no grant or role, so none of the unpublished records this filter selects are visible to him.
+        const filter: RecordsFilter = { published: false, author: alice.did, recipient: carol.did };
+        const subscribeSpy = sinon.spy(eventLog, 'subscribe');
+        const logReadSpy = sinon.spy(messageStore, 'logRead');
+
+        const snapshotEvents: SubscriptionMessage[] = [];
+        const snapshotSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: bob, filter });
+        const snapshotReply = await dwn.processMessage(alice.did, snapshotSubscribe.message, {
+          subscriptionHandler: (message): void => { snapshotEvents.push(message); },
+        });
+        expect(snapshotReply.status.code).toBe(200);
+        expect(snapshotReply.entries).toEqual([]);
+        expect(subscribeSpy.called).toBe(false);
+
+        // Cursor-mode replay validates the cursor without scanning stored rows and still ends with EOSE.
+        const receivedMessages: SubscriptionMessage[] = [];
+        const cursorSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: bob, filter, cursor: cursorBeforeWrite });
+        const cursorReply = await dwn.processMessage(alice.did, cursorSubscribe.message, {
+          subscriptionHandler: (message): void => { receivedMessages.push(message); },
+        });
+        expect(cursorReply.status.code).toBe(200);
+        expect(subscribeSpy.called).toBe(false);
+        expect(logReadSpy.getCalls().every((call) => call.args[1]?.limit === 0)).toBe(true);
+        expect(receivedMessages).toHaveLength(1);
+        expect(receivedMessages[0].type).toBe('eose');
+
+        // Live writes after opening either subscription must not wake or deliver anything to Bob.
+        const livePrivateWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, recipient: carol.did, schema: 'post' });
+        const livePrivateWriteReply = await dwn.processMessage(alice.did, livePrivateWrite.message, { dataStream: livePrivateWrite.dataStream });
+        expect(livePrivateWriteReply.status.code).toBe(202);
+
+        const controlWrite = await TestDataGenerator.generateRecordsWrite({ author: alice, published: true, schema: 'post' });
+        const controlEvents: SubscriptionMessage[] = [];
+        const controlSubscribe = await TestDataGenerator.generateRecordsSubscribe({ author: bob, filter: { published: true, schema: 'post' } });
+        const controlSubReply = await dwn.processMessage(alice.did, controlSubscribe.message, {
+          subscriptionHandler: (message): void => { controlEvents.push(message); },
+        });
+        expect(controlSubReply.status.code).toBe(200);
+        const controlWriteReply = await dwn.processMessage(alice.did, controlWrite.message, { dataStream: controlWrite.dataStream });
+        expect(controlWriteReply.status.code).toBe(202);
+        await Poller.pollUntilSuccessOrTimeout(async () => {
+          expect(controlEvents.some(message => message.type === 'event')).toBe(true);
+        });
+        expect(snapshotEvents).toEqual([]);
+        expect(receivedMessages.filter(message => message.type === 'event')).toEqual([]);
+
+        // Stale or mismatched cursors must still return 410 ProgressGap.
+        const invalidCursorSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+          author : bob,
+          filter,
+          cursor : { ...cursorBeforeWrite!, streamId: 'wrong-stream' },
+        });
+        const invalidCursorReply = await dwn.processMessage(alice.did, invalidCursorSubscribe.message, {
+          subscriptionHandler: () => {},
+        });
+        expect(invalidCursorReply.status.code).toBe(410);
+
+        await controlSubReply.subscription!.close();
+        await snapshotReply.subscription!.close();
+        await cursorReply.subscription!.close();
+      });
+
       it('should support pagination on initial entries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         await TestDataGenerator.installDefaultTestModule(dwn, alice);
