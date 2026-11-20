@@ -300,7 +300,7 @@ export class EncryptionControl {
 
     return EncryptionControl.canEnumerateAudience({
       tenant,
-      actorDid              : requester,
+      requester,
       incomingMessage       : input.incomingMessage,
       tags,
       validationStateReader : input.validationStateReader,
@@ -867,17 +867,17 @@ export class EncryptionControl {
 
   private static async canEnumerateAudience(input: {
     tenant: string;
-    actorDid: string;
+    requester: string;
     incomingMessage: ControlReadMessage;
     tags: RoleAudienceKeyId;
     validationStateReader: ValidationStateReader;
   }): Promise<boolean> {
     const {
-      tenant, actorDid, incomingMessage, tags, validationStateReader
+      tenant, requester, incomingMessage, tags, validationStateReader
     } = input;
     const { author, delegatedGrant, tenantGrant } = await EncryptionControl.resolveControlReadGrants({
       tenant,
-      requester: actorDid,
+      requester,
       incomingMessage,
       validationStateReader,
     });
@@ -920,6 +920,11 @@ export class EncryptionControl {
     });
   }
 
+  /**
+   * Unlike audience enumeration, delivery reads follow the spec's grant-party rule rather than the
+   * author's own rights: a covering grant reaches only deliveries addressed to its grantor or grantee.
+   * A delegate therefore reads only its grantor's own deliveries, even when the grantor is the tenant.
+   */
   private static async canReadDeliveryByDelegatedGrant(input: {
     tenant: string;
     incomingMessage: ControlReadMessage;

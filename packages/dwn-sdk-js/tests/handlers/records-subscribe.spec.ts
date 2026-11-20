@@ -292,6 +292,7 @@ export function testRecordsSubscribeHandler(): void {
         });
         expect(cursorReply.status.code).toBe(200);
         expect(subscribeSpy.called).toBe(false);
+        expect(logReadSpy.called).toBe(true);
         expect(logReadSpy.getCalls().every((call) => call.args[1]?.limit === 0)).toBe(true);
         expect(receivedMessages).toHaveLength(1);
         expect(receivedMessages[0].type).toBe('eose');
