@@ -346,16 +346,8 @@ export class EncryptionModule implements CoreModule {
   }
 
   public mapErrorToStatusCode(errorCode: string): number | undefined {
-    if (errorCode.startsWith('EncryptionModuleValidate') ||
-      errorCode === DwnErrorCode.ModuleAuthorizationEncryptionNotAllowed ||
-      errorCode === DwnErrorCode.ModuleAuthorizationModuleNotFound) {
+    if (errorCode.startsWith('EncryptionModuleValidate')) {
       return 400;
-    }
-    if (errorCode === DwnErrorCode.GrantAuthorizationGrantMissing ||
-      errorCode === DwnErrorCode.GrantAuthorizationGrantNotYetActive ||
-      errorCode === DwnErrorCode.GrantAuthorizationGrantExpired ||
-      errorCode === DwnErrorCode.GrantAuthorizationGrantRevoked) {
-      return 401;
     }
     return undefined;
   }

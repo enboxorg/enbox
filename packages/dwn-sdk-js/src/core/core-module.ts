@@ -7,6 +7,8 @@ import type { RecordsWrite } from '../interfaces/records-write.js';
 import type { RecordsWriteMessage } from '../types/records-types.js';
 import type { ValidationStateReader } from '../types/validation-state-reader.js';
 
+import { DwnErrorCode } from './dwn-error.js';
+
 /**
  * Bundled store references passed to core module post-processing hooks.
  */
@@ -79,6 +81,19 @@ export interface CoreModule {
 }
 
 /**
+ * Write pre-checks of several core modules look up a grant or module the record names (grant-key
+ * admission resolves its grant, a revocation its parent grant). No module owns these failure codes,
+ * so the registry maps them once, using the statuses the spec's error-code table fixes for RecordsWrite.
+ */
+const SHARED_WRITE_PRE_CHECK_STATUS_CODES: ReadonlyMap<string, number> = new Map([
+  [DwnErrorCode.GrantAuthorizationGrantMissing, 401],
+  [DwnErrorCode.GrantAuthorizationGrantNotYetActive, 401],
+  [DwnErrorCode.GrantAuthorizationGrantExpired, 401],
+  [DwnErrorCode.GrantAuthorizationGrantRevoked, 401],
+  [DwnErrorCode.ModuleAuthorizationModuleNotFound, 400],
+]);
+
+/**
  * Registry of core modules. Owned by a `Dwn` instance (not a static singleton)
  * so that each DWN — including those in tests — gets an isolated registry.
  */
@@ -114,8 +129,9 @@ export class CoreModuleRegistry {
   }
 
   /**
-   * Delegate error code mapping to all registered core modules.
-   * Returns the first non-`undefined` status code, or `undefined` if no module claims the error.
+   * Maps a failure of a core module's write pre-checks to a status code: first the mapping of the
+   * module that owns the error code, then the shared grant and module lookup failures.
+   * Returns `undefined` for any other error.
    */
   public mapErrorToStatusCode(errorCode: string): number | undefined {
     for (const module of this._modules.values()) {
@@ -124,6 +140,6 @@ export class CoreModuleRegistry {
         return status;
       }
     }
-    return undefined;
+    return SHARED_WRITE_PRE_CHECK_STATUS_CODES.get(errorCode);
   }
 }
