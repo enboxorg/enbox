@@ -215,6 +215,8 @@ export class RecordsSubscribeHandler implements MethodHandler {
 
     try {
       subscriptionSignal?.throwIfAborted();
+      // Mirrors how DurableEventLog starts a catch-up (`getCatchUpHighWater`): a zero-limit read
+      // validates the cursor, and replay ends at the log's latest position. Keep the two in step.
       await executeUnlessAborted(this.deps.eventLog!.read(tenant, { cursor: eventLogCursor, limit: 0 }), subscriptionSignal);
       const bounds = await executeUnlessAborted(this.deps.eventLog!.getReplayBounds(tenant), subscriptionSignal);
       const eoseCursor = bounds?.latest ?? eventLogCursor;
@@ -414,10 +416,6 @@ export class RecordsSubscribeHandler implements MethodHandler {
       fail: (code: DwnErrorCode, detail: string) => void,
     ): Promise<SubscriptionEvent | undefined> => {
       if (!await authorizeDelivery(fail)) {
-        return undefined;
-      }
-
-      if (eventFilters.length === 0) {
         return undefined;
       }
 
