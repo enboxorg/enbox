@@ -46,7 +46,7 @@ import { TestStores } from '../test-stores.js';
 import { TestStubGenerator } from '../utils/test-stub-generator.js';
 import { Time } from '../../src/utils/time.js';
 import { ContentEncryptionAlgorithm, Encryption, KeyAgreementAlgorithm, ROLE_AUDIENCE_DERIVATION_SCHEME } from '../../src/utils/encryption.js';
-import { CoreModuleRegistry, DwnConstant, DwnInterfaceName, DwnMethodName, KeyDerivationScheme, Modules, PermissionsModule, RecordsDelete, RecordsQuery } from '../../src/index.js';
+import { CoreModuleRegistry, DwnConstant, DwnInterfaceName, DwnMethodName, EncryptionModule, KeyDerivationScheme, Modules, PermissionGrant, PermissionsModule, RecordsDelete, RecordsQuery } from '../../src/index.js';
 import { DataStoreLevel, MessageStoreLevel } from '../../src/store/level.js';
 import { defaultTestModuleDefinition, TestDataGenerator } from '../utils/test-data-generator.js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
@@ -1395,6 +1395,216 @@ export function testRecordsWriteHandler(): void {
         expect(reply.status.code).toBe(400);
         expect(reply.status.detail).toContain('SchemaValidatorFailure');
         expect(reply.status.detail).toContain('modulePath: must match pattern');
+      });
+
+      describe('grant key admission replies', () => {
+        const grantedModule = 'https://example.com/grant-key-admission';
+
+        async function createGrantKeyRecord(input: {
+          encrypted?: boolean;
+          grantor: Persona;
+          grantee: Persona;
+          grantId: string;
+          messageTimestamp?: string;
+          modulePath?: string;
+        }): Promise<{ dataBytes: Uint8Array; recordsWrite: RecordsWrite }> {
+          // Admission checks the named grant before validating the envelope, so the data can be opaque.
+          const dataBytes = TestDataGenerator.randomBytes(32);
+          const tags: Record<string, string> = {
+            grantId : input.grantId,
+            keyId   : await Encryption.getKeyId(input.grantee.encryptionKeyPair.publicJwk),
+            module  : grantedModule,
+          };
+          if (input.modulePath !== undefined) {
+            tags.modulePath = input.modulePath;
+          }
+          const isEncrypted = input.encrypted === true;
+          const keyId = await Encryption.getKeyId(input.grantee.encryptionKeyPair.publicJwk);
+          const encryptionInput = isEncrypted ? {
+            initializationVector : TestDataGenerator.randomBytes(16),
+            key                  : TestDataGenerator.randomBytes(32),
+            keyEncryptionInputs  : [{
+              algorithm        : KeyAgreementAlgorithm.X25519HkdfSha256A256Kw,
+              derivationScheme : KeyDerivationScheme.ModulePath,
+              keyId,
+              publicKey        : input.grantee.encryptionKeyPair.publicJwk,
+            }],
+          } : undefined;
+          const schema = isEncrypted
+            ? EncryptionModule.definition.types.grantKey.schema
+            : EncryptionModule.definition.types.wrappedGrantKey.schema;
+          const recordsWrite = await RecordsWrite.create({
+            data             : dataBytes,
+            dataFormat       : 'application/json',
+            dateCreated      : input.messageTimestamp,
+            encryptionInput,
+            messageTimestamp : input.messageTimestamp,
+            module           : EncryptionModule.uri,
+            modulePath       : isEncrypted ? EncryptionModule.grantKeyPath : EncryptionModule.wrappedGrantKeyPath,
+            recipient        : input.grantee.did,
+            schema,
+            signer           : Jws.createSigner(input.grantor),
+            tags,
+          });
+          return { dataBytes, recordsWrite };
+        }
+
+        it('should reply 401 when a grant key names a grant the node does not hold, and replication should await the grant', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          // The grant is never stored on Alice's node, as when a grant key replicates before its grant.
+          const grant = await PermissionsModule.createGrant({
+            dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+            grantedTo   : bob.did,
+            scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: grantedModule },
+            signer      : Jws.createSigner(alice),
+          });
+          const grantId = grant.recordsWrite.message.recordId;
+
+          for (const encrypted of [false, true]) {
+            const { dataBytes, recordsWrite } = await createGrantKeyRecord({ encrypted, grantor: alice, grantee: bob, grantId });
+
+            const reply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(dataBytes) });
+            expect(reply.status.code).toBe(401);
+            expect(reply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantMissing);
+
+            const result = await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(dataBytes) });
+            expect(result).toEqual({ kind: 'Incomplete', missing: [{ type: 'Grant', permissionGrantId: grantId }] });
+          }
+        });
+
+        it('should reply 401 when a grant key names a not-yet-active, expired, or revoked grant', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const dateGranted = Time.createOffsetTimestamp({ seconds: 10 });
+          const dateExpires = Time.createOffsetTimestamp({ seconds: 20 });
+          const grant = await PermissionsModule.createGrant({
+            dateGranted,
+            dateExpires,
+            grantedTo : bob.did,
+            scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: grantedModule },
+            signer    : Jws.createSigner(alice),
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            grant.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(grant.permissionGrantBytes) },
+          )).status.code).toBe(202);
+          const grantId = grant.recordsWrite.message.recordId;
+
+          const notYetActive = await createGrantKeyRecord({
+            encrypted        : true,
+            grantor          : alice,
+            grantee          : bob,
+            grantId,
+            messageTimestamp : Time.createOffsetTimestamp({ seconds: 5 }),
+          });
+          const notYetActiveReply = await dwn.processMessage(alice.did, notYetActive.recordsWrite.message, {
+            dataStream: DataStream.fromBytes(notYetActive.dataBytes),
+          });
+          expect(notYetActiveReply.status.code).toBe(401);
+          expect(notYetActiveReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantNotYetActive);
+
+          const expired = await createGrantKeyRecord({
+            grantor          : alice,
+            grantee          : bob,
+            grantId,
+            messageTimestamp : dateExpires,
+          });
+          const expiredReply = await dwn.processMessage(alice.did, expired.recordsWrite.message, {
+            dataStream: DataStream.fromBytes(expired.dataBytes),
+          });
+          expect(expiredReply.status.code).toBe(401);
+          expect(expiredReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantExpired);
+
+          const parsedGrant = PermissionGrant.parse(grant.dataEncodedMessage);
+          const revocationTimestamp = Time.createOffsetTimestamp({ seconds: 12 });
+          const revocation = await PermissionsModule.createRevocation({
+            dateRevoked : revocationTimestamp,
+            grant       : parsedGrant,
+            signer      : Jws.createSigner(alice),
+          });
+          expect((await dwn.processMessage(
+            alice.did,
+            revocation.recordsWrite.message,
+            { dataStream: DataStream.fromBytes(revocation.permissionRevocationBytes) },
+          )).status.code).toBe(202);
+
+          const revoked = await createGrantKeyRecord({
+            encrypted        : true,
+            grantor          : alice,
+            grantee          : bob,
+            grantId,
+            messageTimestamp : Time.createOffsetTimestamp({ seconds: 15 }),
+          });
+          const revokedReply = await dwn.processMessage(alice.did, revoked.recordsWrite.message, {
+            dataStream: DataStream.fromBytes(revoked.dataBytes),
+          });
+          expect(revokedReply.status.code).toBe(401);
+          expect(revokedReply.status.detail).toContain(DwnErrorCode.GrantAuthorizationGrantRevoked);
+        });
+
+        it('should reply 400 when a grant key needs the definition of a module that is not installed, and replication should await the module', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+          // A write grant only covers role-path keys, which takes the granted module's definition to decide.
+          const grant = await TestDataGenerator.generateGrantCreate({
+            author    : alice,
+            grantedTo : bob,
+            scope     : { interface: DwnInterfaceName.Records, method: DwnMethodName.Write, module: grantedModule },
+          });
+          expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+          const { dataBytes, recordsWrite } = await createGrantKeyRecord({
+            grantor    : alice,
+            grantee    : bob,
+            grantId    : grant.message.recordId,
+            modulePath : 'member',
+          });
+
+          const reply = await dwn.processMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(dataBytes) });
+          expect(reply.status.code).toBe(400);
+          expect(reply.status.detail).toContain(DwnErrorCode.ModuleAuthorizationModuleNotFound);
+
+          const result = await dwn.applyReplicatedMessage(alice.did, recordsWrite.message, { dataStream: DataStream.fromBytes(dataBytes) });
+          expect(result).toEqual({ kind: 'Incomplete', missing: [{ type: 'Module', module: grantedModule }] });
+        });
+
+        it('should classify a replicated grant revocation as Incomplete when its parent grant is stored only as ancestry', async () => {
+          const alice = await TestDataGenerator.generateDidKeyPersona();
+          const bob = await TestDataGenerator.generateDidKeyPersona();
+
+          const grant = await PermissionsModule.createGrant({
+            dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+            grantedTo   : bob.did,
+            scope       : { interface: DwnInterfaceName.Records, method: DwnMethodName.Read, module: grantedModule },
+            signer      : Jws.createSigner(alice),
+          });
+          const grantId = grant.recordsWrite.message.recordId;
+          const parsedGrant = PermissionGrant.parse(grant.dataEncodedMessage);
+          const revocation = await PermissionsModule.createRevocation({
+            grant  : parsedGrant,
+            signer : Jws.createSigner(alice),
+          });
+
+          // Retain only the dataless initial write of the parent grant so parentId ancestry exists while fetchGrant still misses.
+          expect(await dwn.applyReplicatedMessage(alice.did, grant.recordsWrite.message))
+            .toEqual(expect.objectContaining({ kind: 'Applied', ancestryOnly: true }));
+
+          const incompleteResult = await dwn.applyReplicatedMessage(alice.did, revocation.recordsWrite.message, {
+            dataStream: DataStream.fromBytes(revocation.permissionRevocationBytes),
+          });
+          expect(incompleteResult).toEqual({ kind: 'Incomplete', missing: [{ type: 'Grant', permissionGrantId: grantId }] });
+
+          // Completing the grant payload lets the revocation apply cleanly on retry.
+          expect(await dwn.applyReplicatedMessage(alice.did, grant.recordsWrite.message, {
+            dataStream: DataStream.fromBytes(grant.permissionGrantBytes),
+          })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+
+          expect(await dwn.applyReplicatedMessage(alice.did, revocation.recordsWrite.message, {
+            dataStream: DataStream.fromBytes(revocation.permissionRevocationBytes),
+          })).toEqual(expect.objectContaining({ kind: 'Applied' }));
+        });
       });
 
       it('should only be able to overwrite existing record if new record has a later `messageTimestamp` value', async () => {

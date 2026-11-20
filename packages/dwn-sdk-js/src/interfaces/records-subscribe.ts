@@ -42,6 +42,13 @@ export type RecordsSubscribeOptions = {
 export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
 
   public static async parse(message: RecordsSubscribeMessage): Promise<RecordsSubscribe> {
+    Records.validatePublishedSort(
+      message.descriptor.filter,
+      message.descriptor.dateSort,
+      DwnErrorCode.RecordsSubscribeParseFilterPublishedSortInvalid,
+      'RecordsSubscribe',
+    );
+
     let signaturePayload;
     if (message.authorization !== undefined) {
       signaturePayload = await Message.validateSignatureStructure(message.authorization.signature, message.descriptor);
@@ -80,6 +87,13 @@ export class RecordsSubscribe extends AbstractMessage<RecordsSubscribeMessage> {
     const permissionGrantInvocation = Message.normalizePermissionGrantInvocation({
       permissionGrantId: options.permissionGrantId,
     });
+
+    Records.validatePublishedSort(
+      options.filter,
+      options.dateSort,
+      DwnErrorCode.RecordsSubscribeCreateFilterPublishedSortInvalid,
+      'RecordsSubscribe',
+    );
 
     const descriptor: RecordsSubscribeDescriptor = {
       interface        : DwnInterfaceName.Records,

@@ -180,6 +180,28 @@ export function testAuthorDelegatedGrant(): void {
         expect(otherModuleConfigureReply.status.code).toBe(401);
         expect(otherModuleConfigureReply.status.detail).toContain(DwnErrorCode.ModulesGrantAuthorizationScopeModuleMismatch);
       });
+
+      it('should not allow a non-delegated grant to be used as an author-delegated grant', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+
+        // Without the check, Bob's configuration would be accepted as authored by Alice, the tenant.
+        const nonDelegatedGrant = await PermissionsModule.createGrant({
+          dateExpires : Time.createOffsetTimestamp({ seconds: 100 }),
+          grantedTo   : bob.did,
+          scope       : { interface: DwnInterfaceName.Modules, method: DwnMethodName.Configure },
+          signer      : Jws.createSigner(alice)
+        });
+        const moduleConfigure = await TestDataGenerator.generateModulesConfigure({
+          delegatedGrant   : nonDelegatedGrant.dataEncodedMessage,
+          author           : bob,
+          moduleDefinition : emailModuleDefinition,
+        });
+
+        const reply = await dwn.processMessage(alice.did, moduleConfigure.message);
+        expect(reply.status.code).toBe(400);
+        expect(reply.status.detail).toContain(DwnErrorCode.RecordsAuthorDelegatedGrantNotADelegatedGrant);
+      });
     });
 
     describe('RecordsWrite.parse()', () => {

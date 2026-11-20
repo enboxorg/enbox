@@ -256,6 +256,7 @@ export enum DwnErrorCode {
   RecordsReadCreateFilterPublishedSortInvalid = 'RecordsReadCreateFilterPublishedSortInvalid',
   RecordsReadParseFilterPublishedSortInvalid = 'RecordsReadParseFilterPublishedSortInvalid',
   RecordsReadReplicationSupportUnsupported = 'RecordsReadReplicationSupportUnsupported',
+  RecordsSubscribeCreateFilterPublishedSortInvalid = 'RecordsSubscribeCreateFilterPublishedSortInvalid',
   /**
    * Terminal subscription delivery error indicating that a grant or module role no longer authorizes delivery.
    * Subscribers should not resubscribe with the same authority.
@@ -269,6 +270,7 @@ export enum DwnErrorCode {
   RecordsSubscribeEventLogUnimplemented = 'RecordsSubscribeEventLogUnimplemented',
   RecordsSubscribeFilterMissingRequiredProperties = 'RecordsSubscribeFilterMissingRequiredProperties',
   RecordsSubscribeNestedModulePathContextIdInvalid = 'RecordsSubscribeNestedModulePathContextIdInvalid',
+  RecordsSubscribeParseFilterPublishedSortInvalid = 'RecordsSubscribeParseFilterPublishedSortInvalid',
   RecordsSubscribeProjectionFailed = 'RecordsSubscribeProjectionFailed',
 
   RecordsWriteAttestationIntegrityMoreThanOneSignature = 'RecordsWriteAttestationIntegrityMoreThanOneSignature',

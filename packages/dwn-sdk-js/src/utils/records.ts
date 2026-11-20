@@ -1,5 +1,6 @@
 import type { DerivedPrivateJwk } from './hd-key.js';
 import type { KeyDecrypter } from '../types/encryption-types.js';
+import type { ModulesConfigureMessage } from '../types/modules-types.js';
 import type { X25519KeyEncryption } from './encryption.js';
 import type { Filter, KeyValues, StartsWithFilter } from '../types/query-types.js';
 import type { GenericMessage, GenericSignaturePayload, MessageSort } from '../types/message-types.js';
@@ -28,6 +29,7 @@ import { normalizeModuleUrl, normalizeSchemaUrl } from './url.js';
 type AuthorDelegableMessage =
   | MessagesQueryMessage
   | MessagesSubscribeMessage
+  | ModulesConfigureMessage
   | RecordsCountMessage
   | RecordsDeleteMessage
   | RecordsQueryMessage
@@ -289,6 +291,22 @@ export class Records {
 
     removeUndefinedProperties(filterCopy);
     return filterCopy;
+  }
+
+  /**
+   * Rejects a `published: false` filter combined with a `published…` sort, since unpublished
+   * records have no `datePublished` to sort by.
+   */
+  public static validatePublishedSort(
+    filter: RecordsFilter,
+    dateSort: DateSort | undefined,
+    errorCode: DwnErrorCode,
+    operationName: string,
+  ): void {
+    const sortsByPublished = dateSort === DateSort.PublishedAscending || dateSort === DateSort.PublishedDescending;
+    if (filter.published === false && sortsByPublished) {
+      throw new DwnError(errorCode, `${operationName} must not filter for \`published:false\` and sort by ${dateSort}`);
+    }
   }
 
   /**

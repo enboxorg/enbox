@@ -1645,6 +1645,26 @@ export function testRecordsSubscribeHandler(): void {
         expect(reply.status.detail).toContain(DwnErrorCode.UrlSchemaNotNormalized);
       });
 
+      it('should return 400 if published is set to false and the snapshot is sorted by datePublished', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+
+        for (const dateSort of [DateSort.PublishedAscending, DateSort.PublishedDescending]) {
+          const recordsSubscribe = await TestDataGenerator.generateRecordsSubscribe({
+            author : alice,
+            filter : { schema: 'http://published-sort-schema', published: false },
+          });
+          recordsSubscribe.message.descriptor.dateSort = dateSort;
+          recordsSubscribe.message.authorization = await Message.createAuthorization({
+            descriptor : recordsSubscribe.message.descriptor,
+            signer     : Jws.createSigner(alice),
+          });
+
+          const reply = await dwn.processMessage(alice.did, recordsSubscribe.message, { subscriptionHandler: () => {} });
+          expect(reply.status.code).toBe(400);
+          expect(reply.status.detail).toContain(DwnErrorCode.RecordsSubscribeParseFilterPublishedSortInvalid);
+        }
+      });
+
       it('should return 400 if published is set to false and a datePublished range is provided', async () => {
         const fromDatePublished = Time.getCurrentTimestamp();
         const alice = await TestDataGenerator.generateDidKeyPersona();

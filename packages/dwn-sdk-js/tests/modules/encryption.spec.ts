@@ -9,6 +9,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
 
 import {
+  CoreModuleRegistry,
   DwnConstant,
   DwnErrorCode,
   DwnInterfaceName,
@@ -655,6 +656,16 @@ describe('EncryptionModule', () => {
 
       expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.EncryptionModuleValidateGrantKeyGrantScopeMismatch)).toBe(400);
       expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBeUndefined();
+    });
+
+    it('should leave shared grant and module lookup failures to the core module registry', () => {
+      const registry = new CoreModuleRegistry();
+      registry.register(new EncryptionModule());
+
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.EncryptionModuleValidateGrantKeyGrantScopeMismatch)).toBe(400);
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBe(401);
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.ModuleAuthorizationModuleNotFound)).toBe(400);
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.RecordsWriteDataCidMismatch)).toBeUndefined();
     });
   });
 

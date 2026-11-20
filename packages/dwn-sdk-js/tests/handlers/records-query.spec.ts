@@ -179,13 +179,13 @@ export function testRecordsQueryHandler(): void {
         query.message.descriptor.dateSort = DateSort.PublishedAscending;
         reply = await dwn.processMessage(alice.did, query.message);
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain('queries must not filter for `published:false` and sort');
+        expect(reply.status.detail).toContain(DwnErrorCode.RecordsQueryParseFilterPublishedSortInvalid);
 
         // modify dateSort to publishedDescending
         query.message.descriptor.dateSort = DateSort.PublishedDescending;
         reply = await dwn.processMessage(alice.did, query.message);
         expect(reply.status.code).toBe(400);
-        expect(reply.status.detail).toContain('queries must not filter for `published:false` and sort');
+        expect(reply.status.detail).toContain(DwnErrorCode.RecordsQueryParseFilterPublishedSortInvalid);
       });
 
       it('should return recordId, descriptor, authorization and attestation', async () => {
