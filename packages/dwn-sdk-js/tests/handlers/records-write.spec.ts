@@ -184,12 +184,14 @@ export function testRecordsWriteHandler(): void {
       async function createDeliveryControlWrite(input: {
         author: Persona;
         contextId?: string;
+        delegatedGrant?: DataEncodedRecordsWriteMessage;
         keyId: string;
         module: string;
         recipient: string;
         recipientAuthority: string;
         rolePath: string;
         roleRuleSet: ModuleRuleSet;
+        signer?: Persona;
       }): Promise<{ dataBytes: Uint8Array; recordsWrite: RecordsWrite }> {
         const tags: Record<string, string> = {
           module             : input.module,
@@ -208,6 +210,7 @@ export function testRecordsWriteHandler(): void {
         const recordsWrite = await RecordsWrite.create({
           data            : dataBytes,
           dataFormat      : 'application/json',
+          delegatedGrant  : input.delegatedGrant,
           encryptionInput : {
             initializationVector : TestDataGenerator.randomBytes(16),
             key                  : TestDataGenerator.randomBytes(32),
@@ -222,7 +225,7 @@ export function testRecordsWriteHandler(): void {
           modulePath : ENCRYPTION_CONTROL_DELIVERY_PATH,
           recipient  : input.recipient,
           schema     : 'https://identity.foundation/dwn/json-schemas/encryption/delivery.json',
-          signer     : Jws.createSigner(input.author),
+          signer     : Jws.createSigner(input.signer ?? input.author),
           tags,
         });
 
@@ -672,6 +675,324 @@ export function testRecordsWriteHandler(): void {
             dataStream: DataStream.fromBytes(directGrantAudience.dataBytes),
           })).status.code
         ).toBe(202);
+      });
+
+      it('should reject control records from a delegate whose grantor may not create the role', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const eve = await TestDataGenerator.generateDidKeyPersona();
+        const eveDelegate = await TestDataGenerator.generateDidKeyPersona();
+
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-self-issued-delegate.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const memberRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
+        const tenantAudience = await createAudienceControlWrite({
+          author      : alice,
+          module      : moduleDefinition.module,
+          rolePath    : 'member',
+          roleRuleSet : memberRuleSet,
+        });
+        expect((await dwn.processMessage(alice.did, tenantAudience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(tenantAudience.dataBytes),
+        })).status.code).toBe(202);
+        const memberRole = await TestDataGenerator.generateRecordsWrite({
+          author     : alice,
+          data       : Encoder.stringToBytes('bob is a member'),
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          recipient  : bob.did,
+          schema     : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, memberRole.message, { dataStream: memberRole.dataStream })).status.code).toBe(202);
+
+        // Eve issues herself a delegated grant covering the role path; it proves only that her delegate signs for her.
+        const selfIssuedGrant = await TestDataGenerator.generateGrantCreate({
+          author    : eve,
+          grantedTo : eveDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'member',
+          },
+        });
+
+        const delegatedAudience = await createAudienceControlWrite({
+          author         : eve,
+          delegatedGrant : selfIssuedGrant.dataEncodedMessage,
+          module         : moduleDefinition.module,
+          rolePath       : 'member',
+          roleRuleSet    : memberRuleSet,
+          signer         : eveDelegate,
+        });
+        const audienceReply = await dwn.processMessage(alice.did, delegatedAudience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(delegatedAudience.dataBytes),
+        });
+        expect(audienceReply.status.code).toBe(401);
+        expect(audienceReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized);
+
+        const delegatedDelivery = await createDeliveryControlWrite({
+          author             : eve,
+          delegatedGrant     : selfIssuedGrant.dataEncodedMessage,
+          keyId              : tenantAudience.keyId,
+          module             : moduleDefinition.module,
+          recipient          : bob.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet        : memberRuleSet,
+          signer             : eveDelegate,
+        });
+        const deliveryReply = await dwn.processMessage(alice.did, delegatedDelivery.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(delegatedDelivery.dataBytes),
+        });
+        expect(deliveryReply.status.code).toBe(401);
+        expect(deliveryReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized);
+      });
+
+      it('should accept control records from the delegate of a role creator invoking its role', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const bobDelegate = await TestDataGenerator.generateDidKeyPersona();
+
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-role-creator-delegate.xyz',
+          published : false,
+          types     : {
+            admin  : { schema: 'http://admin-schema', dataFormats: ['application/json'] },
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            admin  : { $role: true },
+            member : {
+              $role    : true,
+              $actions : [{ role: 'admin', can: ['create'] }],
+            },
+          },
+        };
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const adminRole = await TestDataGenerator.generateRecordsWrite({
+          author     : alice,
+          data       : Encoder.stringToBytes('bob is an admin'),
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'admin',
+          recipient  : bob.did,
+          schema     : 'http://admin-schema',
+        });
+        expect((await dwn.processMessage(alice.did, adminRole.message, { dataStream: adminRole.dataStream })).status.code).toBe(202);
+
+        const delegatedGrant = await TestDataGenerator.generateGrantCreate({
+          author    : bob,
+          grantedTo : bobDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'member',
+          },
+        });
+        const delegatedAudience = await createAudienceControlWrite({
+          author         : bob,
+          delegatedGrant : delegatedGrant.dataEncodedMessage,
+          module         : moduleDefinition.module,
+          moduleRole     : 'admin',
+          rolePath       : 'member',
+          roleRuleSet    : encryptedModuleDefinition.structure.member as ModuleRuleSet,
+          signer         : bobDelegate,
+        });
+        const reply = await dwn.processMessage(alice.did, delegatedAudience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(delegatedAudience.dataBytes),
+        });
+        expect(reply.status.code).toBe(202);
+      });
+
+      it('should accept a tenant delegate control record that also invokes its delegated grant by permissionGrantId', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const appDelegate = await TestDataGenerator.generateDidKeyPersona();
+
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-tenant-delegate-grant-reference.xyz',
+          published : false,
+          types     : {
+            member: { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member: { $role: true },
+          },
+        };
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const grant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : appDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'member',
+          },
+        });
+        expect((await dwn.processMessage(alice.did, grant.message, { dataStream: grant.dataStream })).status.code).toBe(202);
+
+        // The invoked grant names the delegate, not Alice, but Alice as tenant needs no grant at all.
+        const audience = await createAudienceControlWrite({
+          author            : alice,
+          delegatedGrant    : grant.dataEncodedMessage,
+          permissionGrantId : grant.message.recordId,
+          module            : moduleDefinition.module,
+          rolePath          : 'member',
+          roleRuleSet       : encryptedModuleDefinition.structure.member as ModuleRuleSet,
+          signer            : appDelegate,
+        });
+        const reply = await dwn.processMessage(alice.did, audience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(audience.dataBytes),
+        });
+        expect(reply.status.code).toBe(202);
+      });
+
+      it('should enforce role-path scope coverage on ownerDelegatedGrant control writes', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const carol = await TestDataGenerator.generateDidKeyPersona();
+        const ownerDelegate = await TestDataGenerator.generateDidKeyPersona();
+
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-owner-delegated-grant.xyz',
+          published : false,
+          types     : {
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+            other  : { schema: 'http://other-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            member : { $role: true },
+            other  : {},
+          },
+        };
+        const encryptedModuleDefinition = await installEncryptedModule(alice, moduleDefinition);
+        const memberRuleSet = encryptedModuleDefinition.structure.member as ModuleRuleSet;
+
+        const memberRole = await TestDataGenerator.generateRecordsWrite({
+          author     : alice,
+          data       : Encoder.stringToBytes('carol is a member'),
+          dataFormat : 'application/json',
+          module     : moduleDefinition.module,
+          modulePath : 'member',
+          recipient  : carol.did,
+          schema     : 'http://member-schema',
+        });
+        expect((await dwn.processMessage(alice.did, memberRole.message, { dataStream: memberRole.dataStream })).status.code).toBe(202);
+
+        const unrelatedOwnerGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : ownerDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'other',
+          },
+        });
+        expect((await dwn.processMessage(
+          alice.did, unrelatedOwnerGrant.message, { dataStream: unrelatedOwnerGrant.dataStream }
+        )).status.code).toBe(202);
+
+        const coveringOwnerGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : ownerDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Write,
+            module     : moduleDefinition.module,
+            modulePath : 'member',
+          },
+        });
+        expect((await dwn.processMessage(
+          alice.did, coveringOwnerGrant.message, { dataStream: coveringOwnerGrant.dataStream }
+        )).status.code).toBe(202);
+
+        // Bob is an external author with no role or grant; ownerDelegate co-signing under an unrelated
+        // scope must be rejected, while co-signing under a grant covering `member` must succeed.
+        const rejectedAudience = await createAudienceControlWrite({
+          author      : bob,
+          module      : moduleDefinition.module,
+          rolePath    : 'member',
+          roleRuleSet : memberRuleSet,
+        });
+        await rejectedAudience.recordsWrite.signAsOwnerDelegate(
+          Jws.createSigner(ownerDelegate),
+          unrelatedOwnerGrant.dataEncodedMessage,
+        );
+        const rejectedAudienceReply = await dwn.processMessage(alice.did, rejectedAudience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(rejectedAudience.dataBytes),
+        });
+        expect(rejectedAudienceReply.status.code).toBe(401);
+        expect(rejectedAudienceReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized);
+
+        const acceptedAudience = await createAudienceControlWrite({
+          author      : bob,
+          module      : moduleDefinition.module,
+          rolePath    : 'member',
+          roleRuleSet : memberRuleSet,
+        });
+        await acceptedAudience.recordsWrite.signAsOwnerDelegate(
+          Jws.createSigner(ownerDelegate),
+          coveringOwnerGrant.dataEncodedMessage,
+        );
+        const acceptedAudienceReply = await dwn.processMessage(alice.did, acceptedAudience.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(acceptedAudience.dataBytes),
+        });
+        expect(acceptedAudienceReply.status.code).toBe(202);
+
+        const rejectedDelivery = await createDeliveryControlWrite({
+          author             : bob,
+          keyId              : acceptedAudience.keyId,
+          module             : moduleDefinition.module,
+          recipient          : carol.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet        : memberRuleSet,
+        });
+        await rejectedDelivery.recordsWrite.signAsOwnerDelegate(
+          Jws.createSigner(ownerDelegate),
+          unrelatedOwnerGrant.dataEncodedMessage,
+        );
+        const rejectedDeliveryReply = await dwn.processMessage(alice.did, rejectedDelivery.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(rejectedDelivery.dataBytes),
+        });
+        expect(rejectedDeliveryReply.status.code).toBe(401);
+        expect(rejectedDeliveryReply.status.detail).toContain(DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized);
+
+        const acceptedDelivery = await createDeliveryControlWrite({
+          author             : bob,
+          keyId              : acceptedAudience.keyId,
+          module             : moduleDefinition.module,
+          recipient          : carol.did,
+          recipientAuthority : EncryptionControlDeliveryRecipientAuthority.RoleHolder,
+          rolePath           : 'member',
+          roleRuleSet        : memberRuleSet,
+        });
+        await acceptedDelivery.recordsWrite.signAsOwnerDelegate(
+          Jws.createSigner(ownerDelegate),
+          coveringOwnerGrant.dataEncodedMessage,
+        );
+        const acceptedDeliveryReply = await dwn.processMessage(alice.did, acceptedDelivery.recordsWrite.message, {
+          dataStream: DataStream.fromBytes(acceptedDelivery.dataBytes),
+        });
+        expect(acceptedDeliveryReply.status.code).toBe(202);
       });
 
       it('should enforce publication conditions on delegated audience control writes', async () => {

@@ -47,6 +47,7 @@ type ValidatedAudiencePayload = {
 
 type EffectiveControlActor = {
   did: string | undefined;
+  /** A grant from the tenant that the actor invoked by `permissionGrantId`. */
   grant?: PermissionGrant;
 };
 
@@ -106,8 +107,8 @@ export class EncryptionControl {
       return;
     }
 
-    await EncryptionControl.getInvokedReadGrants({
-      actorDid              : input.requester,
+    await EncryptionControl.resolveControlReadGrants({
+      requester             : input.requester,
       incomingMessage       : input.incomingMessage,
       tenant                : input.tenant,
       validationStateReader : input.validationStateReader,
@@ -299,7 +300,7 @@ export class EncryptionControl {
 
     return EncryptionControl.canEnumerateAudience({
       tenant,
-      actorDid              : requester,
+      requester,
       incomingMessage       : input.incomingMessage,
       tags,
       validationStateReader : input.validationStateReader,
@@ -316,7 +317,7 @@ export class EncryptionControl {
     const { graph, node } = await EncryptionControl.verifyRoleAudienceDefinition(
       tenant, tags, recordsWrite.message, validationStateReader, recordType
     );
-    const actor = await EncryptionControl.resolveEffectiveControlActor(tenant, recordsWrite, validationStateReader);
+    const actor = await EncryptionControl.resolveEffectiveControlActor(tenant, recordsWrite, tags, validationStateReader);
 
     await EncryptionControl.verifyActorCanCreateRole({
       tenant,
@@ -644,39 +645,48 @@ export class EncryptionControl {
     }
   }
 
+  /**
+   * Resolves the DID whose authority to create the role governs the write. A delegated grant only
+   * proves that its grantee signed for its grantor, so it must cover the role path but never
+   * authorizes the write by itself: the grantor is evaluated as if it had signed directly.
+   */
   private static async resolveEffectiveControlActor(
     tenant: string,
     recordsWrite: RecordsWrite,
+    tags: RoleAudienceKeyId,
     validationStateReader: ValidationStateReader,
   ): Promise<EffectiveControlActor> {
-    if (recordsWrite.isSignedByAuthorDelegate) {
-      const grant = PermissionGrant.parse(recordsWrite.message.authorization.authorDelegatedGrant!);
-      await GrantAuthorization.performBaseValidation({
-        incomingMessage : recordsWrite.message,
+    const { authorDelegatedGrant, ownerDelegatedGrant } = recordsWrite.message.authorization;
+    if (authorDelegatedGrant !== undefined) {
+      await EncryptionControl.verifyDelegatedGrantCoversRole({
+        message         : recordsWrite.message,
+        delegatedGrant  : PermissionGrant.parse(authorDelegatedGrant),
         expectedGrantor : recordsWrite.author!,
         expectedGrantee : recordsWrite.signer!,
-        permissionGrant : grant,
+        tags,
         validationStateReader,
       });
-      EncryptionControl.verifyGrantConditions(recordsWrite.message, grant);
-      return { did: recordsWrite.signer, grant };
     }
 
-    if (recordsWrite.isSignedByOwnerDelegate) {
-      const grant = PermissionGrant.parse(recordsWrite.message.authorization.ownerDelegatedGrant!);
-      await GrantAuthorization.performBaseValidation({
-        incomingMessage : recordsWrite.message,
+    if (ownerDelegatedGrant !== undefined) {
+      await EncryptionControl.verifyDelegatedGrantCoversRole({
+        message         : recordsWrite.message,
+        delegatedGrant  : PermissionGrant.parse(ownerDelegatedGrant),
         expectedGrantor : recordsWrite.owner!,
         expectedGrantee : recordsWrite.ownerSignatureSigner!,
-        permissionGrant : grant,
+        tags,
         validationStateReader,
       });
-      EncryptionControl.verifyGrantConditions(recordsWrite.message, grant);
-      return { did: recordsWrite.ownerSignatureSigner, grant };
     }
 
+    // RecordsWriteHandler has already rejected an owner other than the tenant.
     if (recordsWrite.owner !== undefined) {
       return { did: recordsWrite.owner };
+    }
+
+    // As in ordinary write authorization, the tenant needs no grant, so a grant it invokes is not evaluated.
+    if (recordsWrite.author === tenant) {
+      return { did: tenant };
     }
 
     const directGrantId = recordsWrite.signaturePayload === undefined
@@ -696,6 +706,31 @@ export class EncryptionControl {
     });
     EncryptionControl.verifyGrantConditions(recordsWrite.message, grant);
     return { did: recordsWrite.author, grant };
+  }
+
+  private static async verifyDelegatedGrantCoversRole(input: {
+    message: RecordsWriteMessage;
+    delegatedGrant: PermissionGrant;
+    expectedGrantor: string;
+    expectedGrantee: string;
+    tags: RoleAudienceKeyId;
+    validationStateReader: ValidationStateReader;
+  }): Promise<void> {
+    const { message, delegatedGrant, expectedGrantor, expectedGrantee, tags, validationStateReader } = input;
+    await GrantAuthorization.performBaseValidation({
+      incomingMessage : message,
+      expectedGrantor,
+      expectedGrantee,
+      permissionGrant : delegatedGrant,
+      validationStateReader,
+    });
+    EncryptionControl.verifyGrantConditions(message, delegatedGrant);
+    if (!EncryptionControl.grantCoversRoleCreate(delegatedGrant, tags)) {
+      throw new DwnError(
+        DwnErrorCode.EncryptionControlValidateAudienceWriterUnauthorized,
+        'a delegated grant for a control record must cover the referenced role path.'
+      );
+    }
   }
 
   private static async verifyActorCanCreateRole(input: {
@@ -832,21 +867,35 @@ export class EncryptionControl {
 
   private static async canEnumerateAudience(input: {
     tenant: string;
-    actorDid: string;
+    requester: string;
     incomingMessage: ControlReadMessage;
     tags: RoleAudienceKeyId;
     validationStateReader: ValidationStateReader;
   }): Promise<boolean> {
     const {
-      tenant, actorDid, incomingMessage, tags, validationStateReader
+      tenant, requester, incomingMessage, tags, validationStateReader
     } = input;
-    const grants = await EncryptionControl.getInvokedReadGrants({
+    const { author, delegatedGrant, tenantGrant } = await EncryptionControl.resolveControlReadGrants({
       tenant,
-      actorDid,
+      requester,
       incomingMessage,
       validationStateReader,
     });
-    if (grants.some(grant => EncryptionControl.grantCoversAudienceEnumeration(grant, tags))) {
+    if (author === undefined) {
+      return false;
+    }
+
+    // As with control writes, a delegated grant only proves who signed for the author: it must
+    // cover the role path, while authority to enumerate is evaluated for the author.
+    if (delegatedGrant !== undefined && !EncryptionControl.grantCoversAudienceEnumeration(delegatedGrant, tags)) {
+      return false;
+    }
+
+    if (author === tenant) {
+      return true;
+    }
+
+    if (tenantGrant !== undefined && EncryptionControl.grantCoversAudienceEnumeration(tenantGrant, tags)) {
       return true;
     }
 
@@ -862,7 +911,7 @@ export class EncryptionControl {
 
     return EncryptionControl.actorCanCreateRole({
       tenant,
-      actor: { did: actorDid },
+      actor: { did: author },
       tags,
       graph,
       node,
@@ -871,6 +920,11 @@ export class EncryptionControl {
     });
   }
 
+  /**
+   * Unlike audience enumeration, delivery reads follow the spec's grant-party rule rather than the
+   * author's own rights: a covering grant reaches only deliveries addressed to its grantor or grantee.
+   * A delegate therefore reads only its grantor's own deliveries, even when the grantor is the tenant.
+   */
   private static async canReadDeliveryByDelegatedGrant(input: {
     tenant: string;
     incomingMessage: ControlReadMessage;
@@ -880,33 +934,25 @@ export class EncryptionControl {
     validationStateReader: ValidationStateReader;
   }): Promise<boolean> {
     const { tenant, incomingMessage, requester, recordsWriteMessage, tags, validationStateReader } = input;
-    const grants = await EncryptionControl.getInvokedReadGrants({
+    const { delegatedGrant, tenantGrant } = await EncryptionControl.resolveControlReadGrants({
       tenant,
-      actorDid: requester,
+      requester,
       incomingMessage,
       validationStateReader,
     });
     const recipient = recordsWriteMessage.descriptor.recipient;
     let moduleDefinition: ModuleDefinition | undefined;
 
-    for (const grant of grants) {
-      if (recipient !== grant.grantor && recipient !== grant.grantee) {
-        continue;
-      }
-
+    const grantCoversDeliveredRole = async (grant: PermissionGrant): Promise<boolean> => {
       if (!isGrantKeyEligibleRecordsScope(grant.scope) || grant.scope.method !== DwnMethodName.Read) {
-        continue;
+        return false;
       }
 
       const deliveredScope = {
         module     : tags.module,
         modulePath : tags.rolePath,
       };
-
-      if (grantKeyScopeCoversDeliveredScope({
-        grantScope: grant.scope,
-        deliveredScope,
-      })) {
+      if (grantKeyScopeCoversDeliveredScope({ grantScope: grant.scope, deliveredScope })) {
         return true;
       }
 
@@ -915,55 +961,74 @@ export class EncryptionControl {
         tags.module,
         incomingMessage.descriptor.messageTimestamp,
       );
-      if (grantKeyScopeCoversDeliveredScope({
+      return grantKeyScopeCoversDeliveredScope({
         grantScope: grant.scope,
         deliveredScope,
         moduleDefinition,
-      })) {
-        return true;
+      });
+    };
+
+    if (delegatedGrant !== undefined) {
+      if (recipient !== delegatedGrant.grantor && recipient !== delegatedGrant.grantee) {
+        return false;
       }
+      if (!await grantCoversDeliveredRole(delegatedGrant)) {
+        return false;
+      }
+      return tenantGrant === undefined || await grantCoversDeliveredRole(tenantGrant);
     }
 
-    return false;
+    if (tenantGrant === undefined) {
+      return false;
+    }
+    if (recipient !== tenantGrant.grantor && recipient !== tenantGrant.grantee) {
+      return false;
+    }
+    return grantCoversDeliveredRole(tenantGrant);
   }
 
-  private static async getInvokedReadGrants(input: {
+  private static async resolveControlReadGrants(input: {
     tenant: string;
-    actorDid: string;
+    requester: string;
     incomingMessage: ControlReadMessage;
     validationStateReader: ValidationStateReader;
-  }): Promise<PermissionGrant[]> {
+  }): Promise<{
+    author: string | undefined;
+    delegatedGrant?: PermissionGrant;
+    tenantGrant?: PermissionGrant;
+  }> {
+    const author = Message.getAuthor(input.incomingMessage);
+    if (author === undefined) {
+      return { author: undefined };
+    }
+
+    let delegatedGrant: PermissionGrant | undefined;
     if (Message.isSignedByAuthorDelegate(input.incomingMessage)) {
-      const grant = PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!);
+      delegatedGrant = PermissionGrant.parse(input.incomingMessage.authorization!.authorDelegatedGrant!);
       await GrantAuthorization.performBaseValidation({
         incomingMessage       : input.incomingMessage,
-        expectedGrantor       : grant.grantor,
-        expectedGrantee       : input.actorDid,
-        permissionGrant       : grant,
+        expectedGrantor       : author,
+        expectedGrantee       : input.requester,
+        permissionGrant       : delegatedGrant,
         validationStateReader : input.validationStateReader,
       });
-      return [grant];
     }
 
     const { descriptor } = input.incomingMessage;
-    if (!('permissionGrantId' in descriptor)) {
-      return [];
+    const grantId = 'permissionGrantId' in descriptor ? descriptor.permissionGrantId : undefined;
+    if (grantId === undefined || author === input.tenant) {
+      return { author, delegatedGrant };
     }
 
-    const grantId = descriptor.permissionGrantId;
-    if (grantId === undefined) {
-      return [];
-    }
-
-    const grant = await input.validationStateReader.fetchGrant(input.tenant, grantId);
+    const tenantGrant = await input.validationStateReader.fetchGrant(input.tenant, grantId);
     await GrantAuthorization.performBaseValidation({
       incomingMessage       : input.incomingMessage,
       expectedGrantor       : input.tenant,
-      expectedGrantee       : input.actorDid,
-      permissionGrant       : grant,
+      expectedGrantee       : author,
+      permissionGrant       : tenantGrant,
       validationStateReader : input.validationStateReader,
     });
-    return [grant];
+    return { author, delegatedGrant, tenantGrant };
   }
 
   private static grantCoversAudienceEnumeration(grant: PermissionGrant, tags: RoleAudienceKeyId): boolean {
