@@ -346,6 +346,141 @@ export function testRecordsQueryHandler(): void {
         expect(reply.entries?.map(entry => entry.recordId)).toContain(audience.recordsWrite.message.recordId);
       });
 
+      it('should authorize delegated audience control query enumeration against the grantor', async () => {
+        const alice = await TestDataGenerator.generateDidKeyPersona();
+        const aliceDelegate = await TestDataGenerator.generateDidKeyPersona();
+        const bob = await TestDataGenerator.generateDidKeyPersona();
+        const bobDelegate = await TestDataGenerator.generateDidKeyPersona();
+        const eve = await TestDataGenerator.generateDidKeyPersona();
+        const eveDelegate = await TestDataGenerator.generateDidKeyPersona();
+
+        const moduleDefinition: ModuleDefinition = {
+          module    : 'http://encryption-control-query-delegated-enumeration.xyz',
+          published : false,
+          types     : {
+            admin  : { schema: 'http://admin-schema', dataFormats: ['application/json'] },
+            member : { schema: 'http://member-schema', dataFormats: ['application/json'] },
+          },
+          structure: {
+            admin  : { $role: true },
+            member : { $role: true },
+          },
+        };
+        const encryptedDefinition = await installEncryptedModule(dwn, alice, moduleDefinition);
+        const audience = await createAudienceControlWrite({
+          author      : alice,
+          module      : moduleDefinition.module,
+          rolePath    : 'member',
+          roleRuleSet : encryptedDefinition.structure.member as ModuleRuleSet,
+        });
+        await processControlWrite(dwn, alice.did, audience);
+
+        // Self-issued delegated grant from Eve must not enumerate Alice's audience records.
+        const eveSelfIssuedGrant = await TestDataGenerator.generateGrantCreate({
+          author    : eve,
+          grantedTo : eveDelegate,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            module    : moduleDefinition.module,
+          },
+        });
+        const eveQuery = await RecordsQuery.create({
+          delegatedGrant : eveSelfIssuedGrant.dataEncodedMessage,
+          filter         : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH },
+          signer         : Jws.createSigner(eveDelegate),
+        });
+        const eveReply = await dwn.processMessage(alice.did, eveQuery.message);
+        expect(eveReply.status.code).toBe(200);
+        expect(eveReply.entries).toEqual([]);
+
+        // Tenant delegate with unrelated path scope sees nothing; tenant delegate covering `member` sees the audience.
+        const unrelatedTenantDelegateGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : aliceDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : moduleDefinition.module,
+            modulePath : 'admin',
+          },
+        });
+        expect((await dwn.processMessage(
+          alice.did, unrelatedTenantDelegateGrant.message, { dataStream: unrelatedTenantDelegateGrant.dataStream }
+        )).status.code).toBe(202);
+
+        const unrelatedTenantDelegateQuery = await RecordsQuery.create({
+          delegatedGrant : unrelatedTenantDelegateGrant.dataEncodedMessage,
+          filter         : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH },
+          signer         : Jws.createSigner(aliceDelegate),
+        });
+        expect((await dwn.processMessage(alice.did, unrelatedTenantDelegateQuery.message)).entries).toEqual([]);
+
+        const coveringTenantDelegateGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : aliceDelegate,
+          delegated : true,
+          scope     : {
+            interface  : DwnInterfaceName.Records,
+            method     : DwnMethodName.Read,
+            module     : moduleDefinition.module,
+            modulePath : 'member',
+          },
+        });
+        expect((await dwn.processMessage(
+          alice.did, coveringTenantDelegateGrant.message, { dataStream: coveringTenantDelegateGrant.dataStream }
+        )).status.code).toBe(202);
+
+        const coveringTenantDelegateQuery = await RecordsQuery.create({
+          delegatedGrant : coveringTenantDelegateGrant.dataEncodedMessage,
+          filter         : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH },
+          signer         : Jws.createSigner(aliceDelegate),
+        });
+        const coveringTenantDelegateReply = await dwn.processMessage(alice.did, coveringTenantDelegateQuery.message);
+        expect(coveringTenantDelegateReply.status.code).toBe(200);
+        expect(coveringTenantDelegateReply.entries?.map(entry => entry.recordId)).toEqual([
+          audience.recordsWrite.message.recordId,
+        ]);
+
+        // Delegate of a tenant-grant holder can enumerate when invoking the tenant grant.
+        const bobTenantGrant = await TestDataGenerator.generateGrantCreate({
+          author    : alice,
+          grantedTo : bob,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            module    : moduleDefinition.module,
+          },
+        });
+        expect((await dwn.processMessage(
+          alice.did, bobTenantGrant.message, { dataStream: bobTenantGrant.dataStream }
+        )).status.code).toBe(202);
+
+        const bobDelegateGrant = await TestDataGenerator.generateGrantCreate({
+          author    : bob,
+          grantedTo : bobDelegate,
+          delegated : true,
+          scope     : {
+            interface : DwnInterfaceName.Records,
+            method    : DwnMethodName.Read,
+            module    : moduleDefinition.module,
+          },
+        });
+        const bobDelegateQuery = await RecordsQuery.create({
+          delegatedGrant    : bobDelegateGrant.dataEncodedMessage,
+          filter            : { module: moduleDefinition.module, modulePath: ENCRYPTION_CONTROL_AUDIENCE_PATH },
+          permissionGrantId : bobTenantGrant.message.recordId,
+          signer            : Jws.createSigner(bobDelegate),
+        });
+        const bobDelegateReply = await dwn.processMessage(alice.did, bobDelegateQuery.message);
+        expect(bobDelegateReply.status.code).toBe(200);
+        expect(bobDelegateReply.entries?.map(entry => entry.recordId)).toEqual([
+          audience.recordsWrite.message.recordId,
+        ]);
+      });
+
       it('should hide stale audience control records from delegated broad queries', async () => {
         const alice = await TestDataGenerator.generateDidKeyPersona();
         const bob = await TestDataGenerator.generateDidKeyPersona();
