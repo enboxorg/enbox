@@ -9,6 +9,7 @@ import { TestDataGenerator } from '../utils/test-data-generator.js';
 import { describe, expect, it } from 'bun:test';
 
 import {
+  CoreModuleRegistry,
   DwnConstant,
   DwnErrorCode,
   DwnInterfaceName,
@@ -650,16 +651,21 @@ describe('EncryptionModule', () => {
   });
 
   describe('mapErrorToStatusCode()', () => {
-    it('should map encryption and grant-key validation errors to their spec status codes', () => {
+    it('should map encryption validation errors to bad request', () => {
       const encryptionModule = new EncryptionModule();
 
       expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.EncryptionModuleValidateGrantKeyGrantScopeMismatch)).toBe(400);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.ModuleAuthorizationModuleNotFound)).toBe(400);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantMissing)).toBe(401);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantNotYetActive)).toBe(401);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBe(401);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantRevoked)).toBe(401);
-      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.RecordsWriteDataCidMismatch)).toBeUndefined();
+      expect(encryptionModule.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBeUndefined();
+    });
+
+    it('should leave shared grant and module lookup failures to the core module registry', () => {
+      const registry = new CoreModuleRegistry();
+      registry.register(new EncryptionModule());
+
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.EncryptionModuleValidateGrantKeyGrantScopeMismatch)).toBe(400);
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.GrantAuthorizationGrantExpired)).toBe(401);
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.ModuleAuthorizationModuleNotFound)).toBe(400);
+      expect(registry.mapErrorToStatusCode(DwnErrorCode.RecordsWriteDataCidMismatch)).toBeUndefined();
     });
   });
 
