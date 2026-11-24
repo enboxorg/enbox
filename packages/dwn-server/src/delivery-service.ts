@@ -1,13 +1,13 @@
 import type { DwnServerConfig } from './config.js';
-import type { JsonRpcRequest } from '@enbox/dwn-clients';
 import type { DidDocument, DidResolver, DidService, DidServiceEndpoint } from '@enbox/dids';
 import type { Dwn, GenericMessage, ModuleDefinition, RecordsQueryReplyEntry, RecordsWriteMessage, ResolvedModuleNode, ResolvedRoleReference } from '@enbox/dwn-sdk-js';
+import type { HttpDwnRpcRequest, JsonRpcRequest } from '@enbox/dwn-clients';
 import type { MessageProcessedContext, MessageProcessedHook } from './message-processed-hook.js';
 
 import log from 'loglevel';
 
 import { sleep } from '@enbox/common';
-import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
+import { createHttpDwnRpcRequest, createJsonRpcRequest } from '@enbox/dwn-clients';
 import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, Encoder, getRoleContextPrefix, getRuleSetAtPath, Message, preloadModuleDefinitions, Records, resolveModuleGraph } from '@enbox/dwn-sdk-js';
 
 /** Strips trailing `/` characters without regex (avoids ReDoS scanners). */
@@ -713,7 +713,8 @@ export class DeliveryService implements MessageProcessedHook {
   /**
    * Sends a single DWN message to a remote endpoint via JSON-RPC over HTTP.
    * The JSON-RPC envelope and optional record data stream ride in a framed
-   * `application/vnd.enbox.dwn-rpc` request body, reading record data back
+   * `application/vnd.enbox.dwn-rpc` request body with the envelope's projected
+   * `dwn-*` headers, reading record data back
    * from the source tenant's local stores since the original request stream
    * was consumed when the message was processed.
    * Follows the same retry pattern as WebhookManager.
@@ -781,19 +782,19 @@ export class DeliveryService implements MessageProcessedHook {
     rpcRequest: JsonRpcRequest,
     dataBearingWrite: RecordsWriteMessage | undefined,
   ): Promise<RequestInitWithDuplex | undefined> {
-    const body = await this.#createRequestBody(sourceTenant, endpointUrl, rpcRequest, dataBearingWrite);
-    if (body === undefined) {
+    const request = await this.#createRequest(sourceTenant, endpointUrl, rpcRequest, dataBearingWrite);
+    if (request === undefined) {
       return undefined;
     }
 
     const fetchOptions: RequestInitWithDuplex = {
-      body,
-      headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      body    : request.body,
+      headers : request.headers,
       method  : 'POST',
       signal  : AbortSignal.timeout(DeliveryService.#requestTimeoutMs),
     };
 
-    if (body instanceof ReadableStream) {
+    if (request.body instanceof ReadableStream) {
       // Required by the Fetch standard for streaming request bodies.
       fetchOptions.duplex = 'half';
     }
@@ -802,17 +803,17 @@ export class DeliveryService implements MessageProcessedHook {
   }
 
   /**
-   * Creates the request body for one send attempt; record data streams are one-shot,
-   * so retries must re-read them from local storage instead of replaying a prior body.
+   * Creates the request body and headers for one send attempt; record data streams are
+   * one-shot, so retries must re-read them from local storage instead of replaying a prior body.
    */
-  async #createRequestBody(
+  async #createRequest(
     sourceTenant: string,
     endpointUrl: string,
     rpcRequest: JsonRpcRequest,
     dataBearingWrite: RecordsWriteMessage | undefined,
-  ): Promise<BodyInit | undefined> {
+  ): Promise<HttpDwnRpcRequest | undefined> {
     if (dataBearingWrite === undefined) {
-      return createHttpDwnRpcRequestBody(rpcRequest);
+      return createHttpDwnRpcRequest(rpcRequest);
     }
 
     const data = await this.#getRecordsWriteData(sourceTenant, dataBearingWrite);
@@ -821,7 +822,7 @@ export class DeliveryService implements MessageProcessedHook {
       return undefined;
     }
 
-    return createHttpDwnRpcRequestBody(rpcRequest, data);
+    return createHttpDwnRpcRequest(rpcRequest, data);
   }
 
   static #getDataBearingWrite(message: GenericMessage): RecordsWriteMessage | undefined {

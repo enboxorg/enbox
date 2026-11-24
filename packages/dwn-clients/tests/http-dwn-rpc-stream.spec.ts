@@ -1,7 +1,7 @@
 import type { RecordsWriteMessage } from '@enbox/dwn-sdk-js';
 
 import { HttpDwnRpcClient } from '../src/http-dwn-rpc-client.js';
-import { parseHttpDwnRpcRequestBody } from '../src/http-dwn-rpc-framing.js';
+import { createHttpDwnRpcResponseBody, HTTP_DWN_RPC_MEDIA_TYPE, parseHttpDwnRpcRequestBody } from '../src/http-dwn-rpc-framing.js';
 import { RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { describe, expect, it } from 'bun:test';
@@ -48,12 +48,12 @@ function streamingDwn(recordsWrite: RecordsWriteMessage): {
           cancelled.resolve();
         },
       });
-      return new Response(body, { headers: {
-        'content-type' : 'application/octet-stream',
-        'dwn-response' : JSON.stringify({ jsonrpc : '2.0', id, result  : { reply: {
-          status: { code: 200, detail: 'OK' }, entry: { recordsWrite },
-        } } }),
-      } });
+      const jsonRpcResponse = { jsonrpc : '2.0', id      : id ?? null, result  : { reply: {
+        status: { code: 200, detail: 'OK' }, entry: { recordsWrite },
+      } } } as const;
+      return new Response(createHttpDwnRpcResponseBody(jsonRpcResponse, body), {
+        headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      });
     },
   });
   return {

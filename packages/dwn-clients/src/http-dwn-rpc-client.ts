@@ -1,4 +1,5 @@
 import type { JsonRpcResponse } from './json-rpc.js';
+import type { ParsedHttpDwnRpcResponseBody } from './http-dwn-rpc-framing.js';
 import type { ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcRequest, DwnRpcResponse } from './dwn-rpc-types.js';
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
@@ -10,7 +11,7 @@ import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { sleep } from '@enbox/common';
-import { createHttpDwnRpcRequestBody, HTTP_DWN_RPC_MEDIA_TYPE } from './http-dwn-rpc-framing.js';
+import { createHttpDwnRpcRequest, isHttpDwnRpcContentType, parseHttpDwnRpcResponseBody } from './http-dwn-rpc-framing.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 import { DwnRpcError, isTerminalJsonRpcErrorCode } from './dwn-rpc-error.js';
 
@@ -168,6 +169,13 @@ function attachRequestBody(fetchOpts: RequestInit, body: BodyInit): boolean {
   return true;
 }
 
+/** Cancels a response data stream that no reply field will own, releasing the HTTP response. */
+async function cancelUnclaimedStream(dataStream: ReadableStream<Uint8Array> | undefined): Promise<void> {
+  await dataStream?.cancel().catch((): void => {
+    // The stream is being discarded; cancellation is best-effort.
+  });
+}
+
 /**
  * HTTP client that can be used to communicate with Dwn Servers.
  *
@@ -204,7 +212,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       message : request.message
     });
 
-    const { fetchOpts, isRequestBodyReplayable } = this.createDwnRequestInit({
+    const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({
       data   : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
@@ -223,13 +231,10 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new RateLimitError(retryAfterSeconds(resp));
     }
 
-    // When the server streams record data back, the JSON-RPC envelope is in the
-    // `dwn-response` header and the body is the raw data stream.  Otherwise the
-    // entire JSON-RPC response is the body.
-    const hasDataStream = resp.headers.has('dwn-response');
-    const dwnRpcResponse = await this.parseDwnRpcResponseBody(resp, hasDataStream, request.dwnUrl);
+    const { jsonRpcResponse: dwnRpcResponse, dataStream } = await this.parseDwnRpcResponse(resp, request.dwnUrl, responseController);
 
     if (dwnRpcResponse.error) {
+      await cancelUnclaimedStream(dataStream);
       const { code, message } = dwnRpcResponse.error;
       if (code === JsonRpcErrorCodes.TooManyRequests) {
         const retryAfter = dwnRpcResponse.error.data?.retryAfterSec ?? 1;
@@ -238,16 +243,19 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new DwnRpcError(code, message, dwnRpcResponse.error.data);
     }
 
-    const { reply } = dwnRpcResponse.result;
-    if (hasDataStream) {
-      const dataStream = resp.body;
-      if (dataStream === null) {
-        throw new Error(`missing data stream in json rpc response. dwn url: ${request.dwnUrl}`);
-      }
+    const reply = dwnRpcResponse.result?.reply;
+    if (typeof reply !== 'object' || reply === null) {
+      await cancelUnclaimedStream(dataStream);
+      throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}: the response carries no DWN reply`);
+    }
+
+    if (dataStream !== undefined) {
       if (reply.record) {
-        reply.record.data = normalizeReadableStream(dataStream, responseController);
+        reply.record.data = dataStream;
       } else if (reply.entry) {
-        reply.entry.data = normalizeReadableStream(dataStream, responseController);
+        reply.entry.data = dataStream;
+      } else {
+        await cancelUnclaimedStream(dataStream);
       }
     }
 
@@ -263,7 +271,7 @@ export class HttpDwnRpcClient implements DwnRpc {
       ...(request.includeMaterializationConfirmation === true ? { includeMaterializationConfirmation: true } : {}),
     });
 
-    const { fetchOpts, isRequestBodyReplayable } = this.createDwnRequestInit({
+    const { fetchOpts, isRequestBodyReplayable } = await this.createDwnRequestInit({
       data   : request.data as BodyInit | undefined,
       dwnUrl : request.dwnUrl,
       jsonRpcRequest,
@@ -278,11 +286,8 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new RateLimitError(retryAfterSeconds(resp));
     }
 
-    const responseBody = await resp.text();
-    const jsonRpcResponse = parseJson(responseBody) as JsonRpcResponse;
-    if (jsonRpcResponse == null) {
-      throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}, status: ${resp.status}`);
-    }
+    const { jsonRpcResponse, dataStream } = await this.parseDwnRpcResponse(resp, request.dwnUrl);
+    await cancelUnclaimedStream(dataStream);
 
     if (jsonRpcResponse.error) {
       const { code, message } = jsonRpcResponse.error;
@@ -313,34 +318,39 @@ export class HttpDwnRpcClient implements DwnRpc {
   }
 
   /**
-   * Parses the JSON-RPC envelope from a `sendDwnRequest()` response. When the server streamed
-   * record data back, the envelope is in the `dwn-response` header; otherwise the envelope is
-   * the entire response body.
+   * Parses the JSON-RPC response of an HTTP DWN RPC call. A reply that carries record data
+   * arrives as a framed body: the JSON-RPC response followed by the raw data stream, which
+   * stays tied to `responseController` so cancelling it releases the HTTP response. Any
+   * other response body is plain JSON.
    *
-   * @throws Error when the JSON-RPC envelope cannot be parsed.
+   * @throws Error when the JSON-RPC response cannot be parsed.
    */
-  private async parseDwnRpcResponseBody(resp: Response, hasDataStream: boolean, dwnUrl: string): Promise<JsonRpcResponse> {
-    if (hasDataStream) {
-      const jsonRpcResponse = parseJson(resp.headers.get('dwn-response')!) as JsonRpcResponse;
-
+  private async parseDwnRpcResponse(
+    resp: Response,
+    dwnUrl: string,
+    responseController?: AbortController,
+  ): Promise<ParsedHttpDwnRpcResponseBody> {
+    if (!isHttpDwnRpcContentType(resp.headers.get('content-type'))) {
+      const jsonRpcResponse = parseJson(await resp.text()) as JsonRpcResponse;
       if (jsonRpcResponse == null) {
-        throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}`);
+        throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}, status: ${resp.status}`);
       }
 
-      return jsonRpcResponse;
+      return { jsonRpcResponse };
     }
 
-    const responseBody = await resp.text();
-    const jsonRpcResponse = parseJson(responseBody) as JsonRpcResponse;
-
-    if (jsonRpcResponse == null) {
-      throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}, status: ${resp.status}`);
+    if (resp.body === null) {
+      throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}: the framed response has no body`);
     }
 
-    return jsonRpcResponse;
+    try {
+      return await parseHttpDwnRpcResponseBody(normalizeReadableStream(resp.body, responseController));
+    } catch (error: unknown) {
+      throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}: ${(error as Error).message}`);
+    }
   }
 
-  private createDwnRequestInit({
+  private async createDwnRequestInit({
     data,
     dwnUrl,
     jsonRpcRequest,
@@ -350,16 +360,14 @@ export class HttpDwnRpcClient implements DwnRpc {
     dwnUrl: string;
     jsonRpcRequest: ReturnType<typeof createJsonRpcRequest>;
     signal?: AbortSignal;
-  }): { fetchOpts: RequestInit; isRequestBodyReplayable: boolean } {
+  }): Promise<{ fetchOpts: RequestInit; isRequestBodyReplayable: boolean }> {
     signal?.throwIfAborted();
-    const requestHeaders: Record<string, string> = {
-      'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
-    };
-    attachBearerToken(requestHeaders, this._authOptions, dwnUrl);
+    const { body, headers } = await createHttpDwnRpcRequest(jsonRpcRequest, data);
+    attachBearerToken(headers, this._authOptions, dwnUrl);
 
     const fetchOpts: RequestInit = {
-      method  : 'POST',
-      headers : requestHeaders,
+      method: 'POST',
+      headers,
       // Caller-provided signal is honoured by `fetchWithRetry` via
       // `AbortSignal.any([signal, perAttemptTimeoutSignal])`. Aborting
       // short-circuits the retry loop (AbortError is non-retryable) so
@@ -367,7 +375,6 @@ export class HttpDwnRpcClient implements DwnRpc {
       ...(signal ? { signal } : {}),
     };
 
-    const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
     return { fetchOpts, isRequestBodyReplayable: attachRequestBody(fetchOpts, body) };
   }
 

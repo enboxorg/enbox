@@ -1,10 +1,10 @@
 import type { JsonRpcSuccessResponse } from '@enbox/dwn-clients';
 import type { Persona } from '@enbox/dwn-sdk-js';
 
-import { createJsonRpcRequest } from '@enbox/dwn-clients';
 import { expect } from 'bun:test';
 import { Cid, DwnConstant, Jws, ModulesConfigure, RecordsRead, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
-import { dwnRpcRequestInit, getFileAsReadStream } from './utils.js';
+import { createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE, HttpDwnRpcResponseHeader } from '@enbox/dwn-clients';
+import { dwnRpcRequestInit, getFileAsReadStream, readDwnRpcResponse } from './utils.js';
 
 /**
  * Validator of common scenarios.
@@ -39,7 +39,7 @@ export default class CommonScenarioValidator {
       target  : alice.did,
       message : modulesConfig.message,
     });
-    const moduleConfigureResponse = await fetch(dwnUrl, dwnRpcRequestInit(moduleConfigureRequest));
+    const moduleConfigureResponse = await fetch(dwnUrl, await dwnRpcRequestInit(moduleConfigureRequest));
     const moduleConfigureResponseBody = await moduleConfigureResponse.json() as JsonRpcSuccessResponse;
 
     expect(moduleConfigureResponse.status).toBe(200);
@@ -68,7 +68,7 @@ export default class CommonScenarioValidator {
       target  : alice.did,
       message : recordsWrite.message,
     });
-    const recordsWriteResponse = await fetch(dwnUrl, dwnRpcRequestInit(recordsWriteRequest, stream));
+    const recordsWriteResponse = await fetch(dwnUrl, await dwnRpcRequestInit(recordsWriteRequest, stream));
     const recordsWriteResponseBody = await recordsWriteResponse.json() as JsonRpcSuccessResponse;
 
     expect(recordsWriteResponse.status).toBe(200);
@@ -88,26 +88,23 @@ export default class CommonScenarioValidator {
       message : recordsRead.message
     });
 
-    const recordsReadResponse = await fetch(dwnUrl, dwnRpcRequestInit(recordsReadRequest));
+    const recordsReadResponse = await fetch(dwnUrl, await dwnRpcRequestInit(recordsReadRequest));
 
     expect(recordsReadResponse.status).toBe(200);
 
     const { headers } = recordsReadResponse;
-    const contentType = headers.get('content-type');
-    expect(contentType).toBeDefined();
-    expect(contentType).toBe('application/octet-stream');
+    expect(headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
+    expect(headers.get(HttpDwnRpcResponseHeader.Status)).toBe('200');
+    expect(headers.has('dwn-response')).toBe(false);
 
-    const recordsReadDwnResponse = headers.get('dwn-response');
-    expect(recordsReadDwnResponse).toBeDefined();
-
-    const recordsReadJsonRpcResponse = JSON.parse(recordsReadDwnResponse) as JsonRpcSuccessResponse;
+    const { jsonRpcResponse, dataStream } = await readDwnRpcResponse(recordsReadResponse);
+    const recordsReadJsonRpcResponse = jsonRpcResponse as JsonRpcSuccessResponse;
     expect(recordsReadJsonRpcResponse.id).toBe(recordsReadRequestId);
     expect(recordsReadJsonRpcResponse.error).toBeUndefined();
     expect(recordsReadJsonRpcResponse.result.reply.status.code).toBe(200);
     expect(recordsReadJsonRpcResponse.result.reply.entry.recordsWrite).toBeDefined();
 
-    // can't get response as stream from supertest :(
-    const cid = await Cid.computeDagPbCidFromStream(recordsReadResponse.body as unknown as ReadableStream<Uint8Array>);
+    const cid = await Cid.computeDagPbCidFromStream(dataStream!);
     expect(cid).toBe(dataCid);
   }
 }

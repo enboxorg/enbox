@@ -1,6 +1,6 @@
 import type { Dialect } from '@enbox/dwn-sql-store';
 import type { GenericMessage, Persona, ReplicationApplyResult, UnionMessageReply } from '@enbox/dwn-sdk-js';
-import type { JsonRpcRequest, JsonRpcResponse } from '@enbox/dwn-clients';
+import type { JsonRpcRequest, JsonRpcResponse, ParsedHttpDwnRpcResponseBody } from '@enbox/dwn-clients';
 
 import { expect } from 'bun:test';
 import { fileURLToPath } from 'url';
@@ -10,7 +10,7 @@ import path from 'path';
 import { WebSocket } from 'ws';
 import { Cid, DataStream, Message, RecordsWrite, Replication } from '@enbox/dwn-sdk-js';
 import { createBunSqliteDatabase, SqliteDialect } from '@enbox/dwn-sql-store';
-import { createHttpDwnRpcRequestBody, createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE } from '@enbox/dwn-clients';
+import { createHttpDwnRpcRequest, createJsonRpcRequest, isHttpDwnRpcContentType, parseHttpDwnRpcResponseBody } from '@enbox/dwn-clients';
 
 import { getDialectFromUrl } from '../src/storage.js';
 import { runServerMigrations } from '../src/server-migration-runner.js';
@@ -114,19 +114,27 @@ export async function getFileAsReadStream(
   };
 }
 
-export function getDwnResponse(response: Response): UnionMessageReply {
-  return JSON.parse(response.headers.get('dwn-response') as string) as UnionMessageReply;
-}
-
-/** Builds the `fetch` init for a framed DWN RPC POST, adding `duplex` for streaming bodies. */
-export function dwnRpcRequestInit(jsonRpcRequest: JsonRpcRequest, data?: BodyInit): RequestInit & { duplex?: 'half' } {
-  const body = createHttpDwnRpcRequestBody(jsonRpcRequest, data);
+/**
+ * Builds the `fetch` init for a framed DWN RPC POST with its projected `dwn-*` headers,
+ * adding `duplex` for streaming bodies.
+ */
+export async function dwnRpcRequestInit(jsonRpcRequest: JsonRpcRequest, data?: BodyInit): Promise<RequestInit & { duplex?: 'half' }> {
+  const { body, headers } = await createHttpDwnRpcRequest(jsonRpcRequest, data);
   return {
-    method  : 'POST',
-    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+    method: 'POST',
+    headers,
     body,
     ...(body instanceof ReadableStream ? { duplex: 'half' } : {}),
   };
+}
+
+/** Reads a JSON-RPC POST response: a framed body when the reply carries record data, JSON otherwise. */
+export async function readDwnRpcResponse(response: Response): Promise<ParsedHttpDwnRpcResponseBody> {
+  if (isHttpDwnRpcContentType(response.headers.get('content-type'))) {
+    return parseHttpDwnRpcResponseBody(response.body!);
+  }
+
+  return { jsonRpcResponse: await response.json() as JsonRpcResponse };
 }
 
 export async function generateRecordsWriteJsonRpcRequest(persona: Persona): Promise<{
@@ -157,25 +165,8 @@ export async function sendHttpMessage(options: {
     message,
   });
 
-  const resp = await fetch(url, dwnRpcRequestInit(jsonRpcRequest, data));
-  let dwnRpcResponse: JsonRpcResponse;
-
-  // check to see if response is in header first. if it is, that means the response is a ReadableStream
-  let dataStream;
-  const { headers } = resp;
-  if (headers.has('dwn-response')) {
-    const jsonRpcResponse = JSON.parse(headers.get('dwn-response')) as JsonRpcResponse;
-
-    if (jsonRpcResponse == null) {
-      throw new Error(`failed to parse json rpc response. dwn url: ${url}`);
-    }
-
-    dataStream = resp.body;
-    dwnRpcResponse = jsonRpcResponse;
-  } else {
-    const responseBody = await resp.text();
-    dwnRpcResponse = JSON.parse(responseBody);
-  }
+  const resp = await fetch(url, await dwnRpcRequestInit(jsonRpcRequest, data));
+  const { jsonRpcResponse: dwnRpcResponse, dataStream } = await readDwnRpcResponse(resp);
 
   if (dwnRpcResponse.error) {
     const { code, message } = dwnRpcResponse.error;
@@ -184,7 +175,7 @@ export async function sendHttpMessage(options: {
 
   const { reply } = dwnRpcResponse.result;
   if (dataStream) {
-    reply['record']['data'] = dataStream;
+    (reply.entry ?? reply.record).data = dataStream;
   }
 
   return reply as UnionMessageReply;

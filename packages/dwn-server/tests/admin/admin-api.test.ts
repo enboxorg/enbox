@@ -535,7 +535,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
+      await fetch(`http://localhost:${port}`, await dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Check events endpoint.
       const response = await adminFetch({ port }, '/events');
@@ -576,7 +576,7 @@ describe('AdminApi — Phase 2 endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
+      await fetch(`http://localhost:${port}`, await dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Fetch events since cursor.
       const response = await adminFetch({ port }, `/events?since=${cursor}&limit=1`);
@@ -1549,7 +1549,7 @@ describe('AdminApi — tenant data browser endpoints', () => {
         },
       };
 
-      await fetch(`http://localhost:${port}`, dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
+      await fetch(`http://localhost:${port}`, await dwnRpcRequestInit(dwnRequest as JsonRpcRequest));
 
       // Note: RecordsQuery messages are not stored in the message store.
       // Only writes and module configurations get stored.
