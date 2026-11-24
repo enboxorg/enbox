@@ -5,16 +5,15 @@ import type { DwnReplicationApplyRequest, DwnRpc, DwnRpcAuthOptions, DwnRpcReque
 import type { DwnServerInfoCache, ServerInfo } from './server-info-types.js';
 
 import { attachBearerToken } from './rpc-auth.js';
-import { createHttpDwnRpcRequest } from './http-dwn-rpc-headers.js';
 import { CryptoUtils } from '@enbox/crypto';
 import { DwnServerInfoCacheMemory } from './dwn-server-info-cache-memory.js';
 import { normalizeReadableStream } from './readable-stream.js';
 import { parseReplicationApplyResult } from './replication-apply-result.js';
 import { RateLimitError } from './rate-limit-error.js';
 import { sleep } from '@enbox/common';
+import { createHttpDwnRpcRequest, isHttpDwnRpcContentType, parseHttpDwnRpcResponseBody } from './http-dwn-rpc-framing.js';
 import { createJsonRpcRequest, JsonRpcErrorCodes, parseJson } from './json-rpc.js';
 import { DwnRpcError, isTerminalJsonRpcErrorCode } from './dwn-rpc-error.js';
-import { isHttpDwnRpcContentType, parseHttpDwnRpcResponseBody } from './http-dwn-rpc-framing.js';
 
 // ---------------------------------------------------------------------------
 // Retry configuration
@@ -244,7 +243,12 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new DwnRpcError(code, message, dwnRpcResponse.error.data);
     }
 
-    const { reply } = dwnRpcResponse.result;
+    const reply = dwnRpcResponse.result?.reply;
+    if (typeof reply !== 'object' || reply === null) {
+      await cancelUnclaimedStream(dataStream);
+      throw new Error(`failed to parse json rpc response. dwn url: ${request.dwnUrl}: the response carries no DWN reply`);
+    }
+
     if (dataStream !== undefined) {
       if (reply.record) {
         reply.record.data = dataStream;
@@ -339,19 +343,11 @@ export class HttpDwnRpcClient implements DwnRpc {
       throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}: the framed response has no body`);
     }
 
-    let parsed: ParsedHttpDwnRpcResponseBody;
     try {
-      parsed = await parseHttpDwnRpcResponseBody(normalizeReadableStream(resp.body, responseController));
+      return await parseHttpDwnRpcResponseBody(normalizeReadableStream(resp.body, responseController));
     } catch (error: unknown) {
       throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}: ${(error as Error).message}`);
     }
-
-    if (typeof parsed.jsonRpcResponse !== 'object' || parsed.jsonRpcResponse === null) {
-      await cancelUnclaimedStream(parsed.dataStream);
-      throw new Error(`failed to parse json rpc response. dwn url: ${dwnUrl}: the framed envelope is not an object`);
-    }
-
-    return parsed;
   }
 
   private async createDwnRequestInit({

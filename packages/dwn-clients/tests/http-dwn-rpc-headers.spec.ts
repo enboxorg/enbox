@@ -2,8 +2,14 @@ import type { JsonRpcRequest, JsonRpcResponse } from '../src/json-rpc.js';
 import type { ModuleDefinition, Persona } from '@enbox/dwn-sdk-js';
 
 import { createJsonRpcRequest } from '../src/json-rpc.js';
+import sinon from 'sinon';
 import {
   createHttpDwnRpcRequest,
+  HTTP_DWN_RPC_MAX_ENVELOPE_BYTES,
+  HTTP_DWN_RPC_MEDIA_TYPE,
+  parseHttpDwnRpcRequestBody,
+} from '../src/http-dwn-rpc-framing.js';
+import {
   createHttpDwnRpcRequestHeaders,
   createHttpDwnRpcResponseHeaders,
   HttpDwnRpcRequestHeader,
@@ -12,7 +18,6 @@ import {
 } from '../src/http-dwn-rpc-headers.js';
 import { DataStream, DwnInterfaceName, DwnMethodName, Jws, Message, RecordsQuery, RecordsWrite, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { describe, expect, it } from 'bun:test';
-import { HTTP_DWN_RPC_MEDIA_TYPE, parseHttpDwnRpcRequestBody } from '../src/http-dwn-rpc-framing.js';
 
 const testModule = 'http://test-module.xyz';
 
@@ -22,7 +27,7 @@ describe('HTTP DWN RPC headers', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data: new Uint8Array([1, 2, 3]) });
 
-      const headers = await createHttpDwnRpcRequestHeaders(processMessageRequest(alice.did, message), true);
+      const headers = await projectHeaders(processMessageRequest(alice.did, message), true);
 
       expect(headers).toEqual({
         [HttpDwnRpcRequestHeader.Author]     : alice.did,
@@ -39,7 +44,7 @@ describe('HTTP DWN RPC headers', () => {
       const alice = await TestDataGenerator.generateDidKeyPersona();
       const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
 
-      const headers = await createHttpDwnRpcRequestHeaders(processMessageRequest(alice.did, message), false);
+      const headers = await projectHeaders(processMessageRequest(alice.did, message), false);
 
       expect(headers[HttpDwnRpcRequestHeader.DataSize]).toBeUndefined();
       expect(headers[HttpDwnRpcRequestHeader.Message]).toBe('RecordsWrite');
@@ -50,7 +55,7 @@ describe('HTTP DWN RPC headers', () => {
       const appDelegate = await TestDataGenerator.generateDidKeyPersona();
       const message = await createDelegatedRecordsWrite(alice, appDelegate);
 
-      const headers = await createHttpDwnRpcRequestHeaders(processMessageRequest(alice.did, message), true);
+      const headers = await projectHeaders(processMessageRequest(alice.did, message), true);
 
       expect(headers[HttpDwnRpcRequestHeader.Author]).toBe(alice.did);
       expect(headers[HttpDwnRpcRequestHeader.Delegate]).toBe(appDelegate.did);
@@ -70,8 +75,8 @@ describe('HTTP DWN RPC headers', () => {
         signer : Jws.createSigner(alice),
       });
 
-      const configureHeaders = await createHttpDwnRpcRequestHeaders(processMessageRequest(alice.did, modulesConfigure), false);
-      const queryHeaders = await createHttpDwnRpcRequestHeaders(processMessageRequest(alice.did, recordsQuery), false);
+      const configureHeaders = await projectHeaders(processMessageRequest(alice.did, modulesConfigure), false);
+      const queryHeaders = await projectHeaders(processMessageRequest(alice.did, recordsQuery), false);
 
       expect(configureHeaders[HttpDwnRpcRequestHeader.Message]).toBe('ModulesConfigure');
       expect(configureHeaders[HttpDwnRpcRequestHeader.Module]).toBe(definition.module);
@@ -79,25 +84,41 @@ describe('HTTP DWN RPC headers', () => {
       expect(queryHeaders[HttpDwnRpcRequestHeader.Module]).toBe(definition.module);
     });
 
+    it('should omit the author and delegate of an unsigned message', async () => {
+      const { message } = await RecordsQuery.create({ filter: { module: testModule } });
+      const envelopeJson = JSON.stringify(processMessageRequest('did:example:alice', message));
+      const serverMessage = (JSON.parse(envelopeJson) as JsonRpcRequest).params.message;
+
+      const headers = await createHttpDwnRpcRequestHeaders(envelopeJson, false);
+
+      expect(headers).toEqual({
+        [HttpDwnRpcRequestHeader.Message]    : 'RecordsQuery',
+        [HttpDwnRpcRequestHeader.MessageCid] : await Message.getCid(serverMessage),
+        [HttpDwnRpcRequestHeader.Module]     : testModule,
+        [HttpDwnRpcRequestHeader.RpcMethod]  : 'dwn.processMessage',
+        [HttpDwnRpcRequestHeader.Tenant]     : 'did:example:alice',
+      });
+    });
+
     it('should project a filters module only when every filter names the same module', async () => {
       const sameModule = messagesQueryRequest([{ module: 'https://a.example' }, { module: 'https://a.example' }]);
       const mixedModules = messagesQueryRequest([{ module: 'https://a.example' }, { module: 'https://b.example' }]);
       const partialModules = messagesQueryRequest([{ module: 'https://a.example' }, { interface: 'Records' }]);
 
-      expect((await createHttpDwnRpcRequestHeaders(sameModule, false))[HttpDwnRpcRequestHeader.Module]).toBe('https://a.example');
-      expect((await createHttpDwnRpcRequestHeaders(mixedModules, false))[HttpDwnRpcRequestHeader.Module]).toBeUndefined();
-      expect((await createHttpDwnRpcRequestHeaders(partialModules, false))[HttpDwnRpcRequestHeader.Module]).toBeUndefined();
+      expect((await projectHeaders(sameModule, false))[HttpDwnRpcRequestHeader.Module]).toBe('https://a.example');
+      expect((await projectHeaders(mixedModules, false))[HttpDwnRpcRequestHeader.Module]).toBeUndefined();
+      expect((await projectHeaders(partialModules, false))[HttpDwnRpcRequestHeader.Module]).toBeUndefined();
     });
 
     it('should omit values that are not visible ASCII or exceed the length bound', async () => {
       for (const target of ['did:example:has space', 'did:example:שלום', `did:example:${'x'.repeat(1_024)}`]) {
-        const headers = await createHttpDwnRpcRequestHeaders(createJsonRpcRequest('id', 'dwn.processMessage', { target }), false);
+        const headers = await projectHeaders(createJsonRpcRequest('id', 'dwn.processMessage', { target }), false);
         expect(headers).toEqual({ [HttpDwnRpcRequestHeader.RpcMethod]: 'dwn.processMessage' });
       }
     });
 
     it('should project only the JSON-RPC method of a request without a DWN message', async () => {
-      const headers = await createHttpDwnRpcRequestHeaders(createJsonRpcRequest('id', 'rpc.ping', {}), false);
+      const headers = await projectHeaders(createJsonRpcRequest('id', 'rpc.ping', {}), false);
 
       expect(headers).toEqual({ [HttpDwnRpcRequestHeader.RpcMethod]: 'rpc.ping' });
     });
@@ -114,7 +135,7 @@ describe('HTTP DWN RPC headers', () => {
 
       expect(headers).toEqual({
         'content-type': HTTP_DWN_RPC_MEDIA_TYPE,
-        ...await createHttpDwnRpcRequestHeaders(request, true),
+        ...await projectHeaders(request, true),
       });
       const parsed = await parseHttpDwnRpcRequestBody(new Response(body).body!);
       expect(parsed.jsonRpcRequest).toEqual(request);
@@ -129,8 +150,22 @@ describe('HTTP DWN RPC headers', () => {
       const { body, headers } = await createHttpDwnRpcRequest(request);
       const parsed = await parseHttpDwnRpcRequestBody(new Response(body).body!);
 
-      await validateHttpDwnRpcRequestHeaders(new Headers(headers), parsed.jsonRpcRequest, false);
+      await expect(validateHttpDwnRpcRequestHeaders(new Headers(headers), parsed.jsonRpcRequest, false)).resolves.toBeUndefined();
       expect(headers[HttpDwnRpcRequestHeader.MessageCid]).toBe(await Message.getCid(message));
+    });
+
+    it('should reject an envelope over the size limit before hashing its message', async () => {
+      const getCid = sinon.spy(Message, 'getCid');
+      const request = processMessageRequest('did:example:alice', {
+        descriptor: { interface: 'Records', method: 'Write', tags: { padding: 'x'.repeat(HTTP_DWN_RPC_MAX_ENVELOPE_BYTES) } },
+      });
+
+      try {
+        await expect(createHttpDwnRpcRequest(request)).rejects.toThrow(`${HTTP_DWN_RPC_MAX_ENVELOPE_BYTES}-byte limit`);
+        expect(getCid.called).toBe(false);
+      } finally {
+        getCid.restore();
+      }
     });
   });
 
@@ -138,7 +173,7 @@ describe('HTTP DWN RPC headers', () => {
     it('should accept headers that are exactly the projections of the envelope', async () => {
       const { request, headers } = await recordsWriteRequestHeaders();
 
-      await validateHttpDwnRpcRequestHeaders(headers, request, true);
+      await expect(validateHttpDwnRpcRequestHeaders(headers, request, true)).resolves.toBeUndefined();
     });
 
     it('should reject a request that omits a projected header', async () => {
@@ -157,6 +192,14 @@ describe('HTTP DWN RPC headers', () => {
         .rejects.toThrow(`HTTP DWN RPC request '${HttpDwnRpcRequestHeader.Message}' header does not match the JSON-RPC envelope`);
     });
 
+    it('should reject a projected header that appears more than once', async () => {
+      const { request, headers } = await recordsWriteRequestHeaders();
+      headers.append(HttpDwnRpcRequestHeader.Tenant, 'did:example:someone-else');
+
+      await expect(validateHttpDwnRpcRequestHeaders(headers, request, true))
+        .rejects.toThrow(`HTTP DWN RPC request '${HttpDwnRpcRequestHeader.Tenant}' header does not match the JSON-RPC envelope`);
+    });
+
     it('should reject a header that the envelope does not project', async () => {
       const { request, headers } = await recordsWriteRequestHeaders();
 
@@ -165,7 +208,7 @@ describe('HTTP DWN RPC headers', () => {
     });
 
     it('should expect no headers for an envelope that is not a JSON object', async () => {
-      await validateHttpDwnRpcRequestHeaders(new Headers(), null, false);
+      await expect(validateHttpDwnRpcRequestHeaders(new Headers(), null, false)).resolves.toBeUndefined();
       await expect(validateHttpDwnRpcRequestHeaders(new Headers({ [HttpDwnRpcRequestHeader.RpcMethod]: 'rpc.ping' }), 'rpc.ping', false))
         .rejects.toThrow('unexpected');
     });
@@ -188,6 +231,11 @@ describe('HTTP DWN RPC headers', () => {
   });
 });
 
+/** Projects the headers of a request from the JSON that its framed body carries. */
+async function projectHeaders(request: JsonRpcRequest, dataFollows: boolean): Promise<Record<string, string>> {
+  return createHttpDwnRpcRequestHeaders(JSON.stringify(request), dataFollows);
+}
+
 function processMessageRequest(target: string, message: object): JsonRpcRequest {
   return createJsonRpcRequest('request-id', 'dwn.processMessage', { target, message });
 }
@@ -201,7 +249,7 @@ async function recordsWriteRequestHeaders(): Promise<{ request: JsonRpcRequest; 
   const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice });
   const request = processMessageRequest(alice.did, message);
 
-  return { request, headers: new Headers(await createHttpDwnRpcRequestHeaders(request, true)) };
+  return { request, headers: new Headers(await projectHeaders(request, true)) };
 }
 
 async function createDelegatedRecordsWrite(grantor: Persona, delegate: Persona): Promise<object> {

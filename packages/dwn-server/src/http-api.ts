@@ -907,7 +907,7 @@ export class HttpApi {
       await decoded.dataStream?.cancel().catch((): void => {
         // The request is rejected before its record data is read; cancellation is best-effort.
       });
-      return { errorResponse: badRequest((error as Error).message, decoded.jsonRpcRequest?.id ?? undefined) };
+      return { errorResponse: badRequest((error as Error).message, decoded.jsonRpcRequest.id ?? undefined) };
     }
 
     return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
@@ -969,7 +969,22 @@ export class HttpApi {
     if (responseDataStream) {
       // A reply that carries record data is framed like a request: the JSON-RPC
       // response first, then the raw record data.
-      return new Response(createHttpDwnRpcResponseBody(jsonRpcResponse, responseDataStream), {
+      let responseBody: BodyInit;
+      try {
+        responseBody = createHttpDwnRpcResponseBody(jsonRpcResponse, responseDataStream);
+      } catch (error) {
+        // The reply cannot be framed, e.g. its envelope exceeds the response limit.
+        await responseDataStream.cancel().catch((): void => {
+          // The record data is discarded; cancellation is best-effort.
+        });
+        log.error('Failed to frame the JSON-RPC response', error);
+        return Response.json(
+          createJsonRpcErrorResponse(dwnRpcRequest.id ?? null, JsonRpcErrorCodes.InternalError, 'the reply could not be framed'),
+          { status: 500 },
+        );
+      }
+
+      return new Response(responseBody, {
         headers: { ...responseHeaders, 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
       });
     }

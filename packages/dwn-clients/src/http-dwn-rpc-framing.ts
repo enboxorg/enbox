@@ -1,5 +1,7 @@
 import type { JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
+import { createHttpDwnRpcRequestHeaders } from './http-dwn-rpc-headers.js';
+
 /** Vendor media type used for DWN JSON-RPC HTTP body framing. */
 export const HTTP_DWN_RPC_MEDIA_TYPE = 'application/vnd.enbox.dwn-rpc';
 
@@ -8,8 +10,8 @@ export const HTTP_DWN_RPC_MAX_ENVELOPE_BYTES = 1_048_576;
 
 /**
  * Maximum JSON-RPC response envelope size accepted by HTTP DWN RPC body framing.
- * A response envelope can carry a bounded replication-support closure ahead of
- * the record data, so it is allowed to be larger than a request envelope.
+ * A response envelope can carry both the latest and the initial write of a
+ * record, so it is allowed to be larger than a request envelope.
  */
 export const HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES = 16_777_216;
 
@@ -34,6 +36,31 @@ type ParsedFramedBody = {
   dataStream?: ReadableStream<Uint8Array>;
 };
 
+/** The body and headers of an HTTP DWN RPC request. */
+export type HttpDwnRpcRequest = {
+  body: BodyInit;
+  headers: Record<string, string>;
+};
+
+/**
+ * Creates the framed body and the headers of an HTTP DWN RPC request:
+ * `content-type` plus the `dwn-*` projections of the envelope. The envelope is
+ * serialized once, so the headers project exactly the JSON that the body carries.
+ */
+export async function createHttpDwnRpcRequest(
+  jsonRpcRequest: JsonRpcRequest,
+  data?: BodyInit,
+): Promise<HttpDwnRpcRequest> {
+  const envelopeJson = JSON.stringify(jsonRpcRequest);
+  const envelopeBytes = encodeEnvelope(envelopeJson, HTTP_DWN_RPC_MAX_ENVELOPE_BYTES);
+  const projectedHeaders = await createHttpDwnRpcRequestHeaders(envelopeJson, data !== undefined);
+
+  return {
+    body    : createFramedBody(envelopeBytes, data),
+    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE, ...projectedHeaders },
+  };
+}
+
 /**
  * Frames a JSON-RPC request and optional raw record data in one HTTP request body.
  *
@@ -48,7 +75,7 @@ export function createHttpDwnRpcRequestBody(
   jsonRpcRequest: JsonRpcRequest,
   data?: BodyInit,
 ): BodyInit {
-  return createFramedBody(encodeEnvelope(jsonRpcRequest, HTTP_DWN_RPC_MAX_ENVELOPE_BYTES), data);
+  return createFramedBody(encodeEnvelope(JSON.stringify(jsonRpcRequest), HTTP_DWN_RPC_MAX_ENVELOPE_BYTES), data);
 }
 
 /**
@@ -59,7 +86,7 @@ export function createHttpDwnRpcResponseBody(
   jsonRpcResponse: JsonRpcResponse,
   data: BodyInit,
 ): BodyInit {
-  return createFramedBody(encodeEnvelope(jsonRpcResponse, HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES), data);
+  return createFramedBody(encodeEnvelope(JSON.stringify(jsonRpcResponse), HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES), data);
 }
 
 /** Returns whether a Content-Type header selects DWN RPC body framing. */
@@ -96,8 +123,8 @@ function envelopeTooLargeMessage(maxEnvelopeBytes: number): string {
   return `HTTP DWN RPC envelope exceeds the ${maxEnvelopeBytes}-byte limit`;
 }
 
-function encodeEnvelope(envelope: JsonRpcRequest | JsonRpcResponse, maxEnvelopeBytes: number): Uint8Array {
-  const envelopeBytes = textEncoder.encode(JSON.stringify(envelope));
+function encodeEnvelope(envelopeJson: string, maxEnvelopeBytes: number): Uint8Array {
+  const envelopeBytes = textEncoder.encode(envelopeJson);
   if (envelopeBytes.byteLength > maxEnvelopeBytes) {
     throw new Error(envelopeTooLargeMessage(maxEnvelopeBytes));
   }
@@ -181,6 +208,9 @@ async function parseFramedBody(
 
     const envelopeBytes = await readExactly(envelopeLength);
     const envelope: unknown = JSON.parse(textDecoder.decode(envelopeBytes));
+    if (typeof envelope !== 'object' || envelope === null || Array.isArray(envelope)) {
+      throw new Error('HTTP DWN RPC envelope is not a JSON object');
+    }
 
     if ((flags & FRAME_DATA_FOLLOWS_FLAG) === 0) {
       if (remainder !== undefined && remainder.byteLength > 0) {

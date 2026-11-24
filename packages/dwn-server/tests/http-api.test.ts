@@ -23,11 +23,14 @@ import CommonScenarioValidator from './common-scenario-validator.js';
 import { config } from '../src/config.js';
 import { getTestDwn } from './test-dwn.js';
 import { HttpApi } from '../src/http-api.js';
+import { jsonRpcRouter } from '../src/json-rpc-api.js';
 import { LocalNodePairingManager } from '../src/local-node-pairing.js';
 import { RegistrationManager } from '../src/registration/registration-manager.js';
 import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import {
   createJsonRpcRequest,
+  createJsonRpcSuccessResponse,
+  HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES,
   HTTP_DWN_RPC_MEDIA_TYPE,
   HttpDwnRpcRequestHeader,
   HttpDwnRpcResponseHeader,
@@ -340,6 +343,56 @@ describe('http api', function () {
       expect(response.status).toBe(400);
       const body = (await response.json()) as JsonRpcErrorResponse;
       expect(body.error.message).toBe(`HTTP DWN RPC request has an unexpected '${HttpDwnRpcRequestHeader.DataSize}' header`);
+    });
+
+    it('rejects a framed envelope that is not a JSON object', async function () {
+      const envelopeBytes = new TextEncoder().encode('null');
+      const frame = new Uint8Array(5 + envelopeBytes.byteLength);
+      new DataView(frame.buffer).setUint32(1, envelopeBytes.byteLength, false);
+      frame.set(envelopeBytes, 5);
+
+      const response = await fetch(baseUrl, {
+        method  : 'POST',
+        headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+        body    : frame,
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message).toBe('HTTP DWN RPC envelope is not a JSON object');
+    });
+
+    it('returns a JSON-RPC error and releases the record data of a reply that cannot be framed', async function () {
+      const cancel = sinon.spy();
+      const recordData = new ReadableStream<Uint8Array>({
+        pull(controller): void {
+          controller.enqueue(new Uint8Array([1]));
+        },
+        cancel,
+      });
+      const requestId = crypto.randomUUID();
+      const oversizedReply = {
+        status : { code: 200, detail: 'OK' },
+        entry  : { padding: 'x'.repeat(HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES) },
+      };
+      sinon.stub(jsonRpcRouter, 'handle').resolves({
+        jsonRpcResponse : createJsonRpcSuccessResponse(requestId, { reply: oversizedReply }),
+        dataStream      : recordData,
+      });
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'https://example.com/oversized-reply' },
+      });
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', { message, target: alice.did });
+
+      const response = await fetch(baseUrl, await dwnRpcRequestInit(dwnRequest));
+
+      expect(response.status).toBe(500);
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.id).toBe(requestId);
+      expect(body.error.code).toBe(JsonRpcErrorCodes.InternalError);
+      expect(cancel.calledOnce).toBe(true);
     });
 
     it('reads records whose tags hold text outside ISO-8859-1', async function () {

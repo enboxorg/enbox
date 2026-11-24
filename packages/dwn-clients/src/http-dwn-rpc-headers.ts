@@ -1,8 +1,7 @@
 import type { GenericMessage } from '@enbox/dwn-sdk-js';
-import type { JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
+import type { JsonRpcResponse } from './json-rpc.js';
 
 import { Message } from '@enbox/dwn-sdk-js';
-import { createHttpDwnRpcRequestBody, HTTP_DWN_RPC_MEDIA_TYPE } from './http-dwn-rpc-framing.js';
 
 /**
  * HTTP request headers that project routing and observability fields of an
@@ -38,12 +37,6 @@ export enum HttpDwnRpcResponseHeader {
   Status = 'dwn-status',
 }
 
-/** The body and headers of an HTTP DWN RPC request. */
-export type HttpDwnRpcRequest = {
-  body: BodyInit;
-  headers: Record<string, string>;
-};
-
 /**
  * A projected header value must be visible ASCII without spaces, and short
  * enough that the full header set stays far below proxy header limits.
@@ -55,33 +48,18 @@ const HEADER_VALUE_PATTERN = /^[\x21-\x7e]+$/;
 type JsonObject = Record<string, unknown>;
 
 /**
- * Creates the framed body and the headers of an HTTP DWN RPC request:
- * `content-type` plus the {@link HttpDwnRpcRequestHeader} projections of the envelope.
- */
-export async function createHttpDwnRpcRequest(
-  jsonRpcRequest: JsonRpcRequest,
-  data?: BodyInit,
-): Promise<HttpDwnRpcRequest> {
-  const projectedHeaders = await createHttpDwnRpcRequestHeaders(jsonRpcRequest, data !== undefined);
-
-  return {
-    body    : createHttpDwnRpcRequestBody(jsonRpcRequest, data),
-    headers : { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE, ...projectedHeaders },
-  };
-}
-
-/**
- * Computes the {@link HttpDwnRpcRequestHeader} projections of a JSON-RPC request.
- * The projection reads the request's JSON form, which is exactly what a server
- * parses from the framed body.
+ * Computes the {@link HttpDwnRpcRequestHeader} projections of a JSON-RPC request
+ * envelope. The projection reads the envelope JSON that the framed body carries,
+ * which is exactly what a server parses.
  *
+ * @param envelopeJson The serialized JSON-RPC request envelope.
  * @param dataFollows Whether record data follows the envelope in the body.
  */
 export async function createHttpDwnRpcRequestHeaders(
-  jsonRpcRequest: JsonRpcRequest,
+  envelopeJson: string,
   dataFollows: boolean,
 ): Promise<Record<string, string>> {
-  return projectRequestHeaders(JSON.parse(JSON.stringify(jsonRpcRequest)), dataFollows);
+  return projectRequestHeaders(JSON.parse(envelopeJson), dataFollows);
 }
 
 /**

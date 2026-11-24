@@ -617,7 +617,8 @@ describe('HttpDwnRpcClient', () => {
 
     it('throws error if a framed response carries a JSON-RPC error', async () => {
       const errorResponse = { jsonrpc: '2.0', id: 'test-id', error: { message: 'message', code: 'code' } };
-      sinon.stub(globalThis, 'fetch').resolves(new Response(createHttpDwnRpcResponseBody(errorResponse as any, new Uint8Array([1])), {
+      const { data, cancel } = endlessRecordData();
+      sinon.stub(globalThis, 'fetch').resolves(new Response(createHttpDwnRpcResponseBody(errorResponse as any, data), {
         headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
       }));
 
@@ -637,6 +638,26 @@ describe('HttpDwnRpcClient', () => {
       } catch (error: any) {
         expect(error.message).toContain('(code) - message');
       }
+      expect(cancel.calledOnce).toBe(true);
+    });
+
+    it('throws error and cancels the record data if a framed response carries no DWN reply', async () => {
+      const { data, cancel } = endlessRecordData();
+      const noReply = { jsonrpc: '2.0', id: 'test-id', result: {} } as const;
+      sinon.stub(globalThis, 'fetch').resolves(new Response(createHttpDwnRpcResponseBody(noReply, data), {
+        headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      }));
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'foo/bar' }
+      });
+
+      await expect(client.sendDwnRequest({
+        dwnUrl    : testDwnUrl,
+        targetDid : alice.did,
+        message,
+      })).rejects.toThrow('the response carries no DWN reply');
+      expect(cancel.calledOnce).toBe(true);
     });
   });
 
@@ -1364,6 +1385,19 @@ describe('HttpDwnRpcClient', () => {
 
 function requestBodyStream(body: BodyInit): ReadableStream<Uint8Array> {
   return new Response(body).body!;
+}
+
+/** Record data that never ends, so the response is released only when the client cancels it. */
+function endlessRecordData(): { data: ReadableStream<Uint8Array>; cancel: sinon.SinonSpy } {
+  const cancel = sinon.spy();
+  const data = new ReadableStream<Uint8Array>({
+    pull(controller): void {
+      controller.enqueue(new Uint8Array([1]));
+    },
+    cancel,
+  });
+
+  return { data, cancel };
 }
 
 function testServerInfo(): ServerInfo {

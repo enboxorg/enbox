@@ -360,7 +360,7 @@ The envelope stays authoritative: the server recomputes every header from the en
 
 ### HTTP responses
 
-A reply that carries record data (a `RecordsRead`, or a `MessagesRead` of a record with data) is framed like a request: `content-type: application/vnd.enbox.dwn-rpc`, flags `0x01`, the JSON-RPC response (at most 16 MiB, since it can carry a replication-support closure), and then the raw record data. Any other reply is a JSON body.
+A reply that carries record data (a `RecordsRead`, or a `MessagesRead` of a record with data) is framed like a request: `content-type: application/vnd.enbox.dwn-rpc`, flags `0x01`, the JSON-RPC response (at most 16 MiB, since it can carry both the latest and the initial write of the record), and then the raw record data. Any other reply is a JSON body.
 
 The HTTP status is `200` for every JSON-RPC success, so every successful `dwn.processMessage` response also carries the DWN reply's status code in a `dwn-status` header.
 
