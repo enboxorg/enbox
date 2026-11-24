@@ -1,4 +1,4 @@
-import type { JsonRpcId, JsonRpcRequest, ServerInfo } from '@enbox/dwn-clients';
+import type { JsonRpcId, JsonRpcRequest, ParsedHttpDwnRpcRequestBody, ServerInfo } from '@enbox/dwn-clients';
 import type { Server, ServerWebSocket } from 'bun';
 
 import type { Dialect } from '@enbox/dwn-sql-store';
@@ -23,12 +23,18 @@ import log from 'loglevel';
 import { Convert } from '@enbox/common';
 import { register } from 'prom-client';
 import {
+  createHttpDwnRpcResponseBody,
+  createHttpDwnRpcResponseHeaders,
   createJsonRpcErrorResponse,
+  HTTP_DWN_RPC_MEDIA_TYPE,
+  HttpDwnRpcRequestHeader,
+  HttpDwnRpcResponseHeader,
   isHttpDwnRpcContentType,
   JsonRpcErrorCodes,
   maxWsJsonRpcPayloadBytes,
   normalizeReadableStream,
   parseHttpDwnRpcRequestBody,
+  validateHttpDwnRpcRequestHeaders,
 } from '@enbox/dwn-clients';
 import { DateSort, type Dwn, ModulesQuery, RecordsQuery, RecordsRead, type RecordsReadReply } from '@enbox/dwn-sdk-js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -44,6 +50,9 @@ import { requestCounter, responseHistogram } from './metrics.js';
 
 /** Property names that must never be used as keys when building objects from user input. */
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Request headers a paired local-node origin may send: bearer auth plus the HTTP DWN RPC headers. */
+const LOCAL_NODE_CORS_ALLOWED_HEADERS = ['authorization', 'content-type', ...Object.values(HttpDwnRpcRequestHeader)].join(', ');
 
 // Resolve admin UI dist path at module load time. Gracefully handle the case
 // where the admin UI package is not installed.
@@ -718,9 +727,9 @@ export class HttpApi {
     response.headers.set('access-control-allow-origin', allowedOrigin);
     response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
     response.headers.set('access-control-allow-headers', this.#config.localNodeProfileEnabled
-      ? 'authorization, content-type'
+      ? LOCAL_NODE_CORS_ALLOWED_HEADERS
       : '*');
-    response.headers.set('access-control-expose-headers', 'dwn-response');
+    response.headers.set('access-control-expose-headers', HttpDwnRpcResponseHeader.Status);
     // Cache preflight responses for 24 hours to reduce OPTIONS round-trips
     // for browser-based DWN clients communicating with a local server.
     response.headers.set('access-control-max-age', '86400');
@@ -872,7 +881,8 @@ export class HttpApi {
   }
 
   /**
-   * Decodes a JSON-RPC POST from the HTTP DWN RPC body framing.
+   * Decodes a JSON-RPC POST from the HTTP DWN RPC body framing, and verifies that its
+   * HTTP DWN RPC headers are exactly the projections of the decoded envelope.
    */
   async #decodeJsonRpcPost(req: Request): Promise<DecodedJsonRpcPost> {
     if (req.body === null) {
@@ -884,12 +894,23 @@ export class HttpApi {
       return { errorResponse: badRequest('unsupported HTTP DWN RPC content-type.') };
     }
 
+    let decoded: ParsedHttpDwnRpcRequestBody;
     try {
-      const decoded = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
-      return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
+      decoded = await parseHttpDwnRpcRequestBody(normalizeReadableStream(req.body));
     } catch (error) {
       return { errorResponse: badRequest((error as Error).message) };
     }
+
+    try {
+      await validateHttpDwnRpcRequestHeaders(req.headers, decoded.jsonRpcRequest, decoded.dataStream !== undefined);
+    } catch (error) {
+      await decoded.dataStream?.cancel().catch((): void => {
+        // The request is rejected before its record data is read; cancellation is best-effort.
+      });
+      return { errorResponse: badRequest((error as Error).message, decoded.jsonRpcRequest?.id ?? undefined) };
+    }
+
+    return { dwnRpcRequest: decoded.jsonRpcRequest, requestDataStream: decoded.dataStream };
   }
 
   async #handleJsonRpcPost(req: Request, isLocalNodeAuthenticated: boolean): Promise<Response> {
@@ -944,26 +965,23 @@ export class HttpApi {
       status : jsonRpcResponse?.result?.reply?.status?.code || 0,
     });
 
+    const responseHeaders = createHttpDwnRpcResponseHeaders(jsonRpcResponse);
     if (responseDataStream) {
-      return new Response(responseDataStream, {
-        headers: {
-          'content-type' : 'application/octet-stream',
-          'dwn-response' : JSON.stringify(jsonRpcResponse),
-        },
+      // A reply that carries record data is framed like a request: the JSON-RPC
+      // response first, then the raw record data.
+      return new Response(createHttpDwnRpcResponseBody(jsonRpcResponse, responseDataStream), {
+        headers: { ...responseHeaders, 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
       });
-    } else {
-      return Response.json(jsonRpcResponse);
     }
+
+    return Response.json(jsonRpcResponse, { headers: responseHeaders });
   }
 
   #readReplyToResponse(reply: RecordsReadReply): Response {
     if (reply.status.code === 200) {
       if (reply?.entry?.data) {
         return new Response(reply.entry.data, {
-          headers: {
-            'content-type' : reply.entry.recordsWrite.descriptor.dataFormat,
-            'dwn-response' : JSON.stringify(reply),
-          },
+          headers: { 'content-type': reply.entry.recordsWrite.descriptor.dataFormat },
         });
       } else {
         return new Response(null, { status: 400 });

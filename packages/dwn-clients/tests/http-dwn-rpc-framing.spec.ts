@@ -1,14 +1,17 @@
-import type { JsonRpcRequest } from '../src/json-rpc.js';
+import type { JsonRpcRequest, JsonRpcResponse } from '../src/json-rpc.js';
 
 import { createJsonRpcRequest } from '../src/json-rpc.js';
 import { DataStream } from '@enbox/dwn-sdk-js';
 
 import {
   createHttpDwnRpcRequestBody,
+  createHttpDwnRpcResponseBody,
   HTTP_DWN_RPC_MAX_ENVELOPE_BYTES,
+  HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES,
   HTTP_DWN_RPC_MEDIA_TYPE,
   isHttpDwnRpcContentType,
   parseHttpDwnRpcRequestBody,
+  parseHttpDwnRpcResponseBody,
 } from '../src/http-dwn-rpc-framing.js';
 import { describe, expect, it } from 'bun:test';
 
@@ -160,12 +163,51 @@ describe('HTTP DWN RPC request body framing', () => {
   });
 });
 
+describe('HTTP DWN RPC response body framing', () => {
+  it('should round-trip a JSON-RPC response followed by its record data', async () => {
+    const response = testJsonRpcResponse();
+    const data = new Uint8Array([9, 8, 7, 6]);
+    const body = createHttpDwnRpcResponseBody(response, DataStream.fromAsyncIterable([data.subarray(0, 1), data.subarray(1)]));
+
+    const parsed = await parseHttpDwnRpcResponseBody(bodyStream(body));
+    expect(parsed.jsonRpcResponse).toEqual(response);
+    expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(data);
+  });
+
+  it('should accept response envelopes larger than the request envelope limit', async () => {
+    const response = testJsonRpcResponse('x'.repeat(HTTP_DWN_RPC_MAX_ENVELOPE_BYTES));
+    const body = createHttpDwnRpcResponseBody(response, new Uint8Array([1]));
+
+    const parsed = await parseHttpDwnRpcResponseBody(bodyStream(body));
+    expect(parsed.jsonRpcResponse).toEqual(response);
+    expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(new Uint8Array([1]));
+    await expect(parseHttpDwnRpcRequestBody(bodyStream(body))).rejects.toThrow('-byte limit');
+  });
+
+  it('should reject a response envelope length above the response envelope limit', async () => {
+    const lengthPrefix = new Uint8Array(5);
+    lengthPrefix[0] = 1;
+    new DataView(lengthPrefix.buffer).setUint32(1, HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES + 1, false);
+
+    await expect(parseHttpDwnRpcResponseBody(DataStream.fromAsyncIterable([lengthPrefix])))
+      .rejects.toThrow(`${HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES}-byte limit`);
+  });
+});
+
 function bodyStream(body: BodyInit): ReadableStream<Uint8Array> {
   return new Response(body).body!;
 }
 
 async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
   return DataStream.toBytes(bodyStream(body));
+}
+
+function testJsonRpcResponse(detail = 'OK'): JsonRpcResponse {
+  return {
+    jsonrpc : '2.0',
+    id      : 'response-id',
+    result  : { reply: { status: { code: 200, detail }, entry: { recordsWrite: { recordId: 'record-id' } } } },
+  };
 }
 
 function testJsonRpcRequest(): JsonRpcRequest {

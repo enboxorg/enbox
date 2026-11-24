@@ -143,7 +143,7 @@ describe('Provider auth registration scenarios', () => {
     // 2. Alice can now write to the DWN.
     await installDefaultTestModuleViaHttp(dwnMessageEndpoint, alice);
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
-    const writeResponse = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
+    const writeResponse = await fetch(dwnMessageEndpoint, await dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
     const writeBody = await writeResponse.json() as JsonRpcResponse;
     expect(writeResponse.status).toBe(200);
     expect(writeBody.result.reply.status.code).toBe(202);
@@ -362,7 +362,7 @@ describe('Provider auth registration scenarios', () => {
   it('should not allow a non-tenant to write to the DWN', async () => {
     const nonTenant = await TestDataGenerator.generateDidKeyPersona();
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(nonTenant);
-    const response = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
+    const response = await fetch(dwnMessageEndpoint, await dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
     const body = await response.json() as JsonRpcResponse;
     expect(response.status).toBe(200);
     expect(body.result.reply.status.code).toBe(401);
@@ -391,7 +391,7 @@ async function installDefaultTestModuleViaHttp(endpoint: string, persona: Person
     target  : persona.did,
   });
 
-  const response = await fetch(endpoint, dwnRpcRequestInit(jsonRpcRequest));
+  const response = await fetch(endpoint, await dwnRpcRequestInit(jsonRpcRequest));
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;
   if (code !== 202) {

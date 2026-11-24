@@ -10,8 +10,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import {
   DataStream,
+  Jws,
   ModulesConfigure,
   RecordsQuery,
+  RecordsRead,
   TestDataGenerator,
   Time,
 } from '@enbox/dwn-sdk-js';
@@ -27,13 +29,15 @@ import { runServerMigrationsIfNeeded } from '../src/storage.js';
 import {
   createJsonRpcRequest,
   HTTP_DWN_RPC_MEDIA_TYPE,
+  HttpDwnRpcRequestHeader,
+  HttpDwnRpcResponseHeader,
   JsonRpcErrorCodes,
 } from '@enbox/dwn-clients';
 import {
   createRecordsWriteMessage,
   dwnRpcRequestInit,
-  getDwnResponse,
   getFileAsReadStream,
+  readDwnRpcResponse,
 } from './utils.js';
 
 describe('http api', function () {
@@ -65,7 +69,7 @@ describe('http api', function () {
   }
 
   async function postDwnRpc(dwnRequest: JsonRpcRequest, data?: BodyInit): Promise<Response> {
-    return fetch(baseUrl, dwnRpcRequestInit(dwnRequest, data));
+    return fetch(baseUrl, await dwnRpcRequestInit(dwnRequest, data));
   }
 
   beforeAll(async function () {
@@ -232,7 +236,7 @@ describe('http api', function () {
           controller.close();
         },
       });
-      const requestInit = dwnRpcRequestInit(dwnRequest, requestData);
+      const requestInit = await dwnRpcRequestInit(dwnRequest, requestData);
       expect(requestInit.duplex).toBe('half');
 
       const response = await fetch(baseUrl, requestInit);
@@ -274,28 +278,94 @@ describe('http api', function () {
       expect(reply.status.detail).toContain(
         'Both interface and method must be present',
       );
+      expect(responseInitialWrite.headers.get(HttpDwnRpcResponseHeader.Status)).toBe('400');
     });
 
-    it('exposes dwn-response header', async function () {
-      // This test verifies that the HTTP server includes `dwn-response` in the list of
-      // `access-control-expose-headers` returned in each HTTP response. This is necessary to enable applications
-      // that have CORS enabled to read and parse DWeb Messages that are returned as Response headers, particularly
-      // in the case of RecordsRead messages.
-
-      // TODO: github.com/enboxorg/enbox/issues/50
-      // Consider replacing this test with a more robust method of testing, such as writing Playwright tests
-      // that run in a browser to verify that the `dwn-response` header can be read from the `fetch()` response
-      // when CORS mode is enabled.
+    it('exposes the dwn-status header to browser clients', async function () {
       const response = await fetch(baseUrl, {
         method: 'POST',
       });
 
-      // Check if the 'access-control-expose-headers' header is present
-      expect(response.headers.has('access-control-expose-headers')).toBe(true);
+      expect(response.headers.get('access-control-expose-headers')).toBe(HttpDwnRpcResponseHeader.Status);
+    });
 
-      // Check if the 'dwn-response' header is listed in 'access-control-expose-headers'
-      const exposedHeaders = response.headers.get('access-control-expose-headers');
-      expect(exposedHeaders).toContain('dwn-response');
+    it('rejects a request that omits the projected dwn-* headers', async function () {
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'https://example.com/projected-headers' },
+      });
+      const requestId = crypto.randomUUID();
+      const dwnRequest = createJsonRpcRequest(requestId, 'dwn.processMessage', { message, target: alice.did });
+      const requestInit = await dwnRpcRequestInit(dwnRequest);
+
+      const response = await fetch(baseUrl, { ...requestInit, headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE } });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.id).toBe(requestId);
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message).toContain('is missing the');
+    });
+
+    it('rejects a request whose dwn-tenant header differs from the envelope target', async function () {
+      const { message } = await TestDataGenerator.generateRecordsQuery({
+        author : alice,
+        filter : { schema: 'https://example.com/projected-headers' },
+      });
+      const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', { message, target: alice.did });
+      const requestInit = await dwnRpcRequestInit(dwnRequest);
+      const headers = new Headers(requestInit.headers);
+      headers.set(HttpDwnRpcRequestHeader.Tenant, 'did:example:someone-else');
+
+      const response = await fetch(baseUrl, { ...requestInit, headers });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.error.code).toBe(JsonRpcErrorCodes.BadRequest);
+      expect(body.error.message).toBe(`HTTP DWN RPC request '${HttpDwnRpcRequestHeader.Tenant}' header does not match the JSON-RPC envelope`);
+    });
+
+    it('rejects a dwn-data-size header on a request without record data', async function () {
+      const { recordsWrite } = await createRecordsWriteMessage(alice);
+      const dwnRequest = createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', {
+        message : recordsWrite.toJSON(),
+        target  : alice.did,
+      });
+      const requestInit = await dwnRpcRequestInit(dwnRequest);
+      const headers = new Headers(requestInit.headers);
+      headers.set(HttpDwnRpcRequestHeader.DataSize, String(recordsWrite.message.descriptor.dataSize));
+
+      const response = await fetch(baseUrl, { ...requestInit, headers });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonRpcErrorResponse;
+      expect(body.error.message).toBe(`HTTP DWN RPC request has an unexpected '${HttpDwnRpcRequestHeader.DataSize}' header`);
+    });
+
+    it('reads records whose tags hold text outside ISO-8859-1', async function () {
+      const title = 'שלום 日本語 Café 🎉';
+      const data = new TextEncoder().encode(title);
+      const { message } = await TestDataGenerator.generateRecordsWrite({ author: alice, data, published: true, tags: { title } });
+      const writeResponse = await postDwnRpc(
+        createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', { message, target: alice.did }),
+        new Blob([data]),
+      );
+      expect(((await writeResponse.json()) as JsonRpcResponse).result.reply.status.code).toBe(202);
+
+      const recordsRead = await RecordsRead.create({ filter: { recordId: message.recordId }, signer: Jws.createSigner(alice) });
+      const readResponse = await postDwnRpc(
+        createJsonRpcRequest(crypto.randomUUID(), 'dwn.processMessage', { message: recordsRead.message, target: alice.did }),
+      );
+      expect(readResponse.status).toBe(200);
+      expect(readResponse.headers.get('content-type')).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
+      expect(readResponse.headers.get(HttpDwnRpcResponseHeader.Status)).toBe('200');
+      const { jsonRpcResponse, dataStream } = await readDwnRpcResponse(readResponse);
+      expect(jsonRpcResponse.result.reply.entry.recordsWrite.descriptor.tags.title).toBe(title);
+      expect(await DataStream.toBytes(dataStream!)).toEqual(data);
+
+      const getResponse = await fetch(`${baseUrl}/${alice.did}/read/records/${message.recordId}`);
+      expect(getResponse.status).toBe(200);
+      expect(new Uint8Array(await getResponse.arrayBuffer())).toEqual(data);
     });
 
     it('works fine when no record data tail is provided', async function () {
@@ -855,11 +925,8 @@ describe('http api', function () {
       const blob = await recordReadResponse.blob();
       expect(blob.size).toBe(size);
 
-      // get dwn message response
-      const { status, entry } = getDwnResponse(recordReadResponse);
-      expect(status.code).toBe(200);
-      expect(entry).toBeDefined();
-      expect(entry.recordsWrite.recordId).toBe(recordsWrite.message.recordId);
+      expect(recordReadResponse.headers.get('content-type')).toBe(recordsWrite.message.descriptor.dataFormat);
+      expect(recordReadResponse.headers.has('dwn-response')).toBe(false);
     });
 
     it('removes the trailing slash from the module path', async function () {
@@ -1153,7 +1220,7 @@ describe('http api', function () {
       expect(response.headers.get('access-control-allow-origin')).toBe('*');
       expect(response.headers.get('access-control-allow-methods')).toBe('GET, POST, OPTIONS');
       expect(response.headers.get('access-control-allow-headers')).toBe('*');
-      expect(response.headers.get('access-control-expose-headers')).toContain('dwn-response');
+      expect(response.headers.get('access-control-expose-headers')).toBe(HttpDwnRpcResponseHeader.Status);
       expect(response.headers.get('access-control-max-age')).toBe('86400');
     });
 
@@ -1230,7 +1297,9 @@ describe('http api', function () {
         expect(response.status).toBe(200);
 
         expect(response.headers.get('access-control-allow-origin')).toBe('https://unpaired.example');
-        expect(response.headers.get('access-control-allow-headers')).toBe('authorization, content-type');
+        expect(response.headers.get('access-control-allow-headers')).toBe(
+          'authorization, content-type, dwn-author, dwn-data-size, dwn-delegate, dwn-message, dwn-message-cid, dwn-module, dwn-rpc-method, dwn-tenant',
+        );
         expect(response.headers.get('vary')).toBe('Origin');
       } finally {
         await api.close();

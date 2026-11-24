@@ -9,11 +9,13 @@ import { normalizeReadableStream } from '../src/readable-stream.js';
 import sinon from 'sinon';
 
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { DataStream, DwnErrorCode, Jws, ModulesConfigure, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
 import {
+  createHttpDwnRpcResponseBody,
   HTTP_DWN_RPC_MEDIA_TYPE,
   parseHttpDwnRpcRequestBody,
 } from '../src/http-dwn-rpc-framing.js';
+import { DataStream, DwnErrorCode, Jws, ModulesConfigure, RecordsRead, TestDataGenerator, Time } from '@enbox/dwn-sdk-js';
+import { HttpDwnRpcRequestHeader, validateHttpDwnRpcRequestHeaders } from '../src/http-dwn-rpc-headers.js';
 
 /**
  * Matches the defaults used by `TestDataGenerator.generateRecordsWrite()`.
@@ -492,9 +494,9 @@ describe('HttpDwnRpcClient', () => {
       })).rejects.toThrow('malformed dwn.applyReplicatedMessage result');
     });
 
-    it('sends RecordsRead and populates reply.entry.data when dwn-response header is present', async () => {
-      // Simulate a server response where the JSON-RPC envelope is in the
-      // dwn-response header and the body is raw data (reply.entry branch).
+    it('populates reply.entry.data from a framed response body', async () => {
+      // A reply that carries record data arrives framed: the JSON-RPC response
+      // first, then the raw record data (reply.entry branch).
       const entryReply = {
         jsonrpc : '2.0',
         id      : 'test-id',
@@ -506,33 +508,12 @@ describe('HttpDwnRpcClient', () => {
             },
           },
         },
-      };
+      } as const;
 
       const bodyBytes = new TextEncoder().encode('hello entry data');
-      const headers = new Headers({
-        'dwn-response': JSON.stringify(entryReply),
-      });
-
-      let bodyOffset = 0;
-      const responseStream = {
-        getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } {
-          return {
-            async read(): Promise<{ done: boolean; value?: Uint8Array }> {
-              if (bodyOffset >= bodyBytes.byteLength) {
-                return { done: true };
-              }
-
-              const value = bodyBytes.subarray(bodyOffset, bodyBytes.byteLength);
-              bodyOffset = bodyBytes.byteLength;
-              return { done: false, value };
-            },
-          };
-        },
-      } as unknown as ReadableStream<Uint8Array>;
-      sinon.stub(globalThis, 'fetch').resolves({
-        body: responseStream,
-        headers,
-      } as any);
+      sinon.stub(globalThis, 'fetch').resolves(new Response(createHttpDwnRpcResponseBody(entryReply, bodyBytes), {
+        headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      }));
 
       const { message } = await TestDataGenerator.generateRecordsQuery({
         author : alice,
@@ -545,11 +526,9 @@ describe('HttpDwnRpcClient', () => {
         message,
       });
 
-      // The entry.data should be populated with a DataStream
       expect(response.status.code).toBe(200);
       expect(response.entry).toBeDefined();
-      expect(response.entry!.data).toBeDefined();
-      expect(response.entry!.data).not.toBe(responseStream);
+      expect(response.entry!.recordsWrite!.recordId).toBe('rec-1');
       expect(await DataStream.toBytes(response.entry!.data as ReadableStream<Uint8Array>)).toEqual(bodyBytes);
     });
 
@@ -611,9 +590,10 @@ describe('HttpDwnRpcClient', () => {
       })).rejects.toThrow('failed to parse json rpc response.');
     });
 
-    it('throws error if invalid response exists in the header', async () => {
-      const headers = sinon.createStubInstance(Headers, { has: true });
-      sinon.stub(globalThis, 'fetch').resolves({ headers } as any);
+    it('throws error if a framed response body is malformed', async () => {
+      sinon.stub(globalThis, 'fetch').resolves(new Response(new Uint8Array([1, 0, 0, 0, 9, 123]), {
+        headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      }));
 
       // create a generic record with schema `foo/bar`
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -635,12 +615,11 @@ describe('HttpDwnRpcClient', () => {
       }
     });
 
-    it('throws error if rpc responds with an error', async () => {
-      const headers = sinon.createStubInstance(Headers, {
-        has : true,
-        get : '{ "error": { "message": "message", "code":"code" } }'
-      });
-      sinon.stub(globalThis, 'fetch').resolves({ headers } as any);
+    it('throws error if a framed response carries a JSON-RPC error', async () => {
+      const errorResponse = { jsonrpc: '2.0', id: 'test-id', error: { message: 'message', code: 'code' } };
+      sinon.stub(globalThis, 'fetch').resolves(new Response(createHttpDwnRpcResponseBody(errorResponse as any, new Uint8Array([1])), {
+        headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      }));
 
       // create a generic record with schema `foo/bar`
       const { message: writeMessage, dataBytes } = await TestDataGenerator.generateRecordsWrite({
@@ -690,7 +669,10 @@ describe('HttpDwnRpcClient', () => {
       const fetchOpts = fetchStub.firstCall.args[1] as RequestInit;
       const headers = fetchOpts.headers as Record<string, string>;
       expect(headers['content-type']).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
-      expect(headers['dwn-request']).toBeUndefined();
+      expect(headers[HttpDwnRpcRequestHeader.RpcMethod]).toBe('dwn.processMessage');
+      expect(headers[HttpDwnRpcRequestHeader.Tenant]).toBe(alice.did);
+      expect(headers[HttpDwnRpcRequestHeader.Message]).toBe('RecordsQuery');
+      expect(headers[HttpDwnRpcRequestHeader.Author]).toBe(alice.did);
       expect(fetchOpts.body).toBeInstanceOf(Blob);
       expect((fetchOpts as RequestInit & { duplex?: string }).duplex).toBeUndefined();
 
@@ -698,6 +680,7 @@ describe('HttpDwnRpcClient', () => {
       expect(parsed.jsonRpcRequest.method).toBe('dwn.processMessage');
       expect(parsed.jsonRpcRequest.params).toEqual({ target: alice.did, message });
       expect(parsed.dataStream).toBeUndefined();
+      await validateHttpDwnRpcRequestHeaders(new Headers(headers), parsed.jsonRpcRequest, false);
     });
 
     it('should stream record data in the framed HTTP request body for replicated apply', async () => {
@@ -734,8 +717,11 @@ describe('HttpDwnRpcClient', () => {
       expect(headers['content-type']).toBe(HTTP_DWN_RPC_MEDIA_TYPE);
       expect(fetchOpts.body).toBeInstanceOf(ReadableStream);
       expect(fetchOpts.duplex).toBe('half');
+      expect(headers[HttpDwnRpcRequestHeader.RpcMethod]).toBe('dwn.applyReplicatedMessage');
+      expect(headers[HttpDwnRpcRequestHeader.DataSize]).toBe(String(payload.byteLength));
       const parsed = await parseHttpDwnRpcRequestBody(fetchOpts.body as ReadableStream<Uint8Array>);
       expect(parsed.jsonRpcRequest.method).toBe('dwn.applyReplicatedMessage');
+      await validateHttpDwnRpcRequestHeaders(new Headers(headers), parsed.jsonRpcRequest, true);
       expect(await DataStream.toBytes(parsed.dataStream!)).toEqual(payload);
     });
 

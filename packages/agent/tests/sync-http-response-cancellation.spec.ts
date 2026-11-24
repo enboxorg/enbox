@@ -1,8 +1,8 @@
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
 import type { GenericMessage, ReplicationApplyResult } from '@enbox/dwn-sdk-js';
 
+import { createHttpDwnRpcResponseBody, HTTP_DWN_RPC_MEDIA_TYPE, HttpDwnRpcClient, parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
 import { describe, expect, it } from 'bun:test';
-import { HttpDwnRpcClient, parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
 import { Message, TestDataGenerator } from '@enbox/dwn-sdk-js';
 
 import { admitClosure } from '../src/sync-admit-closure.js';
@@ -50,12 +50,12 @@ function streamingDwn(message: GenericMessage): {
           cancelled.resolve();
         },
       });
-      return new Response(body, { headers: {
-        'content-type' : 'application/octet-stream',
-        'dwn-response' : JSON.stringify({ jsonrpc : '2.0', id, result  : { reply: {
-          status: { code: 200, detail: 'OK' }, entry: { message },
-        } } }),
-      } });
+      const jsonRpcResponse = { jsonrpc : '2.0', id      : id ?? null, result  : { reply: {
+        status: { code: 200, detail: 'OK' }, entry: { message },
+      } } } as const;
+      return new Response(createHttpDwnRpcResponseBody(jsonRpcResponse, body), {
+        headers: { 'content-type': HTTP_DWN_RPC_MEDIA_TYPE },
+      });
     },
   });
   return {

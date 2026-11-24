@@ -115,6 +115,8 @@ Two independent size boundaries are in play. Don't conflate them:
 
 HTTP JSON-RPC requests use the `application/vnd.enbox.dwn-rpc` media type. The request body contains a one-byte flags field, a four-byte big-endian JSON length, the UTF-8 JSON-RPC envelope, and then the optional raw record data. This keeps both the signed envelope and any large payload in the streaming body instead of placing an unbounded envelope in an HTTP header. The envelope length is capped at 1 MiB before allocation.
 
+Small `dwn-*` request headers project routing fields of the envelope for load balancers and CDNs: `dwn-rpc-method` is `dwn.applyReplicatedMessage` for replication traffic, alongside the tenant, message type, module, message CID, author, delegate, and `dwn-data-size` when data follows. The server recomputes each header from the envelope and rejects a request whose headers differ. (`packages/dwn-clients/src/http-dwn-rpc-headers.ts`)
+
 A body backed by a `Blob`/`Uint8Array` remains replayable across transport retries; a one-shot `ReadableStream` uses `duplex: 'half'` and is not replayed after a failed attempt. Large uploads therefore remain streamable without base64 expansion, and the per-attempt timeout is raised to 5 minutes for messages whose `dataSize > 1 MiB` so large sync uploads are not aborted by the normal 30-second budget. (`packages/dwn-clients/src/http-dwn-rpc-client.ts`, `packages/dwn-clients/src/http-dwn-rpc-framing.ts`)
 
 On the server side, an HTTP request body arrives as `context.dataStream` and is capped at the message's declared `descriptor.dataSize` before being handed to the engine. (`packages/dwn-server/src/json-rpc-handlers/dwn/apply-replicated-message.ts`)

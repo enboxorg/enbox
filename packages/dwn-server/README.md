@@ -335,16 +335,36 @@ Send a DWeb message to a target tenant.
 }
 ```
 
-### HTTP JSON-RPC framing & streaming large data
+### HTTP JSON-RPC framing
 
-HTTP `POST /` requests carry a `content-type: application/vnd.enbox.dwn-rpc` body consisting of a one-byte flags field (`0x00` without trailing data, `0x01` when raw record data follows), a four-byte big-endian JSON envelope length, the UTF-8 JSON-RPC envelope, and—for `RecordsWrite` payloads larger than ~30 KB (`30,000` bytes)—the raw binary data stream.
+HTTP `POST /` requests carry a `content-type: application/vnd.enbox.dwn-rpc` body consisting of a one-byte flags field (`0x00` without record data, `0x01` when raw record data follows), a four-byte big-endian envelope length, the UTF-8 JSON-RPC envelope (at most 1 MiB), and then the raw record data, streamed without base64 encoding.
 
-### Receiving large data
+### HTTP request headers
 
-A `RecordsWrite` returned from a query includes `encodedData` only when the data is under the ~30 KB threshold. Larger data is fetched via `RecordsRead` over HTTP, which returns:
+Each request also carries headers that project routing and observability fields of the envelope, so load balancers, CDNs, and edge workers can route, rate limit, and log requests without parsing the body:
 
-- The JSON-RPC response in a `dwn-response` response header.
-- The raw binary data in the response body (`content-type: application/octet-stream`).
+| Header            | Value                                                                                    | Present when                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `dwn-rpc-method`  | The JSON-RPC method, e.g. `dwn.processMessage`                                           | Always                                        |
+| `dwn-tenant`      | `params.target`, the tenant DID                                                          | The request names a target                    |
+| `dwn-message`     | The DWN interface and method, e.g. `RecordsWrite`                                        | The request carries a DWN message             |
+| `dwn-module`      | The module URI of a write, a configured definition, or a query filter                   | The message is scoped to one module           |
+| `dwn-data-size`   | `descriptor.dataSize`                                                                    | Record data follows the envelope              |
+| `dwn-message-cid` | The CID of the DWN message                                                               | The request carries a DWN message             |
+| `dwn-author`      | The author DID: the grantor when an app delegate signed the message                     | The message is signed                         |
+| `dwn-delegate`    | The app delegate DID that signed the message under a delegated grant                    | The message carries an author-delegated grant |
+
+A `filters` list (e.g. `MessagesQuery`) projects `dwn-module` only when every filter names the same module. A header is omitted when its value would not be visible ASCII or would exceed 1,024 bytes.
+
+The envelope stays authoritative: the server recomputes every header from the envelope and rejects a request whose headers are missing, unexpected, or different with HTTP `400` and JSON-RPC error `-50400`. Infrastructure in front of the server sees these headers before that check, so treat them as routing and observability hints there; the server's per-tenant limits remain the authoritative ones. `@enbox/dwn-clients` builds the body and headers with `createHttpDwnRpcRequest()` and checks them with `validateHttpDwnRpcRequestHeaders()`.
+
+### HTTP responses
+
+A reply that carries record data (a `RecordsRead`, or a `MessagesRead` of a record with data) is framed like a request: `content-type: application/vnd.enbox.dwn-rpc`, flags `0x01`, the JSON-RPC response (at most 16 MiB, since it can carry a replication-support closure), and then the raw record data. Any other reply is a JSON body.
+
+The HTTP status is `200` for every JSON-RPC success, so every successful `dwn.processMessage` response also carries the DWN reply's status code in a `dwn-status` header.
+
+A `RecordsWrite` returned from a query includes `encodedData` only when the data is under the ~30 KB threshold; larger data is fetched with `RecordsRead`.
 
 ### Subscriptions & backpressure (WebSocket)
 
@@ -352,7 +372,7 @@ Open a subscription with `rpc.subscribe.dwn.processMessage` over a WebSocket con
 
 ## HTTP endpoints
 
-Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-RPC and read routes; admin routes are not CORS-exposed.
+Public endpoints (no auth unless noted). Permissive CORS is applied to the JSON-RPC and read routes, and `dwn-status` is exposed to browser clients; admin routes are not CORS-exposed.
 
 | Method | Path                                   | Description                                                                 |
 | ------ | -------------------------------------- | --------------------------------------------------------------------------- |

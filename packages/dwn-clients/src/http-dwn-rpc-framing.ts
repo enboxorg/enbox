@@ -1,20 +1,36 @@
-import type { JsonRpcRequest } from './json-rpc.js';
+import type { JsonRpcRequest, JsonRpcResponse } from './json-rpc.js';
 
 /** Vendor media type used for DWN JSON-RPC HTTP body framing. */
 export const HTTP_DWN_RPC_MEDIA_TYPE = 'application/vnd.enbox.dwn-rpc';
 
-/** Maximum JSON-RPC envelope size accepted by HTTP DWN RPC body framing. */
+/** Maximum JSON-RPC request envelope size accepted by HTTP DWN RPC body framing. */
 export const HTTP_DWN_RPC_MAX_ENVELOPE_BYTES = 1_048_576;
+
+/**
+ * Maximum JSON-RPC response envelope size accepted by HTTP DWN RPC body framing.
+ * A response envelope can carry a bounded replication-support closure ahead of
+ * the record data, so it is allowed to be larger than a request envelope.
+ */
+export const HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES = 16_777_216;
 
 const FRAME_DATA_FOLLOWS_FLAG = 0x01;
 const FRAME_HEADER_BYTES = 5;
-const ENVELOPE_TOO_LARGE_MESSAGE = `HTTP DWN RPC envelope exceeds the ${HTTP_DWN_RPC_MAX_ENVELOPE_BYTES}-byte limit`;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
 export type ParsedHttpDwnRpcRequestBody = {
   jsonRpcRequest: JsonRpcRequest;
+  dataStream?: ReadableStream<Uint8Array>;
+};
+
+export type ParsedHttpDwnRpcResponseBody = {
+  jsonRpcResponse: JsonRpcResponse;
+  dataStream?: ReadableStream<Uint8Array>;
+};
+
+type ParsedFramedBody = {
+  envelope: unknown;
   dataStream?: ReadableStream<Uint8Array>;
 };
 
@@ -32,11 +48,64 @@ export function createHttpDwnRpcRequestBody(
   jsonRpcRequest: JsonRpcRequest,
   data?: BodyInit,
 ): BodyInit {
-  const envelopeBytes = textEncoder.encode(JSON.stringify(jsonRpcRequest));
-  if (envelopeBytes.byteLength > HTTP_DWN_RPC_MAX_ENVELOPE_BYTES) {
-    throw new Error(ENVELOPE_TOO_LARGE_MESSAGE);
+  return createFramedBody(encodeEnvelope(jsonRpcRequest, HTTP_DWN_RPC_MAX_ENVELOPE_BYTES), data);
+}
+
+/**
+ * Frames a JSON-RPC response and the raw record data it carries in one HTTP
+ * response body, using the same layout as {@link createHttpDwnRpcRequestBody}.
+ */
+export function createHttpDwnRpcResponseBody(
+  jsonRpcResponse: JsonRpcResponse,
+  data: BodyInit,
+): BodyInit {
+  return createFramedBody(encodeEnvelope(jsonRpcResponse, HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES), data);
+}
+
+/** Returns whether a Content-Type header selects DWN RPC body framing. */
+export function isHttpDwnRpcContentType(value: string | null): boolean {
+  // Media type parameters are not part of the protocol, so any `;` is rejected.
+  if (value === null || value.includes(';')) {
+    return false;
   }
 
+  return value === HTTP_DWN_RPC_MEDIA_TYPE || value.trim().toLowerCase() === HTTP_DWN_RPC_MEDIA_TYPE;
+}
+
+/**
+ * Parses a streaming DWN RPC request body without buffering its raw record data.
+ */
+export async function parseHttpDwnRpcRequestBody(
+  body: ReadableStream<Uint8Array>,
+): Promise<ParsedHttpDwnRpcRequestBody> {
+  const { envelope, dataStream } = await parseFramedBody(body, HTTP_DWN_RPC_MAX_ENVELOPE_BYTES);
+  return { jsonRpcRequest: envelope as JsonRpcRequest, dataStream };
+}
+
+/**
+ * Parses a streaming DWN RPC response body without buffering its raw record data.
+ */
+export async function parseHttpDwnRpcResponseBody(
+  body: ReadableStream<Uint8Array>,
+): Promise<ParsedHttpDwnRpcResponseBody> {
+  const { envelope, dataStream } = await parseFramedBody(body, HTTP_DWN_RPC_MAX_RESPONSE_ENVELOPE_BYTES);
+  return { jsonRpcResponse: envelope as JsonRpcResponse, dataStream };
+}
+
+function envelopeTooLargeMessage(maxEnvelopeBytes: number): string {
+  return `HTTP DWN RPC envelope exceeds the ${maxEnvelopeBytes}-byte limit`;
+}
+
+function encodeEnvelope(envelope: JsonRpcRequest | JsonRpcResponse, maxEnvelopeBytes: number): Uint8Array {
+  const envelopeBytes = textEncoder.encode(JSON.stringify(envelope));
+  if (envelopeBytes.byteLength > maxEnvelopeBytes) {
+    throw new Error(envelopeTooLargeMessage(maxEnvelopeBytes));
+  }
+
+  return envelopeBytes;
+}
+
+function createFramedBody(envelopeBytes: Uint8Array, data?: BodyInit): BodyInit {
   const prefix = new Uint8Array(FRAME_HEADER_BYTES + envelopeBytes.byteLength);
   prefix[0] = data === undefined ? 0 : FRAME_DATA_FOLLOWS_FLAG;
   new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength).setUint32(1, envelopeBytes.byteLength, false);
@@ -64,22 +133,10 @@ function isReplayableBlobPart(data: BodyInit): data is BlobPart {
     ArrayBuffer.isView(data);
 }
 
-/** Returns whether a Content-Type header selects DWN RPC body framing. */
-export function isHttpDwnRpcContentType(value: string | null): boolean {
-  // Media type parameters are not part of the protocol, so any `;` is rejected.
-  if (value === null || value.includes(';')) {
-    return false;
-  }
-
-  return value === HTTP_DWN_RPC_MEDIA_TYPE || value.trim().toLowerCase() === HTTP_DWN_RPC_MEDIA_TYPE;
-}
-
-/**
- * Parses a streaming DWN RPC request body without buffering its raw record data.
- */
-export async function parseHttpDwnRpcRequestBody(
+async function parseFramedBody(
   body: ReadableStream<Uint8Array>,
-): Promise<ParsedHttpDwnRpcRequestBody> {
+  maxEnvelopeBytes: number,
+): Promise<ParsedFramedBody> {
   const reader = body.getReader();
   let remainder: Uint8Array | undefined;
 
@@ -118,30 +175,30 @@ export async function parseHttpDwnRpcRequestBody(
     }
 
     const envelopeLength = new DataView(header.buffer, header.byteOffset, header.byteLength).getUint32(1, false);
-    if (envelopeLength > HTTP_DWN_RPC_MAX_ENVELOPE_BYTES) {
-      throw new Error(ENVELOPE_TOO_LARGE_MESSAGE);
+    if (envelopeLength > maxEnvelopeBytes) {
+      throw new Error(envelopeTooLargeMessage(maxEnvelopeBytes));
     }
 
     const envelopeBytes = await readExactly(envelopeLength);
-    const jsonRpcRequest = JSON.parse(textDecoder.decode(envelopeBytes)) as JsonRpcRequest;
+    const envelope: unknown = JSON.parse(textDecoder.decode(envelopeBytes));
 
     if ((flags & FRAME_DATA_FOLLOWS_FLAG) === 0) {
       if (remainder !== undefined && remainder.byteLength > 0) {
         throw new Error('HTTP DWN RPC body contains data without the data-follows flag');
       }
 
-      // The flag is authoritative. Do not wait for EOF: a slow client could
-      // otherwise hold request processing open by never finishing a trailing
-      // chunked body. Stop reading as soon as the envelope is complete.
+      // The flag is authoritative. Do not wait for EOF: a slow peer could
+      // otherwise hold processing open by never finishing a trailing chunked
+      // body. Stop reading as soon as the envelope is complete.
       void reader.cancel().catch((): void => {
         // The envelope is already parsed; cancellation is best-effort.
       });
       reader.releaseLock();
-      return { jsonRpcRequest };
+      return { envelope };
     }
 
     return {
-      jsonRpcRequest,
+      envelope,
       dataStream: readerToStream(reader, remainder),
     };
   } catch (error) {

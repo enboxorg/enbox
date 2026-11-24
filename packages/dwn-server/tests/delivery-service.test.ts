@@ -5,7 +5,13 @@ import type { Dwn, GenericMessage } from '@enbox/dwn-sdk-js';
 
 import sinon from 'sinon';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { createJsonRpcRequest, HTTP_DWN_RPC_MEDIA_TYPE, parseHttpDwnRpcRequestBody } from '@enbox/dwn-clients';
+import {
+  createJsonRpcRequest,
+  HTTP_DWN_RPC_MEDIA_TYPE,
+  HttpDwnRpcRequestHeader,
+  parseHttpDwnRpcRequestBody,
+  validateHttpDwnRpcRequestHeaders,
+} from '@enbox/dwn-clients';
 import { DataStream, DwnConstant, DwnInterfaceName, DwnMethodName, RecordsRead, TestDataGenerator } from '@enbox/dwn-sdk-js';
 import { DidKey, UniversalResolver } from '@enbox/dids';
 
@@ -366,6 +372,10 @@ describe('DeliveryService', () => {
 
       const parsed = await parseHttpDwnRpcRequestBody(new Response(fetchOptions?.body).body!);
       expect((parsed.jsonRpcRequest.params as Record<string, unknown>).target).toBe(alice.did);
+      expect(headers.get(HttpDwnRpcRequestHeader.Tenant)).toBe(alice.did);
+      expect(headers.get(HttpDwnRpcRequestHeader.Message)).toBe('RecordsWrite');
+      expect(headers.get(HttpDwnRpcRequestHeader.DataSize)).toBe(String(data.byteLength));
+      await validateHttpDwnRpcRequestHeaders(headers, parsed.jsonRpcRequest, true);
 
       const sentBytes = await DataStream.toBytes(parsed.dataStream!);
       expect(sentBytes).toEqual(data);

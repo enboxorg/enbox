@@ -65,6 +65,7 @@ deployments must include `pg` and `pg-cursor`, MySQL deployments must include
 4. **Configure backup strategies** for PostgreSQL data
 5. **Set resource limits** for containers
 6. **Enable registration** -- configure proof-of-work or terms-of-service tenant registration
+7. **Route and observe at the edge** -- reverse proxies, load balancers, and CDNs can route, rate-limit, and log on the `dwn-*` request headers and the `dwn-status` response header; see [HTTP request headers](../packages/dwn-server/README.md#http-request-headers)
 
 ### Runtime security updates
 

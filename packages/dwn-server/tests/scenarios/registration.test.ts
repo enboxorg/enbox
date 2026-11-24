@@ -130,7 +130,7 @@ describe('Registration scenarios', () => {
     await installDefaultTestModuleViaHttp(dwnMessageEndpoint, alice);
 
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
-    const writeResponse = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
+    const writeResponse = await fetch(dwnMessageEndpoint, await dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
     const writeResponseBody = await writeResponse.json() as JsonRpcResponse;
     expect(writeResponse.status).toBe(200);
     expect(writeResponseBody.result.reply.status.code).toBe(202);
@@ -140,7 +140,7 @@ describe('Registration scenarios', () => {
     const nonTenantJsonRpcRequest = await generateRecordsWriteJsonRpcRequest(nonTenant);
     const nonTenantJsonRpcResponse = await fetch(
       dwnMessageEndpoint,
-      dwnRpcRequestInit(nonTenantJsonRpcRequest.jsonRpcRequest, new Blob([nonTenantJsonRpcRequest.dataBytes])),
+      await dwnRpcRequestInit(nonTenantJsonRpcRequest.jsonRpcRequest, new Blob([nonTenantJsonRpcRequest.dataBytes])),
     );
     const nonTenantJsonRpcResponseBody = await nonTenantJsonRpcResponse.json() as JsonRpcResponse;
     expect(nonTenantJsonRpcResponse.status).toBe(200);
@@ -431,7 +431,7 @@ describe('Registration scenarios', () => {
 
     // Sanity test that Alice can write to the DWN after registration.
     const write1 = await generateRecordsWriteJsonRpcRequest(alice);
-    const write1Response = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(write1.jsonRpcRequest, new Blob([write1.dataBytes])));
+    const write1Response = await fetch(dwnMessageEndpoint, await dwnRpcRequestInit(write1.jsonRpcRequest, new Blob([write1.dataBytes])));
     const write1ResponseBody = await write1Response.json() as JsonRpcResponse;
     expect(write1Response.status).toBe(200);
     expect(write1ResponseBody.result.reply.status.code).toBe(202);
@@ -442,7 +442,7 @@ describe('Registration scenarios', () => {
 
     // 3. Alice no longer can write to the DWN because she has not agreed to the new terms-of-service.
     const write2 = await generateRecordsWriteJsonRpcRequest(alice);
-    const write2Response = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(write2.jsonRpcRequest, new Blob([write2.dataBytes])));
+    const write2Response = await fetch(dwnMessageEndpoint, await dwnRpcRequestInit(write2.jsonRpcRequest, new Blob([write2.dataBytes])));
     const write2ResponseBody = await write2Response.json() as JsonRpcResponse;
     expect(write2Response.status).toBe(200);
     expect(write2ResponseBody.result.reply.status.code).toBe(401);
@@ -490,7 +490,7 @@ describe('Registration scenarios', () => {
 
     // 6. Alice can now write to the DWN again.
     const { jsonRpcRequest, dataBytes } = await generateRecordsWriteJsonRpcRequest(alice);
-    const write3Response = await fetch(dwnMessageEndpoint, dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
+    const write3Response = await fetch(dwnMessageEndpoint, await dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])));
     const write3ResponseBody = await write3Response.json() as JsonRpcResponse;
     expect(write3Response.status).toBe(200);
     expect(write3ResponseBody.result.reply.status.code).toBe(202);
@@ -546,7 +546,7 @@ describe('Registration scenarios', () => {
 
     const writeResponse = await fetch(
       `http://localhost:${dwnServer.httpServer.port}`,
-      dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])),
+      await dwnRpcRequestInit(jsonRpcRequest, new Blob([dataBytes])),
     );
 
     const writeResponseBody = await writeResponse.json() as JsonRpcResponse;
@@ -576,7 +576,7 @@ async function installDefaultTestModuleViaHttp(endpoint: string, persona: Person
     target  : persona.did,
   });
 
-  const response = await fetch(endpoint, dwnRpcRequestInit(jsonRpcRequest));
+  const response = await fetch(endpoint, await dwnRpcRequestInit(jsonRpcRequest));
   const responseBody = await response.json() as JsonRpcResponse;
   const { code, detail } = responseBody.result.reply.status;
   if (code !== 202 && code !== 409) {
