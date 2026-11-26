@@ -675,6 +675,9 @@ jobs:
       # coverage those same tests exercise.
       - name: Collect agent branch coverage
         if: matrix.shard == 3
+        env:
+          DID_DHT_GATEWAY_URI: http://localhost:7527
+          DID_DHT_ALLOW_PRIVATE_GATEWAY: '1'
         run: bun run --filter @enbox/agent test:node:branch-coverage
 
       - name: Stage coverage

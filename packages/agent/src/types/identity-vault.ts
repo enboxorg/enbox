@@ -146,6 +146,17 @@ export interface IdentityVault<T extends Record<string, any> = { InitializeResul
   decryptData(params: { jwe: string }): Promise<Uint8Array>;
 }
 
+/**
+ * HD derivation scheme used to derive the vault keys.
+ *
+ * - `1` — legacy `m/44'` scheme.
+ * - `2` — BIP-43 `m/43'` scheme (default for newly initialized vaults).
+ *
+ * Both versions derive the content encryption key (CEK) and unlock salt with the same HKDF inputs;
+ * only the derivation paths differ.
+ */
+export type VaultDerivationVersion = 1 | 2;
+
 export type IdentityVaultStatus = {
   /**
    * Boolean indicating whether the IdentityVault has been initialized.
@@ -161,4 +172,10 @@ export type IdentityVaultStatus = {
    * The timestamp of the last restore.
    */
   lastRestore: string | null;
+
+  /**
+   * The HD derivation scheme used to derive this vault's keys. Absent for legacy `v1` vaults
+   * created before derivation versioning was introduced.
+   */
+  derivationVersion?: VaultDerivationVersion;
 };

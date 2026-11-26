@@ -9,7 +9,7 @@ import { BearerDid, DidDht, DidErrorCode, getDwnEndpointStatus, isPortableDid, r
 import { Convert, MemoryStore } from '@enbox/common';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 
-import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultParams, IdentityVaultStatus } from './types/identity-vault.js';
+import type { IdentityVault, IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultParams, IdentityVaultStatus, VaultDerivationVersion } from './types/identity-vault.js';
 
 import { AgentCryptoApi } from './crypto-api.js';
 import { DeterministicKeyGenerator } from './utils-internal.js';
@@ -45,6 +45,12 @@ export type HdIdentityVaultInitializeParams = {
 
     /** Leave new recovery endpoints unpublished until the caller prepares their remote tenancy. */
     deferDwnEndpointBootstrap?: boolean;
+
+   /**
+    * HD derivation scheme to use. Defaults to `2` for a fresh vault and to automatic
+    * `v2 → v1` fallback for recovery. Providing a value forces that exact scheme.
+    */
+   derivationVersion?: VaultDerivationVersion;
 
  };
 
@@ -92,6 +98,34 @@ type HdIdentityVaultReconcileRecoveredDidParams = {
   deferReplacement?: boolean;
   deferBootstrap?: boolean;
   useStoredOnNotFound?: boolean;
+  /** Already-fetched resolution for `portableDid.uri`, to avoid a duplicate DHT lookup. */
+  resolution?: DidResolutionResult;
+};
+
+type VaultDerivationPaths = {
+  vault: string;
+  identity: string;
+  signing: string;
+  encryption: string;
+};
+
+/**
+ * Derivation paths per scheme. `v1` and `v2` share the same HKDF inputs for the CEK and unlock
+ * salt; only these paths differ.
+ */
+const VAULT_DERIVATION_PATHS: Record<VaultDerivationVersion, VaultDerivationPaths> = {
+  1: {
+    vault      : `m/44'/0'/0'/0'/0'`,
+    identity   : `m/44'/0'/1708523827'/0'/0'`,
+    signing    : `m/44'/0'/1708523827'/0'/1'`,
+    encryption : `m/44'/0'/1708523827'/0'/2'`,
+  },
+  2: {
+    vault      : `m/43'/1708523827'/0'/0'`,
+    identity   : `m/43'/1708523827'/1'/0'/0'`,
+    signing    : `m/43'/1708523827'/1'/0'/1'`,
+    encryption : `m/43'/1708523827'/1'/0'/2'`,
+  },
 };
 
 export class HdIdentityVaultRecoveryPhraseMismatchError extends Error {
@@ -152,10 +186,20 @@ function isIdentityVaultBackup(obj: unknown): obj is IdentityVaultBackup {
  * @returns A boolean indicating whether the object is an instance of {@link IdentityVaultStatus}.
  */
 function isIdentityVaultStatus(obj: unknown): obj is IdentityVaultStatus {
-  return typeof obj === 'object' && obj !== null
+  const hasRequiredFields = typeof obj === 'object' && obj !== null
     && 'initialized' in obj && typeof obj.initialized === 'boolean'
     && 'lastBackup' in obj
     && 'lastRestore' in obj;
+  if (!hasRequiredFields) {
+    return false;
+  }
+
+  // Absent `derivationVersion` represents a legacy `v1` vault.
+  if (!('derivationVersion' in obj) || obj.derivationVersion === undefined) {
+    return true;
+  }
+
+  return obj.derivationVersion === 1 || obj.derivationVersion === 2;
 }
 
 /**
@@ -455,9 +499,14 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves with the recovery phrase used during the initialization, which
    *          should be securely stored by the user.
    */
-  public async initialize({ password, recoveryPhrase, pendingSetup, dwnEndpoints, deferDwnEndpointBootstrap = false }:
-    HdIdentityVaultInitializeParams
-  ): Promise<string> {
+  public async initialize({
+    password,
+    recoveryPhrase,
+    pendingSetup,
+    dwnEndpoints,
+    deferDwnEndpointBootstrap = false,
+    derivationVersion,
+  }: HdIdentityVaultInitializeParams): Promise<string> {
     // Verify that the identity vault was not previously initialized.
     if (await this.isInitialized()) {
       throw new Error(`HdIdentityVault: Vault has already been initialized.`);
@@ -466,17 +515,29 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       || typeof pendingSetup.registrationRequired !== 'boolean')) {
       throw new TypeError('HdIdentityVault: Pending setup requires a boolean registration policy.');
     }
+    this.validatePassword(password);
+    if (recoveryPhrase !== undefined) {
+      this.validateRecoveryPhrase(recoveryPhrase);
+    }
+    this.validateDerivationVersion(derivationVersion);
 
     const isRecovery = recoveryPhrase !== undefined;
-    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints });
-    const portableDid: StoredVaultDid = isRecovery
-      ? await this.reconcileRecoveredDid({
-        portableDid          : derivedMaterial.portableDid,
-        replacementEndpoints : dwnEndpoints,
-        deferReplacement     : true,
-        deferBootstrap       : deferDwnEndpointBootstrap,
-      })
-      : await this.publishPortableDid(derivedMaterial.portableDid);
+    let derivedMaterial: HdIdentityVaultDerivedMaterial;
+    let portableDid: StoredVaultDid;
+    let resolvedVersion: VaultDerivationVersion;
+    if (isRecovery) {
+      ({ derivedMaterial, portableDid, resolvedVersion } = await this.recoverVaultMaterial({
+        password,
+        recoveryPhrase,
+        dwnEndpoints,
+        derivationVersion,
+        deferDwnEndpointBootstrap,
+      }));
+    } else {
+      resolvedVersion = derivationVersion ?? 2;
+      derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints, derivationVersion: resolvedVersion });
+      portableDid = await this.publishPortableDid(derivedMaterial.portableDid);
+    }
 
     if (pendingSetup !== undefined && !isRecovery) {
       portableDid.pendingSetup = {
@@ -493,7 +554,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
 
     this._contentEncryptionKey = derivedMaterial.contentEncryptionKey;
     this._cachedPortableDid = portableDid;
-    await this.setStatus({ initialized: true });
+    await this.setStatus({ initialized: true, derivationVersion: resolvedVersion });
 
     // Return the recovery phrase in case it was generated so that it can be displayed to the user
     // for safekeeping.
@@ -521,7 +582,9 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       );
     }
 
-    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase });
+    const status = await this.getStatus();
+    const version: VaultDerivationVersion = status.derivationVersion ?? 1;
+    const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, derivationVersion: version });
     let storedPortableDid: PortableDid;
     try {
       storedPortableDid = await this.decryptStoredPortableDid(derivedMaterial.contentEncryptionKey);
@@ -686,9 +749,22 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       const backupData = Convert.base64Url(backup.data).toObject() as IdentityVaultBackupData;
 
       // Restore the backup to the data store.
+      if (!isIdentityVaultStatus(backupData.status)) {
+        throw new Error('HdIdentityVault: Invalid IdentityVaultStatus object in backup.');
+      }
       await this._store.set('did', backupData.did);
       await this._store.set('contentEncryptionKey', backupData.contentEncryptionKey);
-      await this.setStatus(backupData.status);
+      // Status comes entirely from the backup — a legacy `v1` backup must not inherit the local
+      // vault's `derivationVersion`.
+      const restoredStatus: IdentityVaultStatus = {
+        initialized : backupData.status.initialized,
+        lastBackup  : backupData.status.lastBackup,
+        lastRestore : backupData.status.lastRestore,
+      };
+      if (backupData.status.derivationVersion !== undefined) {
+        restoredStatus.derivationVersion = backupData.status.derivationVersion;
+      }
+      await this.writeStatus(restoredStatus);
 
       // Attempt to unlock the vault with the given `password`.
       await this.unlock({ password });
@@ -696,7 +772,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     } catch {
       // If the restore operation fails, revert the data store to the status and contents that were
       // saved before the restore operation was attempted.
-      await this.setStatus(previousStatus);
+      await this.writeStatus(previousStatus);
       await this._store.set('contentEncryptionKey', previousContentEncryptionKey);
       await this._store.set('did', previousDid);
 
@@ -827,15 +903,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     password,
     recoveryPhrase,
     dwnEndpoints,
-  }: HdIdentityVaultInitializeParams): Promise<HdIdentityVaultDerivedMaterial> {
+    derivationVersion,
+  }: HdIdentityVaultInitializeParams & { derivationVersion: VaultDerivationVersion }): Promise<HdIdentityVaultDerivedMaterial> {
     this.validatePassword(password);
     const resolvedRecoveryPhrase = this.resolveRecoveryPhrase(recoveryPhrase);
+    const paths = VAULT_DERIVATION_PATHS[derivationVersion];
 
     const rootSeed = await mnemonicToSeed(resolvedRecoveryPhrase);
     const rootHdKey = Ed25519HdKey.fromMasterSeed(rootSeed);
 
     // The vault key is deterministic so the same phrase can re-derive both the CEK and unlock salt.
-    const vaultHdKey = rootHdKey.derive(`m/44'/0'/0'/0'/0'`);
+    // HKDF inputs are identical across derivation versions; only the path differs.
+    const vaultHdKey = rootHdKey.derive(paths.vault);
     const contentEncryptionKey = await this.crypto.deriveKey({
       algorithm           : 'HKDF-512',
       baseKeyBytes        : vaultHdKey.privateKey,
@@ -859,7 +938,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         contentEncryptionKey,
         saltInput,
       }),
-      portableDid: await this.derivePortableDid({ rootHdKey, dwnEndpoints }),
+      portableDid: await this.derivePortableDid({ rootHdKey, dwnEndpoints, paths }),
     };
   }
 
@@ -872,23 +951,36 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     }
   }
 
-  private resolveRecoveryPhrase(recoveryPhrase?: string): string {
-    if (recoveryPhrase !== undefined && isEmptyString(recoveryPhrase)) {
+  private validateDerivationVersion(derivationVersion?: VaultDerivationVersion): void {
+    if (derivationVersion !== undefined && derivationVersion !== 1 && derivationVersion !== 2) {
+      throw new Error(
+        `HdIdentityVault: Unsupported derivation version '${derivationVersion}'. Supported versions are 1 and 2.`
+      );
+    }
+  }
+
+  private validateRecoveryPhrase(recoveryPhrase: string): void {
+    if (isEmptyString(recoveryPhrase)) {
       throw new Error(
         'HdIdentityVault: The recovery phrase is required and cannot be blank. Please provide a ' +
         'valid BIP-39 recovery phrase.'
       );
     }
-
-    const resolvedRecoveryPhrase = recoveryPhrase ?? generateMnemonic(wordlist, 128);
-    if (!validateMnemonic(resolvedRecoveryPhrase, wordlist)) {
+    if (!validateMnemonic(recoveryPhrase, wordlist)) {
       throw new Error(
         'HdIdentityVault: The provided recovery phrase is invalid. Please ensure that the ' +
         'recovery phrase is a correctly formatted series of 12 words.'
       );
     }
+  }
 
-    return resolvedRecoveryPhrase;
+  private resolveRecoveryPhrase(recoveryPhrase?: string): string {
+    if (recoveryPhrase !== undefined) {
+      this.validateRecoveryPhrase(recoveryPhrase);
+      return recoveryPhrase;
+    }
+
+    return generateMnemonic(wordlist, 128);
   }
 
   private async encryptContentEncryptionKey({
@@ -919,23 +1011,25 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
   private async derivePortableDid({
     rootHdKey,
     dwnEndpoints,
+    paths,
   }: {
     rootHdKey: Ed25519HdKey;
     dwnEndpoints?: string[];
+    paths: VaultDerivationPaths;
   }): Promise<PortableDid> {
-    const identityHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/0'`);
+    const identityHdKey = rootHdKey.derive(paths.identity);
     const identityPrivateKey = await this.crypto.bytesToPrivateKey({
       algorithm       : 'Ed25519',
       privateKeyBytes : identityHdKey.privateKey,
     });
 
-    const signingHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/1'`);
+    const signingHdKey = rootHdKey.derive(paths.signing);
     const signingPrivateKey = await this.crypto.bytesToPrivateKey({
       algorithm       : 'Ed25519',
       privateKeyBytes : signingHdKey.privateKey,
     });
 
-    const encryptionHdKey = rootHdKey.derive(`m/44'/0'/1708523827'/0'/2'`);
+    const encryptionHdKey = rootHdKey.derive(paths.encryption);
     const encryptionPrivateKey = await this.crypto.bytesToPrivateKey({
       algorithm       : 'X25519',
       privateKeyBytes : encryptionHdKey.privateKey,
@@ -970,6 +1064,70 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     return portableDid;
   }
 
+  /**
+   * Resolve recovery material with automatic `v2 → v1` fallback.
+   *
+   * The DHT is authoritative: `v2` is preferred and `v1` is used only when `v2` is explicitly not
+   * found. Resolution errors never fall back, so a gateway or transport failure cannot silently
+   * switch a user onto the wrong keys.
+   */
+  private async recoverVaultMaterial({
+    password,
+    recoveryPhrase,
+    dwnEndpoints,
+    derivationVersion,
+    deferDwnEndpointBootstrap,
+  }: HdIdentityVaultInitializeParams & { recoveryPhrase: string }): Promise<{
+    derivedMaterial: HdIdentityVaultDerivedMaterial;
+    portableDid: StoredVaultDid;
+    resolvedVersion: VaultDerivationVersion;
+  }> {
+    const reconcile = (material: HdIdentityVaultDerivedMaterial, resolution: DidResolutionResult): Promise<PortableDid> =>
+      this.reconcileRecoveredDid({
+        portableDid          : material.portableDid,
+        replacementEndpoints : dwnEndpoints,
+        deferReplacement     : true,
+        deferBootstrap       : deferDwnEndpointBootstrap,
+        resolution,
+      });
+
+    if (derivationVersion !== undefined) {
+      const derivedMaterial = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints, derivationVersion });
+      const portableDid = await this.reconcileRecoveredDid({
+        portableDid          : derivedMaterial.portableDid,
+        replacementEndpoints : dwnEndpoints,
+        deferReplacement     : true,
+        deferBootstrap       : deferDwnEndpointBootstrap,
+      });
+      return { derivedMaterial, portableDid, resolvedVersion: derivationVersion };
+    }
+
+    const v2Material = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints, derivationVersion: 2 });
+    const v2Resolution = await this.resolveDid(v2Material.portableDid.uri);
+    if (!this.isDidNotFound(v2Resolution)) {
+      return { derivedMaterial: v2Material, portableDid: await reconcile(v2Material, v2Resolution), resolvedVersion: 2 };
+    }
+
+    const v1Material = await this.deriveVaultMaterial({ password, recoveryPhrase, dwnEndpoints, derivationVersion: 1 });
+    const v1Resolution = await this.resolveDid(v1Material.portableDid.uri);
+    if (!this.isDidNotFound(v1Resolution)) {
+      return { derivedMaterial: v1Material, portableDid: await reconcile(v1Material, v1Resolution), resolvedVersion: 1 };
+    }
+
+    return { derivedMaterial: v2Material, portableDid: await reconcile(v2Material, v2Resolution), resolvedVersion: 2 };
+  }
+
+  /** Resolve through the agent-supplied resolver, preferring its cache-refreshing variant. */
+  private async resolveDid(didUri: string): Promise<DidResolutionResult> {
+    return this._didResolver.refreshResolution === undefined
+      ? await this._didResolver.resolve(didUri, {})
+      : await this._didResolver.refreshResolution(didUri);
+  }
+
+  private isDidNotFound(resolution: DidResolutionResult): boolean {
+    return resolution.didResolutionMetadata.error === DidErrorCode.NotFound;
+  }
+
   /** Reconcile a recovered DID with its authoritative document before any vault write. */
   private async reconcileRecoveredDid({
     portableDid,
@@ -977,12 +1135,11 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     deferReplacement = false,
     deferBootstrap = false,
     useStoredOnNotFound = false,
+    resolution,
   }: HdIdentityVaultReconcileRecoveredDidParams): Promise<PortableDid> {
-    const resolution = this._didResolver.refreshResolution === undefined
-      ? await this._didResolver.resolve(portableDid.uri, {})
-      : await this._didResolver.refreshResolution(portableDid.uri);
+    const didResolution = resolution ?? await this.resolveDid(portableDid.uri);
 
-    if (resolution.didResolutionMetadata.error === DidErrorCode.NotFound) {
+    if (didResolution.didResolutionMetadata.error === DidErrorCode.NotFound) {
       return this.reconcileNotFoundDid({
         portableDid,
         replacementEndpoints,
@@ -991,14 +1148,14 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
         useStoredOnNotFound,
       });
     }
-    if (resolution.didResolutionMetadata.error !== undefined || resolution.didDocument === null) {
+    if (didResolution.didResolutionMetadata.error !== undefined || didResolution.didDocument === null) {
       throw new Error(
-        resolution.didResolutionMetadata.errorMessage
+        didResolution.didResolutionMetadata.errorMessage
         ?? `HdIdentityVault: Unable to resolve recovered DID '${portableDid.uri}'.`
       );
     }
 
-    const resolvedDocument = resolution.didDocument;
+    const resolvedDocument = didResolution.didDocument;
     const resolvedEndpoints = getDwnEndpointStatus(portableDid.uri, resolvedDocument);
     if (resolvedEndpoints.status !== 'ready') {
       if (replacementEndpoints === undefined) {
@@ -1017,7 +1174,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
       return {
         ...portableDid,
         document : localDocument,
-        metadata : resolution.didDocumentMetadata,
+        metadata : didResolution.didDocumentMetadata,
       };
     }
 
@@ -1207,7 +1364,7 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
    * @returns A promise that resolves to a boolean indicating successful status update.
    * @throws Will throw an error if the status cannot be updated in the key-value store.
    */
-  private async setStatus({ initialized, lastBackup, lastRestore }: Partial<IdentityVaultStatus>): Promise<boolean> {
+  private async setStatus({ initialized, lastBackup, lastRestore, derivationVersion }: Partial<IdentityVaultStatus>): Promise<boolean> {
     // Get the current status values from the store, if any.
     const vaultStatus = await this.getStatus();
 
@@ -1215,13 +1372,18 @@ export class HdIdentityVault implements IdentityVault<{ InitializeResult: string
     vaultStatus.initialized = initialized ?? vaultStatus.initialized;
     vaultStatus.lastBackup = lastBackup ?? vaultStatus.lastBackup;
     vaultStatus.lastRestore = lastRestore ?? vaultStatus.lastRestore;
+    vaultStatus.derivationVersion = derivationVersion ?? vaultStatus.derivationVersion;
 
+    await this.writeStatus(vaultStatus);
+
+    return true;
+  }
+
+  private async writeStatus(vaultStatus: IdentityVaultStatus): Promise<void> {
     // Write the changes to the store.
     await this._store.set('vaultStatus', JSON.stringify(vaultStatus));
 
     // Update the in-memory cache so subsequent reads skip the store.
     this._cachedInitialized = vaultStatus.initialized;
-
-    return true;
   }
 }
