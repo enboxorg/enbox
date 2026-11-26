@@ -1,5 +1,11 @@
 # @enbox/agent
 
+## 0.8.55
+
+### Patch Changes
+
+- [#1871](https://github.com/enboxorg/enbox/pull/1871) [`1d02b19`](https://github.com/enboxorg/enbox/commit/1d02b19555f256ecb9f7df5a47048425c549a6d7) Thanks [@enmand](https://github.com/enmand)! - feat: derive agent vault keys with BIP-43 v2 paths and dual-derive v1 fallback (ADR 0009)
+
 ## 0.8.54
 
 ### Patch Changes
