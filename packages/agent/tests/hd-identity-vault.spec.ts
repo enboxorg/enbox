@@ -1,13 +1,17 @@
 import type { DidResolutionResult } from '@enbox/dids';
-import type { IdentityVaultBackup } from '../src/types/identity-vault.js';
+import type { Jwk } from '@enbox/crypto';
 import type { KeyValueStore } from '@enbox/common';
+import type { VaultDerivationVersion } from '../src/types/identity-vault.js';
+import type { IdentityVaultBackup, IdentityVaultBackupData, IdentityVaultStatus } from '../src/types/identity-vault.js';
 
 import sinon from 'sinon';
 
+import { CompactJwe } from '@enbox/crypto';
 import { HdIdentityVault } from '../src/hd-identity-vault.js';
 import { LevelStore } from '@enbox/common/level-store';
-import { MemoryStore } from '@enbox/common';
+import { LocalKeyManager } from '../src/local-key-manager.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { Convert, MemoryStore } from '@enbox/common';
 import { DidDht, DidErrorCode, getDwnEndpointStatus } from '@enbox/dids';
 
 describe('HdIdentityVault', () => {
@@ -254,6 +258,411 @@ describe('HdIdentityVault', () => {
         });
       });
 
+      describe('derivation versions (ADR 0009)', () => {
+        const goldenPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+        const goldenDids: Record<VaultDerivationVersion, string> = {
+          1 : 'did:dht:qftx7z968xcpfy1a1diu75pg5meap3gdtg6ezagaw849wdh6oubo',
+          2 : 'did:dht:3pcjxsbcm5py5xaffs4uppp8ywubyy9bw4erbicw7qrkue1t81uo',
+        };
+        const goldenCekHex: Record<VaultDerivationVersion, string> = {
+          1 : 'b99ff78488da4c83cbe590b5374bfca38551eb47e65514667018cc33c91f4913',
+          2 : 'a19daef652efd7e05e22a9184a244d63983fd5ef2714b113b8d60dc53028fd67',
+        };
+        const goldenSaltHex: Record<VaultDerivationVersion, string> = {
+          1 : 'cf6389ce23de14b02e05413e1bcc3715f6fed4c2b0eda9412701279288f37d20',
+          2 : 'faa7f7433146bb721fd77c7b6a1cc6dc4725886130d6f05582eabca26bde85c0',
+        };
+
+        const foundResolution = (didUri: string, endpoint = 'https://resolved.example'): DidResolutionResult => ({
+          didDocument: {
+            id      : didUri,
+            service : [{
+              id              : `${didUri}#dwn`,
+              type            : 'DecentralizedWebNode',
+              serviceEndpoint : [endpoint],
+            }],
+          },
+          didDocumentMetadata   : { published: true },
+          didResolutionMetadata : {},
+        });
+
+        const notFoundResolution = (): DidResolutionResult => ({
+          didDocument           : null,
+          didDocumentMetadata   : {},
+          didResolutionMetadata : { error: DidErrorCode.NotFound },
+        });
+
+        const stubPublish = (): sinon.SinonStub => {
+          const publish = sinon.stub().resolves({ didDocumentMetadata: { published: true } });
+          identityVault.didResolver = { resolve: sinon.stub(), publish };
+          return publish;
+        };
+
+        /** Recovery initialization of the golden phrase, with every lookup not found and publishing allowed. */
+        const stubRecoveryPublish = (): sinon.SinonStub => {
+          const publish = sinon.stub().resolves({ didDocumentMetadata: { published: true } });
+          identityVault.didResolver = { resolve: sinon.stub().resolves(notFoundResolution()), publish };
+          return publish;
+        };
+
+        const dwnEndpoints = ['https://dwn.example.com'];
+
+        async function readStoredCek(backup: IdentityVaultBackup, password: string): Promise<{ cek: Jwk; salt: Uint8Array }> {
+          const backupData = Convert.base64Url(backup.data).toObject() as IdentityVaultBackupData;
+          const { plaintext, protectedHeader } = await CompactJwe.decrypt({
+            jwe        : backupData.contentEncryptionKey,
+            key        : Convert.string(password).toUint8Array(),
+            keyManager : new LocalKeyManager(),
+            options    : {
+              allowedAlgs : ['PBES2-HS512+A256KW'],
+              allowedEncs : ['A256GCM'],
+              minP2cCount : 1,
+            },
+          });
+
+          return {
+            cek  : Convert.uint8Array(plaintext).toObject() as Jwk,
+            salt : Convert.base64Url(protectedHeader.p2s!).toUint8Array(),
+          };
+        }
+
+        it('derives the v1 golden vectors', async () => {
+          stubRecoveryPublish();
+          await identityVault.initialize({ password: 'golden-password', recoveryPhrase: goldenPhrase, derivationVersion: 1, dwnEndpoints });
+
+          expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+
+          const { cek, salt } = await readStoredCek(await identityVault.backup(), 'golden-password');
+          expect(Convert.uint8Array(Convert.base64Url(cek.k!).toUint8Array()).toHex()).toBe(goldenCekHex[1]);
+          expect(Convert.uint8Array(salt).toHex()).toBe(goldenSaltHex[1]);
+        });
+
+        it('derives the v2 golden vectors', async () => {
+          stubRecoveryPublish();
+          await identityVault.initialize({ password: 'golden-password', recoveryPhrase: goldenPhrase, derivationVersion: 2, dwnEndpoints });
+
+          expect((await identityVault.getDid()).uri).toBe(goldenDids[2]);
+
+          const { cek, salt } = await readStoredCek(await identityVault.backup(), 'golden-password');
+          expect(Convert.uint8Array(Convert.base64Url(cek.k!).toUint8Array()).toHex()).toBe(goldenCekHex[2]);
+          expect(Convert.uint8Array(salt).toHex()).toBe(goldenSaltHex[2]);
+        });
+
+        it('defaults a fresh vault to v2', async () => {
+          stubPublish();
+          await identityVault.initialize({ password: 'test-password' });
+
+          expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+        });
+
+        it('persists an explicit v1 derivation version', async () => {
+          stubPublish();
+          await identityVault.initialize({ password: 'test-password', derivationVersion: 1 });
+
+          expect((await identityVault.getStatus()).derivationVersion).toBe(1);
+        });
+
+        it('rejects an invalid derivation version before writing any state', async () => {
+          const resolve = sinon.stub();
+          identityVault.didResolver = { resolve };
+
+          await expect(
+            identityVault.initialize({ password: 'test-password', derivationVersion: 3 as VaultDerivationVersion })
+          ).rejects.toThrow('Unsupported derivation version');
+
+          expect(resolve.notCalled).toBe(true);
+          expect(await identityVault.isInitialized()).toBe(false);
+          expect(await vaultStore.get('did')).toBeUndefined();
+          expect(await vaultStore.get('contentEncryptionKey')).toBeUndefined();
+        });
+
+        [0, 3, '2' as unknown as VaultDerivationVersion, null as unknown as VaultDerivationVersion].forEach((invalidVersion) => {
+          it(`rejects a vault status with derivationVersion ${JSON.stringify(invalidVersion)}`, async () => {
+            await vaultStore.set('vaultStatus', JSON.stringify({
+              initialized       : true,
+              lastBackup        : null,
+              lastRestore       : null,
+              derivationVersion : invalidVersion,
+            }));
+
+            await expect(identityVault.getStatus()).rejects.toThrow('Invalid IdentityVaultStatus');
+          });
+        });
+
+        it('treats an absent derivationVersion as legacy v1', async () => {
+          await vaultStore.set('vaultStatus', JSON.stringify({ initialized: true, lastBackup: null, lastRestore: null }));
+
+          const status = await identityVault.getStatus();
+          expect(status.initialized).toBe(true);
+          expect(status.derivationVersion).toBeUndefined();
+        });
+
+        describe('recovery initialize', () => {
+          it('uses v2 with a single lookup when v2 is found', async () => {
+            const refreshResolution = sinon.stub().resolves(foundResolution(goldenDids[2]));
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution };
+
+            await identityVault.initialize({ password: 'test-password', recoveryPhrase: goldenPhrase });
+
+            expect(refreshResolution.calledOnceWith(goldenDids[2])).toBe(true);
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[2]);
+          });
+
+          it('falls back to v1 when v2 is not found and v1 is found', async () => {
+            const refreshResolution = sinon.stub().callsFake(async (didUri: string): Promise<DidResolutionResult> =>
+              didUri === goldenDids[1] ? foundResolution(goldenDids[1]) : notFoundResolution());
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution };
+
+            await identityVault.initialize({ password: 'test-password', recoveryPhrase: goldenPhrase });
+
+            expect(refreshResolution.callCount).toBe(2);
+            expect(refreshResolution.firstCall.calledWith(goldenDids[2])).toBe(true);
+            expect(refreshResolution.secondCall.calledWith(goldenDids[1])).toBe(true);
+            expect((await identityVault.getStatus()).derivationVersion).toBe(1);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+          });
+
+          it('does not fall back to v1 when v2 resolution throws a transport error', async () => {
+            const refreshResolution = sinon.stub().rejects(new Error('resolver offline'));
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution };
+
+            await expect(identityVault.initialize({ password: 'test-password', recoveryPhrase: goldenPhrase }))
+              .rejects.toThrow('resolver offline');
+
+            expect(refreshResolution.calledOnceWith(goldenDids[2])).toBe(true);
+            expect(await identityVault.isInitialized()).toBe(false);
+          });
+
+          it('does not fall back to v1 when v2 resolution reports an internal error', async () => {
+            const refreshResolution = sinon.stub().resolves({
+              didDocument           : null,
+              didDocumentMetadata   : {},
+              didResolutionMetadata : { error: DidErrorCode.InternalError, errorMessage: 'gateway exploded' },
+            });
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution };
+
+            await expect(identityVault.initialize({ password: 'test-password', recoveryPhrase: goldenPhrase }))
+              .rejects.toThrow('gateway exploded');
+
+            expect(refreshResolution.calledOnceWith(goldenDids[2])).toBe(true);
+            expect(await identityVault.isInitialized()).toBe(false);
+          });
+
+          it('does not fall back to v2 publication when the v1 lookup fails', async () => {
+            const refreshResolution = sinon.stub().callsFake(async (didUri: string): Promise<DidResolutionResult> => {
+              if (didUri === goldenDids[2]) {
+                return notFoundResolution();
+              }
+              throw new Error('v1 gateway offline');
+            });
+            const publish = sinon.stub().resolves({ didDocumentMetadata: { published: true } });
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution, publish };
+
+            await expect(identityVault.initialize({ password: 'test-password', recoveryPhrase: goldenPhrase }))
+              .rejects.toThrow('v1 gateway offline');
+
+            expect(refreshResolution.callCount).toBe(2);
+            expect(refreshResolution.secondCall.calledWith(goldenDids[1])).toBe(true);
+            expect(publish.notCalled).toBe(true);
+            expect(await identityVault.isInitialized()).toBe(false);
+          });
+
+          it('does not fall back to v1 when v2 resolution is malformed', async () => {
+            const refreshResolution = sinon.stub().resolves({
+              didDocument           : null,
+              didDocumentMetadata   : {},
+              didResolutionMetadata : {},
+            });
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution };
+
+            await expect(identityVault.initialize({ password: 'test-password', recoveryPhrase: goldenPhrase }))
+              .rejects.toThrow('Unable to resolve recovered DID');
+
+            expect(refreshResolution.calledOnceWith(goldenDids[2])).toBe(true);
+          });
+
+          it('publishes and stores v2 when neither v2 nor v1 is found', async () => {
+            const refreshResolution = sinon.stub().resolves(notFoundResolution());
+            const publish = sinon.stub().resolves({ didDocumentMetadata: { published: true } });
+            identityVault.didResolver = { resolve: sinon.stub(), refreshResolution, publish };
+
+            await identityVault.initialize({
+              password       : 'test-password',
+              recoveryPhrase : goldenPhrase,
+              dwnEndpoints   : ['https://explicit.example'],
+            });
+
+            expect(refreshResolution.callCount).toBe(2);
+            expect(publish.calledOnce).toBe(true);
+            expect(publish.firstCall.args[0].did.document.service?.[0].serviceEndpoint)
+              .toEqual(['https://explicit.example']);
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[2]);
+          });
+
+          it('uses an explicit v1 derivation version without a v2 lookup', async () => {
+            const resolve = sinon.stub().resolves(notFoundResolution());
+            const publish = sinon.stub().resolves({ didDocumentMetadata: { published: true } });
+            identityVault.didResolver = { resolve, publish };
+
+            await identityVault.initialize({
+              password          : 'test-password',
+              recoveryPhrase    : goldenPhrase,
+              derivationVersion : 1,
+              dwnEndpoints      : ['https://explicit.example'],
+            });
+
+            expect(resolve.calledOnceWith(goldenDids[1])).toBe(true);
+            expect(publish.calledOnce).toBe(true);
+            expect((await identityVault.getStatus()).derivationVersion).toBe(1);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+          });
+        });
+
+        describe('resetPasswordWithRecoveryPhrase derivation versions', () => {
+          const password = 'old-password';
+          const newPassword = 'new-password';
+
+          it('resets a legacy v1 vault whose status has no derivationVersion', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password, recoveryPhrase: goldenPhrase, derivationVersion: 1, dwnEndpoints });
+
+            // Simulate a vault created before derivation versioning existed.
+            const status = Convert.string((await vaultStore.get('vaultStatus'))!).toObject() as IdentityVaultStatus;
+            delete status.derivationVersion;
+            await vaultStore.set('vaultStatus', JSON.stringify(status));
+
+            await identityVault.lock();
+            await identityVault.resetPasswordWithRecoveryPhrase({ recoveryPhrase: goldenPhrase, password: newPassword });
+
+            expect(identityVault.isLocked()).toBe(false);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+            const restoredStatus = Convert.string((await vaultStore.get('vaultStatus'))!).toObject() as IdentityVaultStatus;
+            expect('derivationVersion' in restoredStatus).toBe(false);
+          });
+
+          it('resets an explicit v1 vault', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password, recoveryPhrase: goldenPhrase, derivationVersion: 1, dwnEndpoints });
+
+            await identityVault.lock();
+            await identityVault.resetPasswordWithRecoveryPhrase({ recoveryPhrase: goldenPhrase, password: newPassword });
+
+            expect((await identityVault.getStatus()).derivationVersion).toBe(1);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+          });
+
+          it('resets a v2 vault', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password, recoveryPhrase: goldenPhrase, derivationVersion: 2, dwnEndpoints });
+
+            await identityVault.lock();
+            await identityVault.resetPasswordWithRecoveryPhrase({ recoveryPhrase: goldenPhrase, password: newPassword });
+
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[2]);
+          });
+
+          it('rejects a mismatched phrase without touching the vault', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password, recoveryPhrase: goldenPhrase, derivationVersion: 2, dwnEndpoints });
+            const storedDid = await vaultStore.get('did');
+
+            await identityVault.lock();
+            await expect(identityVault.resetPasswordWithRecoveryPhrase({
+              recoveryPhrase : 'legal winner thank year wave sausage worth useful legal winner thank yellow',
+              password       : newPassword,
+            })).rejects.toThrow('Recovery phrase does not match');
+
+            expect(await vaultStore.get('did')).toBe(storedDid);
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+          });
+        });
+
+        describe('backup and restore preservation', () => {
+          it('preserves derivationVersion 2 across backup and restore', async () => {
+            stubRecoveryPublish();
+            const password = 'test-password';
+            await identityVault.initialize({ password, recoveryPhrase: goldenPhrase, dwnEndpoints });
+            const backup = await identityVault.backup();
+
+            const peerVault = new HdIdentityVault({ store: vaultStore, keyDerivationWorkFactor: 1 });
+            await peerVault.restore({ backup, password });
+
+            expect((await peerVault.getStatus()).derivationVersion).toBe(2);
+            expect((await peerVault.getDid()).uri).toBe(goldenDids[2]);
+          });
+
+          it('does not leak derivationVersion 2 when restoring a legacy v1 backup onto a v2 vault', async () => {
+            stubRecoveryPublish();
+            const legacyPassword = 'legacy-password';
+            await identityVault.initialize({ password: legacyPassword, recoveryPhrase: goldenPhrase, derivationVersion: 1, dwnEndpoints });
+
+            // Strip the field so the backup matches a pre-versioning vault.
+            const status = Convert.string((await vaultStore.get('vaultStatus'))!).toObject() as IdentityVaultStatus;
+            delete status.derivationVersion;
+            await vaultStore.set('vaultStatus', JSON.stringify(status));
+            const legacyBackup = await identityVault.backup();
+
+            await vaultStore.clear();
+            identityVault = new HdIdentityVault({ store: vaultStore, keyDerivationWorkFactor: 1 });
+            stubRecoveryPublish();
+            await identityVault.initialize({ password: 'modern-password', recoveryPhrase: goldenPhrase, derivationVersion: 2, dwnEndpoints });
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+
+            await identityVault.restore({ backup: legacyBackup, password: legacyPassword });
+
+            const restoredStatus = await identityVault.getStatus();
+            expect('derivationVersion' in restoredStatus).toBe(false);
+            expect(restoredStatus.initialized).toBe(true);
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+          });
+
+          it('keeps derivationVersion 2 when a legacy v1 backup is restored with the wrong password', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password: 'legacy-password', recoveryPhrase: goldenPhrase, derivationVersion: 1, dwnEndpoints });
+
+            const status = Convert.string((await vaultStore.get('vaultStatus'))!).toObject() as IdentityVaultStatus;
+            delete status.derivationVersion;
+            await vaultStore.set('vaultStatus', JSON.stringify(status));
+            const legacyBackup = await identityVault.backup();
+
+            await vaultStore.clear();
+            identityVault = new HdIdentityVault({ store: vaultStore, keyDerivationWorkFactor: 1 });
+            stubRecoveryPublish();
+            await identityVault.initialize({ password: 'modern-password', recoveryPhrase: goldenPhrase, derivationVersion: 2, dwnEndpoints });
+
+            await expect(identityVault.restore({ backup: legacyBackup, password: 'wrong-password' }))
+              .rejects.toThrow('invalid backup data or an incorrect password');
+
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
+            await identityVault.unlock({ password: 'modern-password' });
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[2]);
+          });
+
+          it('does not run HD derivation during daily operations', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password: 'old-password', recoveryPhrase: goldenPhrase, derivationVersion: 1, dwnEndpoints });
+            const plaintext = Convert.string('vault payload').toUint8Array();
+
+            (identityVault as any).deriveVaultMaterial = sinon.stub().throws(new Error('HD derivation must not run'));
+
+            const jwe = await identityVault.encryptData({ plaintext });
+            expect(new TextDecoder().decode(await identityVault.decryptData({ jwe }))).toBe('vault payload');
+
+            await identityVault.lock();
+            await identityVault.unlock({ password: 'old-password' });
+            await identityVault.changePassword({ oldPassword: 'old-password', newPassword: 'new-password' });
+            const backup = await identityVault.backup();
+            await identityVault.restore({ backup, password: 'new-password' });
+
+            expect((await identityVault.getDid()).uri).toBe(goldenDids[1]);
+            expect((await identityVault.getStatus()).derivationVersion).toBe(1);
+          });
+        });
+      });
+
       describe('getStatus()', () => {
         it('returns initialized=false when first instantiated', async () => {
           const vaultStatus = await identityVault.getStatus();
@@ -291,6 +700,18 @@ describe('HdIdentityVault', () => {
         });
 
         it('deterministically returns a DID given a recovery phrase', async () => {
+          // Publish the deterministic DID locally so the test does not depend on gateway state.
+          const publish = sinon.stub().resolves({ didDocumentMetadata: { published: true } });
+          identityVault.didResolver = {
+            resolve           : sinon.stub(),
+            refreshResolution : sinon.stub().resolves({
+              didDocument           : null,
+              didDocumentMetadata   : {},
+              didResolutionMetadata : { error: DidErrorCode.NotFound },
+            }),
+            publish,
+          };
+
           // Initialize the vault.
           await identityVault.initialize({
             password       : 'dumbbell-krakatoa-ditty',
@@ -301,7 +722,8 @@ describe('HdIdentityVault', () => {
           const did = await identityVault.getDid();
 
           // Verify that the expected DID URI is returned given the recovery phrase.
-          expect(did).toHaveProperty('uri', 'did:dht:qftx7z968xcpfy1a1diu75pg5meap3gdtg6ezagaw849wdh6oubo');
+          expect(did).toHaveProperty('uri', 'did:dht:3pcjxsbcm5py5xaffs4uppp8ywubyy9bw4erbicw7qrkue1t81uo');
+          expect(publish.calledOnce).toBe(true);
         });
 
         it('throws an error if the vault is not initialized and unlocked', async () => {

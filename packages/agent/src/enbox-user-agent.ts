@@ -4,6 +4,7 @@ import type { EnboxRpc } from '@enbox/dwn-clients';
 import type { LocalDwnStrategy } from './local-dwn.js';
 import type { SecretStore } from './secret-store.js';
 import type { SyncEngine } from './types/sync.js';
+import type { VaultDerivationVersion } from './types/identity-vault.js';
 import type { BearerDid, DidDhtNetworkConfig } from '@enbox/dids';
 import type {
   DecryptRecordDataParams,
@@ -58,6 +59,9 @@ export type AgentInitializeParams = {
 
    /** Leave new recovery endpoints unpublished until their remote tenancy is prepared. */
    deferDwnEndpointBootstrap?: boolean;
+
+   /** HD derivation scheme to use. Defaults to `2` for a fresh vault and automatic `v2 → v1` fallback for recovery. */
+   derivationVersion?: VaultDerivationVersion;
 
  };
 
@@ -288,10 +292,11 @@ export class EnboxUserAgent<TKeyManager extends AgentKeyManager = LocalKeyManage
     pendingSetup,
     dwnEndpoints,
     deferDwnEndpointBootstrap,
+    derivationVersion,
   }: AgentInitializeParams): Promise<string> {
     // Initialize the Agent vault.
     recoveryPhrase = await this.vault.initialize({
-      password, recoveryPhrase, pendingSetup, dwnEndpoints, deferDwnEndpointBootstrap,
+      password, recoveryPhrase, pendingSetup, dwnEndpoints, deferDwnEndpointBootstrap, derivationVersion,
     });
 
     return recoveryPhrase;
