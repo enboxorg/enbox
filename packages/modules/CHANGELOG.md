@@ -1,5 +1,12 @@
 # @enbox/modules
 
+## 0.2.125
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @enbox/api@0.6.98
+
 ## 0.2.124
 
 ### Patch Changes
