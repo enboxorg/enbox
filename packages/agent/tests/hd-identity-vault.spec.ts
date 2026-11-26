@@ -397,6 +397,12 @@ describe('HdIdentityVault', () => {
           expect(status.derivationVersion).toBeUndefined();
         });
 
+        it('rejects a vault status missing required fields', async () => {
+          await vaultStore.set('vaultStatus', JSON.stringify({ initialized: true }));
+
+          await expect(identityVault.getStatus()).rejects.toThrow('Invalid IdentityVaultStatus');
+        });
+
         describe('recovery initialize', () => {
           it('uses v2 with a single lookup when v2 is found', async () => {
             const refreshResolution = sinon.stub().resolves(foundResolution(goldenDids[2]));
@@ -639,6 +645,21 @@ describe('HdIdentityVault', () => {
             expect((await identityVault.getStatus()).derivationVersion).toBe(2);
             await identityVault.unlock({ password: 'modern-password' });
             expect((await identityVault.getDid()).uri).toBe(goldenDids[2]);
+          });
+
+          it('rejects restoring a backup whose status has an invalid derivationVersion', async () => {
+            stubRecoveryPublish();
+            await identityVault.initialize({ password: 'modern-password', recoveryPhrase: goldenPhrase, derivationVersion: 2, dwnEndpoints });
+            const backup = await identityVault.backup();
+            const parsedData = Convert.base64Url(backup.data).toObject() as Record<string, any>;
+            parsedData.status.derivationVersion = 3;
+            const corruptedData = Convert.object(parsedData).toBase64Url();
+            const corruptedBackup = { ...backup, data: corruptedData, size: corruptedData.length };
+
+            await expect(identityVault.restore({ backup: corruptedBackup, password: 'modern-password' }))
+              .rejects.toThrow('invalid backup data or an incorrect password');
+
+            expect((await identityVault.getStatus()).derivationVersion).toBe(2);
           });
 
           it('does not run HD derivation during daily operations', async () => {

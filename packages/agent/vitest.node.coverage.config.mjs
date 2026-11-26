@@ -13,6 +13,7 @@ export default defineConfig({
   },
   test: {
     include: [
+      'tests/hd-identity-vault.spec.ts',
       'tests/sync-admit-closure.spec.ts',
       'tests/sync-durable-feed-reconciler.spec.ts',
       'tests/sync-followed-modules.spec.ts',
@@ -32,6 +33,7 @@ export default defineConfig({
     testTimeout : 10_000,
     coverage: {
       include: [
+        'src/hd-identity-vault.ts',
         'src/followed-sync-module.ts',
         'src/followed-sync-source.ts',
         'src/sync-admit-closure.ts',
