@@ -195,6 +195,17 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     return this.cache.pin?.(didUri, fallback) ?? this.cache.set(didUri, fallback);
   }
 
+  /**
+   * Return the last retained cached DID resolution result (even when its
+   * freshness TTL has elapsed) without triggering network resolution.
+   */
+  public async getRetainedResolution(didUri: string): Promise<DidResolutionResult | undefined> {
+    if (this.cache.getRetained === undefined) {
+      return undefined;
+    }
+    return (await this.cache.getRetained(didUri)) ?? undefined;
+  }
+
   public async create({
     method, tenant, options, store
   }: DidCreateParams<TKeyManager>): Promise<BearerDid> {

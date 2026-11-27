@@ -765,6 +765,36 @@ describe('AgentDidApi', () => {
           }
         });
       });
+
+      describe('getRetainedResolution()', () => {
+        it('returns undefined when no cached resolution exists', async () => {
+          const retained = await testHarness.agent.did.getRetainedResolution('did:dht:notcached123');
+          expect(retained).toBeUndefined();
+        });
+
+        it('returns a stale retained resolution without triggering network resolution', async () => {
+          const did = await testHarness.agent.did.create({
+            method  : 'jwk',
+            options : {
+              verificationMethods: [{ algorithm: 'Ed25519' }],
+            },
+          });
+          const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
+          const refreshSpy = sinon.spy(testHarness.agent.did, 'refreshResolution');
+
+          // Advance wall clock beyond the 15-minute freshness TTL to ensure the
+          // retained entry is returned even when stale, with zero network I/O.
+          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000 });
+          try {
+            const retained = await testHarness.agent.did.getRetainedResolution(did.uri);
+            expect(retained?.didDocument?.id).toBe(did.uri);
+            expect(resolveSpy.called).toBe(false);
+            expect(refreshSpy.called).toBe(false);
+          } finally {
+            clock.restore();
+          }
+        });
+      });
     });
   });
 });

@@ -707,6 +707,48 @@ describe('AgentIdentityApi', () => {
           expect(connectedIdentity2!.did.uri).toBe(connectedDid2.did.uri);
         });
       });
+
+      describe('getRetainedDwnEndpointStatus()', () => {
+        it('returns undefined when no retained DID resolution exists', async () => {
+          const status = await testHarness.agent.identity.getRetainedDwnEndpointStatus({
+            didUri: 'did:dht:unseen123',
+          });
+          expect(status).toBeUndefined();
+        });
+
+        it('returns retained DWN endpoints even after the cache TTL expires without resolving over the network', async () => {
+          const didUri = 'did:dht:retainedendpointtest';
+          await testHarness.agent.did.pinResolution(didUri, {
+            didDocument: {
+              id      : didUri,
+              service : [{
+                id              : `${didUri}#dwn`,
+                type            : 'DecentralizedWebNode',
+                serviceEndpoint : ['https://dwn-a.example', 'https://dwn-b.example'],
+              }],
+            },
+            didDocumentMetadata   : {},
+            didResolutionMetadata : {},
+          });
+
+          const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
+          const refreshSpy = sinon.spy(testHarness.agent.did, 'refreshResolution');
+
+          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000 });
+          try {
+            const status = await testHarness.agent.identity.getRetainedDwnEndpointStatus({ didUri });
+            expect(status).toEqual({
+              didUri,
+              status    : 'ready',
+              endpoints : ['https://dwn-a.example', 'https://dwn-b.example'],
+            });
+            expect(resolveSpy.called).toBe(false);
+            expect(refreshSpy.called).toBe(false);
+          } finally {
+            clock.restore();
+          }
+        });
+      });
     });
   }
 });
