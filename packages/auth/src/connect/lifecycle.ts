@@ -507,8 +507,9 @@ export async function applyIdentitySyncScope(params: {
   delegateDid?: string;
   scope: IdentitySyncModules | string[] | undefined;
   lifecycleOptions?: SyncLifecycleOptions;
+  skipIfUnchanged?: boolean;
 }): Promise<boolean> {
-  const { userAgent, connectedDid, delegateDid, scope, lifecycleOptions } = params;
+  const { userAgent, connectedDid, delegateDid, scope, lifecycleOptions, skipIfUnchanged = false } = params;
   if (scope === undefined) {
     return false;
   }
@@ -535,7 +536,11 @@ export async function applyIdentitySyncScope(params: {
   const options = delegateDid === undefined
     ? { modules }
     : { delegateDid, modules };
-  await userAgent.sync.setIdentityOptions({ did: connectedDid, options }, registrationOptions);
+  if (skipIfUnchanged) {
+    await userAgent.sync.ensureIdentityOptions({ did: connectedDid, options }, registrationOptions);
+  } else {
+    await userAgent.sync.setIdentityOptions({ did: connectedDid, options }, registrationOptions);
+  }
   return true;
 }
 
@@ -563,8 +568,9 @@ export async function registerSyncScopeForIdentity(params: {
   delegateDid?: string;
   identitySyncModules?: IdentitySyncModules;
   lifecycleOptions?: SyncLifecycleOptions;
+  skipIfUnchanged?: boolean;
 }): Promise<boolean> {
-  const { userAgent, connectedDid, delegateDid, identitySyncModules, lifecycleOptions } = params;
+  const { userAgent, connectedDid, delegateDid, identitySyncModules, lifecycleOptions, skipIfUnchanged } = params;
   const repairStartedAt = Date.now();
   const timeout = lifecycleOptions?.timeout;
   const scope = delegateDid === undefined
@@ -581,6 +587,7 @@ export async function registerSyncScopeForIdentity(params: {
     delegateDid,
     scope,
     lifecycleOptions: remainingLifecycleOptions,
+    skipIfUnchanged,
   });
 }
 

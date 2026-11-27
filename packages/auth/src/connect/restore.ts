@@ -293,6 +293,7 @@ async function finalizeRestoredSession(
       delegateDid,
       identitySyncModules : ctx.defaultIdentitySyncModules,
       lifecycleOptions    : { timeout: SESSION_RESTORE_SYNC_REPAIR_TIMEOUT_MS },
+      skipIfUnchanged     : true,
     });
   } catch {
     // Grant query or registration repair failed — don't block restore,

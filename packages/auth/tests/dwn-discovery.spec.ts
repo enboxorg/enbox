@@ -211,6 +211,57 @@ describe('local-node pairing storage', () => {
     expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
   });
 
+  test('aborts stalled /info and /local/status probes when probeTimeoutMs elapses', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+    });
+
+    const receivedSignals: AbortSignal[] = [];
+    const hangingFetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const signal = init?.signal as AbortSignal;
+      receivedSignals.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+
+    const result = await discoverLocalDwnPairing(storage, hangingFetch, 25);
+
+    expect(result).toBeUndefined();
+    expect(receivedSignals).toHaveLength(1);
+    expect(receivedSignals[0]).toBeInstanceOf(AbortSignal);
+    expect(receivedSignals[0].aborted).toBe(true);
+    // Transient timeout preserves pairing record but clears ejection marker.
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+
+    // Also verify /local/status probe aborts when /info succeeds but status hangs.
+    await persistLocalDwnEjectionRecord(storage, {
+      completedAt : 456,
+      endpoint    : pairingRecord.endpoint,
+    });
+    let statusAborted = false;
+    const statusHangingFetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (url.toString().endsWith('/info')) {
+        return jsonResponse(localNodeInfo);
+      }
+      const signal = init?.signal as AbortSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          statusAborted = true;
+          reject(signal.reason);
+        }, { once: true });
+      });
+    };
+
+    const statusResult = await discoverLocalDwnPairing(storage, statusHangingFetch, 25);
+    expect(statusResult).toBeUndefined();
+    expect(statusAborted).toBe(true);
+  });
+
   test('restores stored pairing endpoint into an agent', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);
@@ -441,6 +492,27 @@ describe('probeLocalDwn', () => {
     expect(result).toEqual({ status: 'not-found' });
     expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
     expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
+  });
+
+  test('aborts stalled candidate port /info probes when probeTimeoutMs elapses', async () => {
+    const receivedSignals: AbortSignal[] = [];
+    const result = await probeLocalDwn({
+      fetch: async (_url, init): Promise<Response> => {
+        const signal = init?.signal as AbortSignal;
+        receivedSignals.push(signal);
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+      portCandidates : [55500],
+      probeTimeoutMs : 25,
+      scanPorts      : true,
+    });
+
+    expect(result).toEqual({ status: 'not-found' });
+    expect(receivedSignals).toHaveLength(1);
+    expect(receivedSignals[0]).toBeInstanceOf(AbortSignal);
+    expect(receivedSignals[0].aborted).toBe(true);
   });
 });
 

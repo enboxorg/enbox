@@ -58,6 +58,7 @@ export type ProbeLocalDwnOptions = {
   hostname?: string;
   origin?: string;
   portCandidates?: readonly number[];
+  probeTimeoutMs?: number;
   scanPorts?: boolean;
   storage?: StorageAdapter;
 };
@@ -109,6 +110,8 @@ export type LocalDwnPairingRequestResult =
 
 const defaultPairingTimeoutMs = 5 * 60 * 1000;
 const defaultPairingPollIntervalMs = 1500;
+/** Per-request timeout for localhost `/info` and `/local/status` discovery probes. */
+const defaultLocalDwnProbeTimeoutMs = 2_000;
 
 type LocalDwnPairingValidation =
   | { status: 'paired'; serverInfo: ServerInfo }
@@ -336,6 +339,7 @@ export async function discoverEjectedLocalDwnPairing(
 export async function discoverLocalDwnPairing(
   storage: StorageAdapter,
   fetchOption?: FetchLike,
+  probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
 ): Promise<LocalDwnPairingRecord | undefined> {
   const pairing = await readLocalDwnPairingRecord(storage);
   if (pairing === undefined) {
@@ -348,7 +352,7 @@ export async function discoverLocalDwnPairing(
     return undefined;
   }
 
-  const validation = await validateLocalDwnPairing(pairing, fetchFn);
+  const validation = await validateLocalDwnPairing(pairing, fetchFn, undefined, probeTimeoutMs);
   if (validation.status === 'revoked') {
     await clearLocalDwnEndpoint(storage);
     return undefined;
@@ -427,7 +431,7 @@ export async function probeLocalDwn(options: ProbeLocalDwnOptions = {}): Promise
     ? undefined
     : await readLocalDwnPairingRecord(storage);
   if (storedPairing !== undefined && storage !== undefined) {
-    const validation = await validateLocalDwnPairing(storedPairing, fetchFn, options.origin);
+    const validation = await validateLocalDwnPairing(storedPairing, fetchFn, options.origin, options.probeTimeoutMs);
     if (validation.status === 'paired') {
       return {
         endpoint   : storedPairing.endpoint,
@@ -458,7 +462,7 @@ export async function probeLocalDwn(options: ProbeLocalDwnOptions = {}): Promise
   const portCandidates = options.portCandidates ?? localDwnPortCandidates;
   for (const port of portCandidates) {
     const endpoint = `http://${hostname}:${port}`;
-    const serverInfo = await fetchLocalDwnServerInfo(endpoint, fetchFn);
+    const serverInfo = await fetchLocalDwnServerInfo(endpoint, fetchFn, options.probeTimeoutMs);
     if (serverInfo?.localNode === true) {
       return {
         endpoint : normalizeBaseUrl(endpoint),
@@ -675,8 +679,9 @@ async function validateLocalDwnPairing(
   pairing: LocalDwnPairingRecord,
   fetchFn: FetchLike,
   origin?: string,
+  probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
 ): Promise<LocalDwnPairingValidation> {
-  const infoResult = await fetchLocalDwnServerInfoResult(pairing.endpoint, fetchFn);
+  const infoResult = await fetchLocalDwnServerInfoResult(pairing.endpoint, fetchFn, probeTimeoutMs);
   if (infoResult.status === 'unavailable') {
     return infoResult;
   }
@@ -685,21 +690,32 @@ async function validateLocalDwnPairing(
     return { status: 'revoked' };
   }
 
-  const status = await fetchLocalDwnStatus(pairing, fetchFn, origin);
+  const status = await fetchLocalDwnStatus(pairing, fetchFn, origin, probeTimeoutMs);
   return status === 'paired'
     ? { serverInfo: infoResult.serverInfo, status }
     : { status };
 }
 
-async function fetchLocalDwnServerInfo(endpoint: string, fetchFn: FetchLike): Promise<ServerInfo | undefined> {
-  const result = await fetchLocalDwnServerInfoResult(endpoint, fetchFn);
+async function fetchLocalDwnServerInfo(
+  endpoint: string,
+  fetchFn: FetchLike,
+  probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
+): Promise<ServerInfo | undefined> {
+  const result = await fetchLocalDwnServerInfoResult(endpoint, fetchFn, probeTimeoutMs);
   return result.status === 'found' ? result.serverInfo : undefined;
 }
 
-async function fetchLocalDwnServerInfoResult(endpoint: string, fetchFn: FetchLike): Promise<LocalDwnServerInfoResult> {
+async function fetchLocalDwnServerInfoResult(
+  endpoint: string,
+  fetchFn: FetchLike,
+  probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
+): Promise<LocalDwnServerInfoResult> {
   let response: Response;
   try {
-    response = await fetchFn(endpointUrl(endpoint, '/info'), { method: 'GET' });
+    response = await fetchFn(endpointUrl(endpoint, '/info'), {
+      method : 'GET',
+      signal : AbortSignal.timeout(probeTimeoutMs),
+    });
   } catch {
     return { status: 'unavailable' };
   }
@@ -738,6 +754,7 @@ async function fetchLocalDwnStatus(
   pairing: LocalDwnPairingRecord,
   fetchFn: FetchLike,
   origin?: string,
+  probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
 ): Promise<'paired' | 'revoked' | 'unavailable'> {
   let response: Response;
   try {
@@ -746,7 +763,8 @@ async function fetchLocalDwnStatus(
 
     response = await fetchFn(endpointUrl(pairing.endpoint, '/local/status'), {
       headers,
-      method: 'GET',
+      method : 'GET',
+      signal : AbortSignal.timeout(probeTimeoutMs),
     });
   } catch {
     return 'unavailable';

@@ -467,13 +467,16 @@ describe('restoreSession', () => {
       });
 
       const registerCalls: any[] = [];
+      const setCalls: any[] = [];
       const lifecycleOptions: any[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async (params, options) => {
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncSetIdentityOptions    : async (params) => { setCalls.push(params); },
+        syncEnsureIdentityOptions : async (params, options) => {
           registerCalls.push(params);
           lifecycleOptions.push(options);
+          return true;
         },
         processDwnRequest: async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
@@ -493,6 +496,7 @@ describe('restoreSession', () => {
       );
 
       expect(session).toBeDefined();
+      expect(setCalls).toHaveLength(0);
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].options.modules).toContain('https://modules.example.com/notes');
       expect(lifecycleOptions).toHaveLength(1);
@@ -546,7 +550,7 @@ describe('restoreSession', () => {
       }
     });
 
-    test('does not start sync when setIdentityOptions fails', async () => {
+    test('does not start sync when ensureIdentityOptions fails', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
@@ -557,11 +561,11 @@ describe('restoreSession', () => {
 
       const syncStartCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async () => { throw new Error('database unavailable'); },
-        syncStartSync          : async (params) => { syncStartCalls.push(params); },
-        processDwnRequest      : async (params: any) => {
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncEnsureIdentityOptions : async () => { throw new Error('database unavailable'); },
+        syncStartSync             : async (params) => { syncStartCalls.push(params); },
+        processDwnRequest         : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -595,10 +599,10 @@ describe('restoreSession', () => {
       const registerCalls: any[] = [];
       const unregisterCalls: string[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
-        syncRemoveIdentity     : async (did) => { unregisterCalls.push(did); },
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncEnsureIdentityOptions : async (params) => { registerCalls.push(params); return true; },
+        syncRemoveIdentity        : async (did) => { unregisterCalls.push(did); },
         // Default processDwnRequest returns empty entries for RecordsQuery,
         // so deriveModulesFromGrants returns [] → unregister stale registration.
       });
@@ -631,10 +635,10 @@ describe('restoreSession', () => {
 
       const registerCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
-        processDwnRequest      : async (params: any) => {
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncEnsureIdentityOptions : async (params) => { registerCalls.push(params); return true; },
+        processDwnRequest         : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -673,10 +677,10 @@ describe('restoreSession', () => {
       const registerCalls: any[] = [];
       const grantRequests: any[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
-        permissionsFetchGrants : async (params) => {
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncEnsureIdentityOptions : async (params) => { registerCalls.push(params); return true; },
+        permissionsFetchGrants    : async (params) => {
           grantRequests.push(params);
           const validGrant = buildMockGrantEntry('https://modules.example/valid');
           return [{ grant: DwnPermissionGrant.parse(validGrant), message: validGrant }];
@@ -709,10 +713,10 @@ describe('restoreSession', () => {
 
       const registerCalls: any[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async (params) => { registerCalls.push(params); },
-        processDwnRequest      : async (params: any) => {
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncEnsureIdentityOptions : async (params) => { registerCalls.push(params); return true; },
+        processDwnRequest         : async (params: any) => {
           if (params?.messageType === 'RecordsQuery') {
             return {
               reply: {
@@ -767,7 +771,7 @@ describe('restoreSession', () => {
       expect(unregisterCalls[0]).toBe('did:dht:external');
     });
 
-    test('sets syncRepairFailed when setIdentityOptions throws non-registration error', async () => {
+    test('sets syncRepairFailed when ensureIdentityOptions throws non-registration error', async () => {
       const emitter = new AuthEventEmitter();
       const storage = new MemoryStorage();
       await setStoredSession(storage, 'did:dht:external', 'did:dht:testuser123');
@@ -804,10 +808,10 @@ describe('restoreSession', () => {
       const unregisterCalls: string[] = [];
       const cleanupLifecycleOptions: any[] = [];
       const agent = createMockAgent({
-        firstLaunch            : async () => false,
-        identityGet            : async () => identity,
-        syncSetIdentityOptions : async () => { throw new Error('database write error'); },
-        syncRemoveIdentity     : async (did, options) => {
+        firstLaunch               : async () => false,
+        identityGet               : async () => identity,
+        syncEnsureIdentityOptions : async () => { throw new Error('database write error'); },
+        syncRemoveIdentity        : async (did, options) => {
           unregisterCalls.push(did);
           cleanupLifecycleOptions.push(options);
         },
