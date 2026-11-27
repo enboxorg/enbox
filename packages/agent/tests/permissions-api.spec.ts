@@ -837,6 +837,19 @@ describe('AgentPermissionsApi', () => {
         .map(([request]) => (request.messageParams.filter as Record<string, unknown>).parentId);
       expect(revocationReadParents).toEqual([activeGrant.message.recordId]);
 
+      // activeOnly: true with checkRevoked: false also excludes expired grants without revocation reads.
+      processDwnRequestSpy.mockClear();
+      const activeWithoutRevocationCheck = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        module       : moduleUri,
+        checkRevoked : false,
+        activeOnly   : true,
+      });
+      expect(activeWithoutRevocationCheck).toHaveLength(1);
+      expect(activeWithoutRevocationCheck[0].message.recordId).toBe(activeGrant.message.recordId);
+      expect(processDwnRequestSpy).toHaveBeenCalledTimes(1);
+
       // Default behavior (activeOnly: false) still includes non-revoked expired grants.
       const allNonRevokedGrants = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
