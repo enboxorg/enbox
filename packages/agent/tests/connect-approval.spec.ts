@@ -422,6 +422,46 @@ describe('connect approval ceremony', () => {
       expect(sendStub.callCount).toBe(1);
     });
 
+    it('should finish promptly after quorum tail grace when a secondary endpoint hangs', async () => {
+      const healthyUrl = 'https://dwn-healthy.example';
+      const hangingUrl = 'https://dwn-hanging.example';
+      let hangingAborted = false;
+
+      sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ dwnUrl, signal }) => {
+        if (dwnUrl === hangingUrl) {
+          return new Promise((_, reject) => {
+            const onAbort = (): void => {
+              hangingAborted = true;
+              reject(signal!.reason);
+            };
+            if (signal?.aborted) {
+              onAbort();
+            } else {
+              signal?.addEventListener('abort', onAbort, { once: true });
+            }
+          });
+        }
+        return { status: { code: 202, detail: 'Accepted' } } as any;
+      });
+
+      const start = Date.now();
+      const grants = await createPermissionGrants(
+        providerIdentity.did.uri,
+        delegateBearerDid.uri,
+        testHarness.agent,
+        permissionScopes,
+        undefined,
+        [healthyUrl, hangingUrl],
+      );
+      const elapsed = Date.now() - start;
+
+      expect(grants).toHaveLength(permissionScopes.length);
+      expect(hangingAborted).toBe(true);
+      // Healthy endpoint finishes immediately; quorum tail grace aborts the hung
+      // secondary endpoint at ~1.5 s instead of stalling for the 20 s batch budget.
+      expect(elapsed).toBeLessThan(5_000);
+    }, 15_000);
+
     it('should resolve remote endpoints before creating local permission grants', async () => {
       sinon.stub(testHarness.agent.dwn, 'getRemoteDwnEndpointUrls')
         .rejects(new Error('DID does not advertise a #dwn service'));
@@ -571,7 +611,7 @@ describe('connect approval ceremony', () => {
       definitions: DwnModuleDefinition[],
       options: {
         endpoints?: string[];
-        otherReply?: (request: any) => { status: { code: number; detail: string } };
+        otherReply?: (request: any) => Promise<{ status: { code: number; detail: string } }> | { status: { code: number; detail: string } };
       } = {},
     ): Promise<{ processDwnRequest: sinon.SinonStub; rpcSendDwnRequest: sinon.SinonStub }> {
       const installedDefinitions = new Map<string, DwnModuleDefinition>();
@@ -1953,6 +1993,84 @@ describe('connect approval ceremony', () => {
         // (without this fix, the same scenario takes minutes).
         expect(elapsed).toBeLessThan(25_000);
       }, 60_000); // bun:test per-test timeout, kept above the assertion budget
+
+      it('should bound grantKey and revocation fan-outs via quorum tail grace when a secondary endpoint hangs', async () => {
+        const encryptedModule: DwnModuleDefinition = {
+          module    : 'http://quorum-tail-encrypted.xyz',
+          published : true,
+          types     : {
+            note: {
+              schema             : 'http://quorum-tail-encrypted.xyz/note',
+              dataFormats        : ['text/plain'],
+              encryptionRequired : true,
+            },
+          },
+          structure: { note: {} },
+        };
+        const readScopes: RecordsPermissionScope[] = [{
+          interface : 'Records' as any,
+          method    : 'Read' as any,
+          module    : encryptedModule.module,
+        }];
+        const grantKeyRecord = {
+          recordId   : 'grant-key-quorum-tail-id',
+          descriptor : {
+            interface  : 'Records',
+            method     : 'Write',
+            recipient  : delegateBearerDid.uri,
+            module     : EncryptionModule.uri,
+            modulePath : EncryptionModule.wrappedGrantKeyPath,
+            dataFormat : 'application/json',
+            tags       : { module: encryptedModule.module },
+          },
+          encodedData: Convert.uint8Array(new Uint8Array([1, 2, 3])).toBase64Url(),
+        };
+
+        const healthyUrl = 'https://dwn-healthy.example/';
+        const hangingUrl = 'https://dwn-hanging.example/';
+        let abortedSecondarySends = 0;
+
+        stubApprovalCeremony();
+        sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
+        // Let module preparation queries/configures succeed quickly on both
+        // endpoints, then hang secondary grantKey + revocation sends until aborted.
+        await stubMissingModulePreparation([encryptedModule], {
+          endpoints  : [healthyUrl, hangingUrl],
+          otherReply : (req: any): Promise<{ status: { code: number; detail: string } }> | { status: { code: number; detail: string } } => {
+            if (req.dwnUrl === hangingUrl) {
+              return new Promise((_resolve, reject) => {
+                const signal = req.signal as AbortSignal;
+                const onAbort = (): void => {
+                  abortedSecondarySends++;
+                  reject(signal.reason);
+                };
+                if (signal.aborted) {
+                  onAbort();
+                } else {
+                  signal.addEventListener('abort', onAbort, { once: true });
+                }
+              });
+            }
+            return { status: { code: 202, detail: 'Accepted' } };
+          },
+        });
+
+        const start = Date.now();
+        await executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
+          request     : approvalRequest({
+            permissionRequests: [{ moduleDefinition: encryptedModule, permissionScopes: readScopes }],
+          }),
+        });
+        const elapsed = Date.now() - start;
+
+        // Without quorum tail grace, grantKey (10 s) + revocation (10 s) would
+        // stall ~20 s. With 1.5 s tail grace per phase, total stays ~3 s.
+        expect(abortedSecondarySends).toBeGreaterThanOrEqual(2);
+        expect(elapsed).toBeLessThan(7_000);
+      }, 20_000);
     });
   });
 });
