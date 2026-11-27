@@ -1,10 +1,11 @@
-import type { BearerDid } from '@enbox/dids';
+import type { BearerDid, DidResolverCache } from '@enbox/dids';
 
 import sinon from 'sinon';
 
-import { DidDht } from '@enbox/dids';
 import { afterEach, describe, expect, it } from 'bun:test';
+import { DidDht, DidJwk } from '@enbox/dids';
 
+import { AgentDidApi } from '../src/did-api.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { isDidResolutionUnavailableError } from '../src/did-resolution-error.js';
 
@@ -64,7 +65,12 @@ describe('local DWN reads during a DID resolution outage', () => {
     const signature = await agent.keyManager.sign({ keyUri, data: new Uint8Array([1, 2, 3]) });
     expect(signature.length).toBeGreaterThan(0);
     expect(fetch.called).toBe(true);
-    expect((await agent.did.cache.getRetained?.(agentDid.uri))?.didDocument).toEqual(agentDid.document);
+    const fetchCallsBeforeRetained = fetch.callCount;
+    expect((await agent.did.getRetainedResolution(agentDid.uri))?.didDocument).toEqual(agentDid.document);
+    const retainedStatus = await agent.identity.getRetainedDwnEndpointStatus({ didUri: agentDid.uri });
+    expect(retainedStatus?.didUri).toBe(agentDid.uri);
+    expect(retainedStatus?.status).toBe('service-missing');
+    expect(fetch.callCount).toBe(fetchCallsBeforeRetained);
   });
 
   it('preserves a missing-DID dependency failure through cold key and grant reads, then recovers', async () => {
@@ -84,6 +90,8 @@ describe('local DWN reads during a DID resolution outage', () => {
 
     sinon.stub(globalThis, 'fetch').rejects(new TypeError('gateway unreachable'));
     agent = await EnboxUserAgent.create({ agentDid, dataPath });
+    expect(await agent.did.getRetainedResolution(agentDid.uri)).toBeUndefined();
+    expect(await agent.identity.getRetainedDwnEndpointStatus({ didUri: agentDid.uri })).toBeUndefined();
     const keyFailure = await agent.keyManager.getPublicKey({ keyUri }).catch((error: unknown) => error);
     const grantFailure = await agent.permissions.fetchGrants({
       author : agentDid.uri,
@@ -98,5 +106,21 @@ describe('local DWN reads during a DID resolution outage', () => {
     expect(isDidResolutionUnavailableError(signingMethodFailure)).toBe(true);
     await agent.did.cacheResolution(agentDid.uri, resolution);
     expect(await agent.keyManager.getPublicKey({ keyUri })).toEqual(publicKey);
+  });
+
+  it('returns undefined from getRetainedResolution when the resolver cache does not implement getRetained', async () => {
+    const cacheWithoutRetained: DidResolverCache = {
+      clear  : async (): Promise<void> => {},
+      close  : async (): Promise<void> => {},
+      delete : async (): Promise<void> => {},
+      get    : async (): Promise<undefined> => undefined,
+      set    : async (): Promise<void> => {},
+    };
+    const didApi = new AgentDidApi({
+      didMethods    : [DidJwk],
+      resolverCache : cacheWithoutRetained,
+    });
+
+    expect(await didApi.getRetainedResolution('did:dht:unretained')).toBeUndefined();
   });
 });
