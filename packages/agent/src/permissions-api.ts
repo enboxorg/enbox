@@ -144,6 +144,7 @@ export class AgentPermissionsApi implements PermissionsApi {
       grantor      : connectedDid,
       grantee      : delegateDid,
       checkRevoked : true,
+      activeOnly   : true,
     }).then((grants): PermissionGrantEntry[] => {
       if (this._permissionCacheGeneration === generation) {
         this._permissionCatalogCache.set(catalogKey, grants);
@@ -182,6 +183,7 @@ export class AgentPermissionsApi implements PermissionsApi {
     module,
     remote = false,
     checkRevoked = false,
+    activeOnly = false,
   }: FetchPermissionsParams): Promise<PermissionGrantEntry[]> {
     const cacheGeneration = this._permissionCacheGeneration;
 
@@ -213,20 +215,44 @@ export class AgentPermissionsApi implements PermissionsApi {
     // Revocation filtering is opt-in and intentionally checks one grant at a
     // time. If this becomes hot, add a dedicated revocation-read path instead
     // of broad nested queries or parentId set filters.
-    const revokedGrantIds = checkRevoked
-      ? await this.fetchRevokedGrantIds({ author, target, grantMessages, remote, cacheGeneration })
-      : new Set<string>();
+    if (!activeOnly) {
+      const revokedGrantIds = checkRevoked
+        ? await this.fetchRevokedGrantIds({ author, target, grantMessages, remote, cacheGeneration })
+        : new Set<string>();
 
-    const grants:PermissionGrantEntry[] = [];
-    for (const entry of grantMessages) {
-      if (revokedGrantIds.has(entry.recordId)) {
-        continue;
+      const grants: PermissionGrantEntry[] = [];
+      for (const entry of grantMessages) {
+        if (revokedGrantIds.has(entry.recordId)) {
+          continue;
+        }
+        const grant = DwnPermissionGrant.parse(entry);
+        grants.push({ grant, message: entry });
       }
-      const grant = DwnPermissionGrant.parse(entry);
-      grants.push({ grant, message: entry });
+
+      return grants;
     }
 
-    return grants;
+    const now = Time.getCurrentTimestamp();
+    const candidateEntries: PermissionGrantEntry[] = [];
+    for (const entry of grantMessages) {
+      const grant = DwnPermissionGrant.parse(entry);
+      if (!AgentPermissionsApi.isGrantActive(grant, now)) {
+        continue;
+      }
+      candidateEntries.push({ grant, message: entry });
+    }
+
+    const revokedGrantIds = checkRevoked
+      ? await this.fetchRevokedGrantIds({
+        author,
+        target,
+        grantMessages: candidateEntries.map(({ message }): DwnDataEncodedRecordsWriteMessage => message),
+        remote,
+        cacheGeneration,
+      })
+      : new Set<string>();
+
+    return candidateEntries.filter(({ message }): boolean => !revokedGrantIds.has(message.recordId));
   }
 
   /**
