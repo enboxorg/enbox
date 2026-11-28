@@ -24,6 +24,20 @@ import {
   restoreLocalDwnEndpoint,
 } from '../src/discovery.js';
 
+function waitForAbort(signal: AbortSignal | null | undefined, onAbort?: () => void): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    const fail = (): void => {
+      onAbort?.();
+      reject(signal?.reason ?? new DOMException('Timed out', 'TimeoutError'));
+    };
+    if (signal?.aborted) {
+      fail();
+    } else {
+      signal?.addEventListener('abort', fail, { once: true });
+    }
+  });
+}
+
 const localNodeInfo: ServerInfo = {
   localNode    : true,
   localPairing : {
@@ -223,9 +237,7 @@ describe('local-node pairing storage', () => {
     const hangingFetch = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const signal = init?.signal as AbortSignal;
       receivedSignals.push(signal);
-      return new Promise<Response>((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-      });
+      return waitForAbort(signal);
     };
 
     const result = await discoverLocalDwnPairing(storage, hangingFetch, 25);
@@ -248,18 +260,14 @@ describe('local-node pairing storage', () => {
       if (url.toString().endsWith('/info')) {
         return jsonResponse(localNodeInfo);
       }
-      const signal = init?.signal as AbortSignal;
-      return new Promise<Response>((_resolve, reject) => {
-        signal.addEventListener('abort', () => {
-          statusAborted = true;
-          reject(signal.reason);
-        }, { once: true });
-      });
+      return waitForAbort(init?.signal, () => { statusAborted = true; });
     };
 
     const statusResult = await discoverLocalDwnPairing(storage, statusHangingFetch, 25);
     expect(statusResult).toBeUndefined();
     expect(statusAborted).toBe(true);
+    expect(await readLocalDwnPairingRecord(storage)).toEqual(pairingRecord);
+    expect(await readLocalDwnEjectionRecord(storage)).toBeUndefined();
   });
 
   test('preserves stored pairing when probeTimeoutMs fires while reading response.json()', async () => {
@@ -269,14 +277,7 @@ describe('local-node pairing storage', () => {
     const stalledBodyResponse = (signal: AbortSignal | null | undefined): Response => ({
       ok     : true,
       status : 200,
-      json   : (): Promise<unknown> => new Promise((_resolve, reject) => {
-        const fail = (): void => { reject(signal?.reason ?? new DOMException('Timed out', 'TimeoutError')); };
-        if (signal?.aborted) {
-          fail();
-        } else {
-          signal?.addEventListener('abort', fail, { once: true });
-        }
-      }),
+      json   : (): Promise<unknown> => waitForAbort(signal),
     }) as unknown as Response;
 
     // 1. Timeout during /info body read preserves the pairing record.
@@ -310,6 +311,7 @@ describe('local-node pairing storage', () => {
     for (const badTimeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       await expect(discoverLocalDwnPairing(storage, undefined, badTimeout)).rejects.toThrow(RangeError);
       await expect(probeLocalDwn({ storage, probeTimeoutMs: badTimeout })).rejects.toThrow(RangeError);
+      await expect(requestLocalDwnPairing({ storage, probeTimeoutMs: badTimeout })).rejects.toThrow(RangeError);
     }
     expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).not.toBeNull();
   });
@@ -552,9 +554,7 @@ describe('probeLocalDwn', () => {
       fetch: async (_url, init): Promise<Response> => {
         const signal = init?.signal as AbortSignal;
         receivedSignals.push(signal);
-        return new Promise<Response>((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-        });
+        return waitForAbort(signal);
       },
       portCandidates : [55500],
       probeTimeoutMs : 25,
