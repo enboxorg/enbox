@@ -697,6 +697,7 @@ describe('restoreSession', () => {
         target       : 'did:dht:testuser123',
         grantee      : 'did:dht:testuser123',
         checkRevoked : true,
+        activeOnly   : true,
       }]);
       expect(registerCalls).toHaveLength(1);
       expect(registerCalls[0].options.modules).toContain('https://modules.example/valid');

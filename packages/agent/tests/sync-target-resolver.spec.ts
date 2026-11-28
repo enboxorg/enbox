@@ -281,6 +281,7 @@ describe('SyncTargetResolver', () => {
         grantor      : did,
         grantee      : delegateDid,
         checkRevoked : true,
+        activeOnly   : true,
       })).toBe(true);
     });
 

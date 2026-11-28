@@ -337,6 +337,7 @@ describe('deriveActiveSyncScope', () => {
       target       : 'did:delegate',
       grantee      : 'did:delegate',
       checkRevoked : true,
+      activeOnly   : true,
     });
   });
 

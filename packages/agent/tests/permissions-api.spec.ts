@@ -818,6 +818,22 @@ describe('AgentPermissionsApi', () => {
           module    : moduleUri,
         },
       });
+      const revokedActiveGrant = await testHarness.agent.permissions.createGrant({
+        store       : true,
+        author      : aliceDid.uri,
+        grantedTo   : aliceDid.uri,
+        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        scope       : {
+          interface : DwnInterfaceName.Records,
+          method    : DwnMethodName.Delete,
+          module    : moduleUri,
+        },
+      });
+      await testHarness.agent.permissions.createRevocation({
+        store  : true,
+        author : aliceDid.uri,
+        grant  : revokedActiveGrant.grant,
+      });
       await testHarness.agent.permissions.clear();
 
       const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
@@ -834,10 +850,14 @@ describe('AgentPermissionsApi', () => {
 
       const revocationReadParents = processDwnRequestSpy.mock.calls
         .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
-        .map(([request]) => (request.messageParams.filter as Record<string, unknown>).parentId);
-      expect(revocationReadParents).toEqual([activeGrant.message.recordId]);
+        .map(([request]) => (request.messageParams.filter as Record<string, unknown>).parentId)
+        .sort();
+      expect(revocationReadParents).toEqual([
+        activeGrant.message.recordId,
+        revokedActiveGrant.message.recordId,
+      ].sort());
 
-      // activeOnly: true with checkRevoked: false also excludes expired grants without revocation reads.
+      // activeOnly: true with checkRevoked: false excludes expired grants without revocation reads.
       processDwnRequestSpy.mockClear();
       const activeWithoutRevocationCheck = await testHarness.agent.permissions.fetchGrants({
         author       : aliceDid.uri,
@@ -846,8 +866,10 @@ describe('AgentPermissionsApi', () => {
         checkRevoked : false,
         activeOnly   : true,
       });
-      expect(activeWithoutRevocationCheck).toHaveLength(1);
-      expect(activeWithoutRevocationCheck[0].message.recordId).toBe(activeGrant.message.recordId);
+      expect(activeWithoutRevocationCheck.map((entry) => entry.message.recordId).sort()).toEqual([
+        activeGrant.message.recordId,
+        revokedActiveGrant.message.recordId,
+      ].sort());
       expect(processDwnRequestSpy).toHaveBeenCalledTimes(1);
 
       // Default behavior (activeOnly: false) still includes non-revoked expired grants.
