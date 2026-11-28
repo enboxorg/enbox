@@ -37,9 +37,9 @@ import { DwnInterfaceName, DwnMethodName, Modules, PermissionsModule, Time } fro
 
 import { AgentPermissionsApi } from './permissions-api.js';
 import { createGrantKeyRecordsForGrants } from './dwn-encryption.js';
+import { mapConcurrent } from './utils.js';
 import { assertVerifiedConnectRequesterOrigin, prepareConnectAuthenticationProof } from './connect-authentication.js';
 import { isMessagesPermissionScope, isRecordPermissionScope } from './dwn-api.js';
-import { mapConcurrent, mapConcurrentSettled } from './utils.js';
 import { prepareModule, resolveConnectModulePreparationPlan } from './connect-module-preparation.js';
 import { resolveConnectDelegateEncryptionKeyInfo, resolveConnectDwnEndpointUrls } from './connect-network.js';
 
@@ -48,10 +48,9 @@ import { resolveConnectDelegateEncryptionKeyInfo, resolveConnectDwnEndpointUrls 
 // ---------------------------------------------------------------------------
 
 /**
- * Maximum fan-out concurrency used by the connect approval ceremony.
- * Permission grants use this as the endpoint concurrency while sending
- * sequentially within each endpoint; the other fan-outs use it as their
- * total request concurrency.
+ * Maximum concurrent endpoints (or local grant creations) used by the connect
+ * approval ceremony. Every remote fan-out sends sequentially per endpoint so a
+ * hanging endpoint holds at most one slot and never starves healthy endpoints.
  */
 const CONNECT_FANOUT_CONCURRENCY = 8;
 
@@ -78,6 +77,21 @@ const CONNECT_REQUEST_TIMEOUT_MS = 10_000;
  * extending approval time once individual requests have started succeeding.
  */
 const CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS = 20_000;
+
+/**
+ * Tail grace window applied after every item in a multi-endpoint fan-out has
+ * been accepted by at least one endpoint. Healthy secondary endpoints finish
+ * within this window, while a hung or cold endpoint is aborted promptly instead
+ * of stalling interactive approval for the full per-request or batch budget.
+ */
+const CONNECT_QUORUM_TAIL_GRACE_MS = 1_500;
+
+/**
+ * Whole-batch budget for best-effort revocation-grant fan-out. Revocation
+ * grants are stored locally and replicated by live sync, so slow endpoints
+ * should not hold approval open for the full required delivery budget.
+ */
+const CONNECT_REVOCATION_FANOUT_TIMEOUT_MS = 5_000;
 
 /** Log namespace used for wallet-side connect critical-path timings. */
 const CONNECT_PERF_LOG_PREFIX = '[connect.perf]';
@@ -512,77 +526,24 @@ export async function createPermissionGrants(
   // agent contacts first.
   logger.log(`Sending ${permissionGrants.length} permission grants to ${dwnEndpointUrls.length} DWN endpoint(s)...`);
 
-  const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);
-  const outcomesByEndpoint = await mapConcurrent(
+  const { outcomes, acceptedPerItem } = await fanOutRecordsPerEndpoint({
+    agent,
+    targetDid        : selectedDid,
+    records          : prepareDwnRecords(permissionGrants.map((grant) => grant.message)),
     dwnEndpointUrls,
-    CONNECT_FANOUT_CONCURRENCY,
-    async (dwnUrl) => {
-      const outcomes: PermissionGrantSendOutcome[] = [];
+    batchTimeoutMs   : CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS,
+    requestTimeoutMs : CONNECT_REQUEST_TIMEOUT_MS,
+    itemLabel        : 'permission grant',
+    collectSkipped   : true,
+  });
 
-      // SQL-backed DWNs serialize same-tenant writes to assign replication
-      // positions. Keep one active write per endpoint so requests do not
-      // consume their timeout while queued behind sibling grants.
-      for (let grantIndex = 0; grantIndex < permissionGrants.length; grantIndex++) {
-        if (batchSignal.aborted) {
-          appendSkippedGrantOutcomes(outcomes, grantIndex, permissionGrants.length, dwnUrl, 'the grant batch timed out');
-          break;
-        }
-
-        const { encodedData, ...rawMessage } = permissionGrants[grantIndex].message;
-        const data = Convert.base64Url(encodedData).toUint8Array();
-        const requestSignal = AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS);
-        try {
-          const reply = await agent.rpc.sendDwnRequest({
-            dwnUrl,
-            targetDid : selectedDid,
-            message   : rawMessage,
-            data      : new Blob([data as BlobPart]),
-            signal    : AbortSignal.any([batchSignal, requestSignal]),
-          });
-          const accepted = reply.status.code === 202 || reply.status.code === 409;
-          outcomes.push({
-            accepted,
-            detail: `returned ${reply.status.code}: ${reply.status.detail}`,
-            dwnUrl,
-            grantIndex,
-          });
-        } catch (reason) {
-          const requestTimeoutDetail = requestSignal.aborted
-            ? `permission grant request timed out after ${CONNECT_REQUEST_TIMEOUT_MS}ms`
-            : errorDetail(reason);
-          const detail = batchSignal.aborted
-            ? `permission grant batch timed out after ${CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS}ms`
-            : requestTimeoutDetail;
-          outcomes.push({
-            accepted : false,
-            detail   : `failed: ${detail}`,
-            dwnUrl,
-            grantIndex,
-          });
-        }
-      }
-
-      return outcomes;
-    },
-  );
-  const outcomes = outcomesByEndpoint.flat();
-
-  // Aggregate results back per grant: each grant must have at least one
-  // endpoint accept it (status 202 or 409 — already-stored is acceptable).
-  const successPerGrant = new Array<boolean>(permissionGrants.length).fill(false);
-  for (const outcome of outcomes) {
-    if (outcome.accepted) {
-      successPerGrant[outcome.grantIndex] = true;
-      continue;
-    }
-    logger.error(`Grant send to ${outcome.dwnUrl} ${outcome.detail}`);
-  }
+  logNonAcceptedOutcomes(outcomes, 'Grant');
 
   for (let g = 0; g < permissionGrants.length; g++) {
-    if (!successPerGrant[g]) {
+    if (!acceptedPerItem[g]) {
       const scope = describePermissionScope(scopes[g]);
       const failures = outcomes
-        .filter((outcome) => outcome.grantIndex === g && !outcome.accepted)
+        .filter((outcome) => outcome.itemIndex === g && !outcome.accepted)
         .map((outcome) => `${outcome.dwnUrl} ${outcome.detail}`);
       const displayedFailures = failures.slice(0, 3).join('; ');
       const remainingFailureCount = failures.length - 3;
@@ -598,33 +559,329 @@ export async function createPermissionGrants(
   return permissionGrants.map((g) => g.message);
 }
 
-type PermissionGrantSendOutcome = {
-  accepted : boolean;
-  detail : string;
-  dwnUrl : string;
-  grantIndex : number;
+type PreparedDwnRecord = {
+  rawMessage: Omit<DwnDataEncodedRecordsWriteMessage, 'encodedData'>;
+  data: Uint8Array;
 };
 
-/** A single revocation-grant delivery to one owner DWN endpoint. */
-type RevocationSendTask = {
-  revRawMessage : Omit<DwnDataEncodedRecordsWriteMessage, 'encodedData'>;
-  revData : Uint8Array;
-  dwnUrl : string;
+type RecordSendOutcome = {
+  accepted: boolean;
+  detail: string;
+  dwnUrl: string;
+  itemIndex: number;
+  quorumSkipped?: boolean;
 };
 
-function appendSkippedGrantOutcomes(
-  outcomes: PermissionGrantSendOutcome[],
+type QuorumTailController = {
+  readonly signal: AbortSignal;
+  markAccepted(itemIndex: number): void;
+  dispose(): void;
+};
+
+function prepareDwnRecords(records: readonly DwnDataEncodedRecordsWriteMessage[]): PreparedDwnRecord[] {
+  return records.map(({ encodedData, ...rawMessage }) => ({
+    rawMessage,
+    data: Convert.base64Url(encodedData).toUint8Array(),
+  }));
+}
+
+function logNonAcceptedOutcomes(outcomes: readonly RecordSendOutcome[], label: string): void {
+  for (const outcome of outcomes) {
+    if (outcome.accepted) {
+      continue;
+    }
+    if (outcome.quorumSkipped) {
+      logger.log(`${label} send to ${outcome.dwnUrl} ${outcome.detail}`);
+    } else {
+      logger.error(`${label} send to ${outcome.dwnUrl} ${outcome.detail}`);
+    }
+  }
+}
+
+function classifyRecordSendFailure({
+  reason,
+  batchSignal,
+  batchTimeoutMs,
+  requestSignal,
+  requestTimeoutMs,
+  quorumTail,
+  itemLabel,
+}: {
+  reason: unknown;
+  batchSignal: AbortSignal;
+  batchTimeoutMs: number;
+  requestSignal?: AbortSignal;
+  requestTimeoutMs?: number;
+  quorumTail: QuorumTailController;
+  itemLabel: string;
+}): { detail: string; quorumSkipped: boolean } {
+  if (batchSignal.aborted) {
+    return {
+      detail        : `${itemLabel} batch timed out after ${batchTimeoutMs}ms`,
+      quorumSkipped : false,
+    };
+  }
+  if (quorumTail.signal.aborted && reason === quorumTail.signal.reason) {
+    return {
+      detail        : `secondary endpoint skipped after ${CONNECT_QUORUM_TAIL_GRACE_MS}ms quorum tail grace`,
+      quorumSkipped : true,
+    };
+  }
+  if (requestSignal?.aborted && requestTimeoutMs !== undefined) {
+    return {
+      detail        : `${itemLabel} request timed out after ${requestTimeoutMs}ms`,
+      quorumSkipped : false,
+    };
+  }
+  return { detail: errorDetail(reason), quorumSkipped: false };
+}
+
+async function sendOneRecordToEndpoint({
+  agent,
+  targetDid,
+  dwnUrl,
+  record,
+  itemIndex,
+  batchSignal,
+  batchTimeoutMs,
+  requestTimeoutMs,
+  sharedSignal,
+  quorumTail,
+  itemLabel,
+}: {
+  agent: EnboxPlatformAgent;
+  targetDid: string;
+  dwnUrl: string;
+  record: PreparedDwnRecord;
+  itemIndex: number;
+  batchSignal: AbortSignal;
+  batchTimeoutMs: number;
+  requestTimeoutMs?: number;
+  sharedSignal?: AbortSignal;
+  quorumTail: QuorumTailController;
+  itemLabel: string;
+}): Promise<RecordSendOutcome> {
+  const requestSignal = requestTimeoutMs === undefined ? undefined : AbortSignal.timeout(requestTimeoutMs);
+  const signal = sharedSignal ?? AbortSignal.any([batchSignal, requestSignal!, quorumTail.signal]);
+  try {
+    const reply = await agent.rpc.sendDwnRequest({
+      dwnUrl,
+      targetDid,
+      message : record.rawMessage,
+      data    : new Blob([record.data as BlobPart]),
+      signal,
+    });
+    const accepted = reply.status.code === 202 || reply.status.code === 409;
+    if (accepted) {
+      quorumTail.markAccepted(itemIndex);
+    }
+    return {
+      accepted,
+      detail: `returned ${reply.status.code}: ${reply.status.detail}`,
+      dwnUrl,
+      itemIndex,
+    };
+  } catch (reason) {
+    const failure = classifyRecordSendFailure({
+      reason,
+      batchSignal,
+      batchTimeoutMs,
+      requestSignal,
+      requestTimeoutMs,
+      quorumTail,
+      itemLabel,
+    });
+    return {
+      accepted      : false,
+      detail        : `failed: ${failure.detail}`,
+      dwnUrl,
+      itemIndex,
+      quorumSkipped : failure.quorumSkipped,
+    };
+  }
+}
+
+async function sendRecordsToEndpoint({
+  agent,
+  targetDid,
+  dwnUrl,
+  records,
+  batchSignal,
+  batchTimeoutMs,
+  requestTimeoutMs,
+  quorumTail,
+  itemLabel,
+  collectSkipped,
+}: {
+  agent: EnboxPlatformAgent;
+  targetDid: string;
+  dwnUrl: string;
+  records: readonly PreparedDwnRecord[];
+  batchSignal: AbortSignal;
+  batchTimeoutMs: number;
+  requestTimeoutMs?: number;
+  quorumTail: QuorumTailController;
+  itemLabel: string;
+  collectSkipped: boolean;
+}): Promise<RecordSendOutcome[]> {
+  const outcomes: RecordSendOutcome[] = [];
+  const sharedSignal = requestTimeoutMs === undefined
+    ? AbortSignal.any([batchSignal, quorumTail.signal])
+    : undefined;
+
+  // SQL-backed DWNs serialize same-tenant writes to assign replication
+  // positions. Keep one active write per endpoint so requests do not
+  // consume their timeout while queued behind sibling records, and a hanging
+  // endpoint holds at most one slot.
+  for (let itemIndex = 0; itemIndex < records.length; itemIndex++) {
+    if (batchSignal.aborted || quorumTail.signal.aborted) {
+      if (collectSkipped) {
+        appendSkippedOutcomes(outcomes, itemIndex, records.length, dwnUrl, !batchSignal.aborted, itemLabel);
+      }
+      break;
+    }
+
+    outcomes.push(await sendOneRecordToEndpoint({ // NOSONAR: S9382 — serialize same-tenant writes per endpoint
+      agent,
+      targetDid,
+      dwnUrl,
+      record: records[itemIndex],
+      itemIndex,
+      batchSignal,
+      batchTimeoutMs,
+      requestTimeoutMs,
+      sharedSignal,
+      quorumTail,
+      itemLabel,
+    }));
+  }
+
+  return outcomes;
+}
+
+/**
+ * Fans out pre-decoded DWN records across `dwnEndpointUrls` sequentially per
+ * endpoint (bounded in parallel across endpoints), applying a batch deadline
+ * and a short quorum tail grace once every record lands on at least one DWN.
+ */
+async function fanOutRecordsPerEndpoint({
+  agent,
+  targetDid,
+  records,
+  dwnEndpointUrls,
+  batchTimeoutMs,
+  requestTimeoutMs,
+  itemLabel,
+  collectSkipped,
+}: {
+  agent: EnboxPlatformAgent;
+  targetDid: string;
+  records: readonly PreparedDwnRecord[];
+  dwnEndpointUrls: readonly string[];
+  batchTimeoutMs: number;
+  requestTimeoutMs?: number;
+  itemLabel: string;
+  collectSkipped: boolean;
+}): Promise<{ outcomes: RecordSendOutcome[]; acceptedPerItem: boolean[] }> {
+  const acceptedPerItem = new Array<boolean>(records.length).fill(false);
+  if (records.length === 0 || dwnEndpointUrls.length === 0) {
+    return { outcomes: [], acceptedPerItem };
+  }
+
+  const batchSignal = AbortSignal.timeout(batchTimeoutMs);
+  const quorumTail = createQuorumTailController(records.length, dwnEndpointUrls.length);
+  let outcomesByEndpoint: RecordSendOutcome[][];
+  try {
+    outcomesByEndpoint = await mapConcurrent(
+      dwnEndpointUrls,
+      CONNECT_FANOUT_CONCURRENCY,
+      (dwnUrl): Promise<RecordSendOutcome[]> => sendRecordsToEndpoint({
+        agent,
+        targetDid,
+        dwnUrl,
+        records,
+        batchSignal,
+        batchTimeoutMs,
+        requestTimeoutMs,
+        quorumTail,
+        itemLabel,
+        collectSkipped,
+      }),
+    );
+  } finally {
+    quorumTail.dispose();
+  }
+
+  const outcomes = outcomesByEndpoint.flat();
+  for (const outcome of outcomes) {
+    if (outcome.accepted) {
+      acceptedPerItem[outcome.itemIndex] = true;
+    }
+  }
+  return { outcomes, acceptedPerItem };
+}
+
+/**
+ * Coordinates a bounded grace period once every item in a multi-endpoint
+ * fan-out has been accepted by at least one endpoint.
+ */
+function createQuorumTailController(
+  itemCount: number,
+  endpointCount: number,
+): QuorumTailController {
+  const controller = new AbortController();
+  const accepted = new Array<boolean>(itemCount).fill(false);
+  let acceptedCount = 0;
+  let disposed = false;
+  let tailTimer: ReturnType<typeof setTimeout> | undefined;
+
+  return {
+    signal: controller.signal,
+    markAccepted(itemIndex: number): void {
+      if (disposed || endpointCount <= 1 || accepted[itemIndex]) {
+        return;
+      }
+      accepted[itemIndex] = true;
+      acceptedCount++;
+      if (acceptedCount === itemCount && tailTimer === undefined) {
+        tailTimer = setTimeout((): void => {
+          controller.abort(
+            new DOMException(
+              `Secondary endpoint fan-out exceeded ${CONNECT_QUORUM_TAIL_GRACE_MS}ms tail grace after quorum`,
+              'TimeoutError',
+            ),
+          );
+        }, CONNECT_QUORUM_TAIL_GRACE_MS);
+      }
+    },
+    dispose(): void {
+      disposed = true;
+      if (tailTimer !== undefined) {
+        clearTimeout(tailTimer);
+        tailTimer = undefined;
+      }
+    },
+  };
+}
+
+function appendSkippedOutcomes(
+  outcomes: RecordSendOutcome[],
   startIndex: number,
-  grantCount: number,
+  itemCount: number,
   dwnUrl: string,
-  reason: string,
+  quorumSkipped: boolean,
+  itemLabel: string,
 ): void {
-  for (let grantIndex = startIndex; grantIndex < grantCount; grantIndex++) {
+  const reason = quorumSkipped
+    ? `quorum was reached and the ${CONNECT_QUORUM_TAIL_GRACE_MS}ms secondary tail grace elapsed`
+    : `the ${itemLabel} batch timed out`;
+  for (let itemIndex = startIndex; itemIndex < itemCount; itemIndex++) {
     outcomes.push({
       accepted : false,
       detail   : `was not attempted because ${reason}`,
       dwnUrl,
-      grantIndex,
+      itemIndex,
+      quorumSkipped,
     });
   }
 }
@@ -649,52 +906,21 @@ async function fanOutDataEncodedRecords(
   records: DwnDataEncodedRecordsWriteMessage[],
   dwnEndpointUrls: readonly string[],
 ): Promise<void> {
-  if (records.length === 0) {
-    return;
-  }
-
-  const sendTasks = records.flatMap((record, recordIndex) => {
-    const { encodedData, ...rawMessage } = record;
-    const data = Convert.base64Url(encodedData).toUint8Array();
-    return dwnEndpointUrls.map((dwnUrl) => ({ recordIndex, dwnUrl, rawMessage, data }));
+  const { outcomes, acceptedPerItem } = await fanOutRecordsPerEndpoint({
+    agent,
+    targetDid        : ownerDid,
+    records          : prepareDwnRecords(records),
+    dwnEndpointUrls,
+    batchTimeoutMs   : CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS,
+    requestTimeoutMs : CONNECT_REQUEST_TIMEOUT_MS,
+    itemLabel        : 'record',
+    collectSkipped   : false,
   });
 
-  const settled = await mapConcurrentSettled(
-    sendTasks,
-    CONNECT_FANOUT_CONCURRENCY,
-    async ({ recordIndex, dwnUrl, rawMessage, data }) => {
-      const reply = await agent.rpc.sendDwnRequest({
-        dwnUrl,
-        targetDid : ownerDid,
-        message   : rawMessage,
-        data      : new Blob([data as BlobPart]),
-        signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
-      });
-      return { recordIndex, dwnUrl, reply };
-    },
-  );
+  logNonAcceptedOutcomes(outcomes, 'Record');
 
-  const successPerRecord = new Array<boolean>(records.length).fill(false);
-  for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
-    if (result.status === 'rejected') {
-      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      logger.error(`Record send to ${sendTasks[i].dwnUrl} failed: ${reason}`);
-      continue;
-    }
-
-    const { recordIndex, dwnUrl, reply } = result.value;
-    if (reply.status.code === 202 || reply.status.code === 409) {
-      successPerRecord[recordIndex] = true;
-    } else {
-      logger.error(`Record send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
-    }
-  }
-
-  for (const success of successPerRecord) {
-    if (!success) {
-      throw new Error('Could not send grantKey record to any DWN endpoint.');
-    }
+  if (acceptedPerItem.some((accepted) => !accepted)) {
+    throw new Error('Could not send grantKey record to any DWN endpoint.');
   }
 }
 
@@ -971,49 +1197,34 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       ),
     );
 
-    // Build the revocation mappings and the per-endpoint send tasks in one
-    // pass. Each revocation grant fans out to every owner DWN endpoint.
-    const sessionRevocations: SessionRevocation[] = [];
-    const revSendTasks: RevocationSendTask[] = [];
-    for (const { grantMessage, revGrant } of revGrantResults) {
-      sessionRevocations.push({
-        grantId           : grantMessage.recordId,
-        revocationGrantId : revGrant.message.recordId,
-      });
+    const sessionRevocations: SessionRevocation[] = revGrantResults.map(({ grantMessage, revGrant }) => ({
+      grantId           : grantMessage.recordId,
+      revocationGrantId : revGrant.message.recordId,
+    }));
+    const revocationMessages = revGrantResults.map(({ revGrant }) => revGrant.message);
 
-      const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
-      const revData = Uint8Array.from(Convert.base64Url(revEncoded).toUint8Array());
-      for (const dwnUrl of dwnEndpointUrls) {
-        revSendTasks.push({ revRawMessage, revData, dwnUrl });
-      }
-    }
-
-    // Fan out every revocation grant to every owner DWN endpoint with a single
-    // global concurrency cap so that (grants × endpoints) cannot blow up. This
-    // is best-effort (sync delivers eventually) so individual failures are
-    // tolerated by `mapConcurrentSettled`.
-    if (revSendTasks.length > 0) {
+    // Best-effort revocation fan-out (sync delivers eventually), bounded by
+    // the 5s batch deadline and quorum tail grace once every grant lands once.
+    if (revocationMessages.length > 0 && dwnEndpointUrls.length > 0) {
+      const totalSends = revocationMessages.length * dwnEndpointUrls.length;
       await timed(
-        `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${dwnEndpointUrls.length})`,
-        () => mapConcurrentSettled(
-          revSendTasks,
-          CONNECT_FANOUT_CONCURRENCY,
-          ({ revRawMessage, revData, dwnUrl }) =>
-            agent.rpc.sendDwnRequest({
-              dwnUrl,
-              targetDid : providerDid,
-              message   : revRawMessage,
-              data      : new Blob([revData as BlobPart]),
-              signal    : AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
-            }),
-        ),
+        `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${totalSends}, endpoints=${dwnEndpointUrls.length})`,
+        () => fanOutRecordsPerEndpoint({
+          agent,
+          targetDid      : providerDid,
+          records        : prepareDwnRecords(revocationMessages),
+          dwnEndpointUrls,
+          batchTimeoutMs : CONNECT_REVOCATION_FANOUT_TIMEOUT_MS,
+          itemLabel      : 'revocation grant',
+          collectSkipped : false,
+        }),
       );
     }
 
     return {
       delegateDid    : grantedDelegateDid,
       delegatePortableDid,
-      delegateGrants : [...createdGrants, ...revGrantResults.map(({ revGrant }) => revGrant.message)],
+      delegateGrants : [...createdGrants, ...revocationMessages],
       sessionRevocations,
       responseSigner,
       ...(authentication === undefined ? {} : { authenticationProof: await authentication.sign() }),
