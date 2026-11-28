@@ -4,7 +4,7 @@
  */
 
 import type { AgentSessionIdentity, ConnectionStatus, DwnModuleDefinition, EnboxUserAgent, GetConnectionStatusOptions, HdIdentityVault, LocalDwnStrategy, PortableIdentity, SyncDrainOptions, SyncDrainResult } from '@enbox/agent';
-import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult } from '@enbox/connect';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectVerificationSymbol } from '@enbox/connect';
 import type { DidDhtNetworkConfig, PortableDid } from '@enbox/dids';
 
 import type { PasswordProvider } from './password-provider.js';
@@ -22,6 +22,7 @@ export type {
   ConnectPermissionRequest,
   ConnectRequestType,
   ConnectResult,
+  ConnectVerificationSymbol,
   VerifiedConnectAuthentication,
 } from '@enbox/connect';
 export type { HdIdentityVault, IdentityVaultBackup, LocalDwnStrategy, PortableIdentity } from '@enbox/agent';
@@ -209,7 +210,7 @@ export type RegistrationOptions = {
  *
  * Different environments provide different implementations:
  * - **Browser**: popup + postMessage (`BrowserConnectHandler` from `@enbox/browser`)
- * - **Relay**: QR/PIN relay flow (`WalletConnect.initClient` from `@enbox/auth`)
+ * - **Relay**: QR/SAS relay flow (`WalletConnect.initClient` from `@enbox/auth`)
  * - **CLI**: terminal QR/URL + polling (custom handler)
  * - **Desktop**: native window management (custom handler)
  *
@@ -644,8 +645,11 @@ export interface WalletConnectOptions {
   /** Called when the wallet URI is ready (render as QR code). */
   onWalletUriReady: (uri: string) => Promise<void> | void;
 
-  /** Called to collect the PIN from the user. */
-  validatePin: () => Promise<string>;
+  /**
+   * Called once the wallet publishes its ephemeral handshake key and the 3
+   * pre-approval SAS verification symbols are ready to display.
+   */
+  onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
 
   /**
    * Milliseconds to wait for wallet approval.

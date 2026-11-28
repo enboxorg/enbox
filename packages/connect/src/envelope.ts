@@ -11,8 +11,9 @@
  *   channels. Content encryption is XChaCha20-Poly1305 (`enc: 'XC20P'`).
  * - **Response** (`typ: 'enbox-connect-res'`): `alg: 'ECDH-ES'` to the
  *   request's fresh X25519 `responseKey` with `apu = b64u(state)`; relay
- *   channels additionally strengthen the CEK with a user-verified PIN that
- *   never transits (wrong PIN fails closed with an AEAD tag failure).
+ *   channels additionally bind the wallet's pre-approval handshake key
+ *   (`walletEpk.x`) into `apv` so an untrusted relay cannot split-view a
+ *   different handshake key.
  *
  * Every open operation passes mandatory algorithm allow-lists to the JWE
  * engine and performs value checks (origin binding, aud, nonce echo, state
@@ -28,7 +29,7 @@ import type { ConnectAuthenticationResponse, ConnectPermissionRequest, ConnectRe
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
-import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
+import { CompactJwe, isX25519PublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 import { ModulesConfigure, validatePermissionScope } from '@enbox/dwn-sdk-js';
 
 import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
@@ -117,11 +118,6 @@ function requireOptionalConnectRequestType(payload: Record<string, unknown>, con
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Returns whether `value` is a public (no `d`) X25519 OKP JWK. */
-function isX25519PublicJwk(value: unknown): value is Jwk {
-  return isOkpPublicJwk(value) && value.crv === 'X25519';
 }
 
 /**
@@ -392,25 +388,24 @@ export async function openRequest({ jwe, decryption }: {
  * via ECDH-ES, binding the request state into the integrity-protected `apu`
  * header.
  *
- * On relay channels the caller passes the user-verified `pin`, which
- * strengthens the derived CEK through an HKDF wrapper without ever
- * transiting; a recipient using the wrong PIN fails closed with an AEAD
- * authentication tag failure.
+ * On relay channels the caller passes the wallet's pre-approval ephemeral
+ * `handshakeKey` (`walletEpk`), binding `walletEpk.x` into the integrity-protected
+ * `apv` header so an untrusted relay cannot substitute the handshake key.
  *
  * @param params - The sealing parameters.
  * @param params.response - The connect response payload.
  * @param params.signer - The wallet's response signing `did:jwk`.
  * @param params.responseKey - The request's X25519 public `responseKey` JWK.
- * @param params.pin - Optional PIN for relay channels.
+ * @param params.handshakeKey - Optional wallet ephemeral X25519 public handshake key (`walletEpk`).
  * @returns A promise resolving to the sealed response as a Compact JWE string.
  */
-export async function sealResponse({ response, signer, responseKey, pin }: {
+export async function sealResponse({ response, signer, responseKey, handshakeKey }: {
   response: ConnectResponse;
   signer: BearerDid;
   responseKey: Jwk;
-  pin?: string;
+  handshakeKey?: Jwk;
 }): Promise<string> {
-  return sealResponseEnvelope({ response, signer, responseKey, pin });
+  return sealResponseEnvelope({ response, signer, responseKey, handshakeKey });
 }
 
 /** Seal the authentication-only response with the same channel encryption, without delegation fields. */
@@ -418,21 +413,25 @@ export async function sealAuthenticationResponse(params: {
   response: ConnectAuthenticationResponse;
   signer: BearerDid;
   responseKey: Jwk;
-  pin?: string;
+  handshakeKey?: Jwk;
 }): Promise<string> {
   assertConnectAuthenticationResponse(params.response);
   return sealResponseEnvelope(params);
 }
 
-async function sealResponseEnvelope({ response: inputResponse, signer, responseKey: inputResponseKey, pin }: {
+async function sealResponseEnvelope({ response: inputResponse, signer, responseKey: inputResponseKey, handshakeKey }: {
   response: ConnectResponse | ConnectAuthenticationResponse;
   signer: BearerDid;
   responseKey: Jwk;
-  pin?: string;
+  handshakeKey?: Jwk;
 }): Promise<string> {
   // Capture the agreed recipient and response before asynchronous KMS signing.
   const response = structuredClone(inputResponse);
   const responseKey = structuredClone(inputResponseKey);
+  if (handshakeKey !== undefined) {
+    assertX25519PublicJwk(handshakeKey);
+  }
+  const apv = handshakeKey === undefined ? undefined : handshakeKey.x as string;
   const jwt = await signJwt({ did: signer, data: response });
 
   return await CompactJwe.encrypt({
@@ -440,34 +439,28 @@ async function sealResponseEnvelope({ response: inputResponse, signer, responseK
     protectedHeader : {
       alg : 'ECDH-ES',
       apu : Convert.string(response.state).toBase64Url(),
+      ...(apv === undefined ? {} : { apv }),
       cty : 'JWT',
       enc : 'XC20P',
       typ : CONNECT_RESPONSE_JWE_TYP,
     },
-    key: { mode: 'ecdh-es', peerPublicKey: responseKey, pin },
+    key: { mode: 'ecdh-es', peerPublicKey: responseKey },
   });
 }
 
 /**
  * Opens a sealed connect response on the app side: decrypts the Compact JWE
  * with the client's X25519 response key (ECDH-ES only, XC20P only), verifies
- * the envelope header and `apu` state binding, verifies the JWT signature,
- * asserts the payload shape, and then enforces the mandatory value checks —
- * `aud` must equal the client DID, the request `nonce` and `state` must be
- * echoed exactly, and the `iat`/`exp` window must cover the current time.
- *
- * @param params - The opening parameters.
- * @param params.jwe - The sealed response as a Compact JWE string.
- * @param params.recipientPrivateKey - The client's fresh X25519 private response key.
- * @param params.expected - The request values the response must echo.
- * @param params.pin - The user-entered PIN on relay channels; must match the sealing PIN.
- * @returns A promise resolving to the validated {@link ConnectResponse}.
+ * the envelope header and `apu` (plus optional `apv` handshake key) binding,
+ * verifies the JWT signature, asserts the payload shape, and then enforces
+ * the mandatory value checks — `aud` must equal the client DID, the request
+ * `nonce` and `state` must be echoed exactly, and the `iat`/`exp` window must
+ * cover the current time.
  */
 export type OpenConnectResponseOptions = {
   jwe: string;
   recipientPrivateKey: Jwk;
-  expected: { clientDid: string; nonce: string; state: string; providerDid?: string };
-  pin?: string;
+  expected: { clientDid: string; nonce: string; state: string; providerDid?: string; handshakeKey?: Jwk };
 };
 
 export async function openResponse(options: OpenConnectResponseOptions): Promise<ConnectResponse> {
@@ -485,10 +478,10 @@ export async function openAuthenticationResponse(options: OpenConnectResponseOpt
   return payload;
 }
 
-async function openResponseEnvelope({ jwe, recipientPrivateKey, expected, pin }: OpenConnectResponseOptions): Promise<Record<string, unknown>> {
+async function openResponseEnvelope({ jwe, recipientPrivateKey, expected }: OpenConnectResponseOptions): Promise<Record<string, unknown>> {
   const { plaintext, protectedHeader } = await CompactJwe.decrypt({
     jwe,
-    key     : { mode: 'ecdh-es', privateKey: recipientPrivateKey, pin },
+    key     : { mode: 'ecdh-es', privateKey: recipientPrivateKey },
     options : { allowedAlgs: ['ECDH-ES'], allowedEncs: ['XC20P'] },
   });
 
@@ -497,6 +490,15 @@ async function openResponseEnvelope({ jwe, recipientPrivateKey, expected, pin }:
   const expectedApu = Convert.string(expected.state).toBase64Url();
   if (protectedHeader.apu !== expectedApu) {
     throw new Error('Connect: response JWE "apu" header does not match the request state.');
+  }
+
+  if (expected.handshakeKey !== undefined) {
+    assertX25519PublicJwk(expected.handshakeKey);
+    if (protectedHeader.apv !== expected.handshakeKey.x) {
+      throw new Error('Connect: response JWE "apv" header does not match the verified handshake key.');
+    }
+  } else if (protectedHeader.apv !== undefined) {
+    throw new Error('Connect: response JWE unexpectedly carried an "apv" header.');
   }
 
   const jwt = Convert.uint8Array(plaintext).toString();

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'bun:test';
 import { jwkToThumbprintTestVectors } from '../fixtures/test-vectors/jwk.js';
 import {
   computeJwkThumbprint,
+  isCanonicalBase64Url32,
   isEcPrivateJwk,
   isEcPublicJwk,
   isOctPrivateJwk,
@@ -12,6 +13,8 @@ import {
   isOkpPublicJwk,
   isPrivateJwk,
   isPublicJwk,
+  isX25519PrivateJwk,
+  isX25519PublicJwk,
 } from '../../src/jose/jwk.js';
 
 describe('JWK', () => {
@@ -477,6 +480,31 @@ describe('JWK', () => {
     it('returns false for RSA key missing required properties', () => {
       const rsaMissingE = { kty: 'RSA', n: 'base64url-encoded-n-value' };
       expect(isPublicJwk(rsaMissingE)).toBe(false);
+    });
+  });
+
+  describe('X25519 JWK & canonical base64url32 guards', () => {
+    const validX = 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8';
+    const validD = 'vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ';
+
+    it('validates canonical 32-byte base64url strings', () => {
+      expect(isCanonicalBase64Url32(validX)).toBe(true);
+      expect(isCanonicalBase64Url32(`${validX.slice(0, 42)}B`)).toBe(false); // non-zero trailing bits
+      expect(isCanonicalBase64Url32('short')).toBe(false);
+      expect(isCanonicalBase64Url32(123)).toBe(false);
+    });
+
+    it('validates X25519 public and private JWKs', () => {
+      expect(isX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: validX })).toBe(true);
+      expect(isX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: validX, d: validD })).toBe(false);
+      expect(isX25519PublicJwk({ kty: 'OKP', crv: 'Ed25519', x: validX })).toBe(false);
+      expect(isX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'short' })).toBe(false);
+      expect(isX25519PublicJwk([])).toBe(false);
+
+      expect(isX25519PrivateJwk({ kty: 'OKP', crv: 'X25519', x: validX, d: validD })).toBe(true);
+      expect(isX25519PrivateJwk({ kty: 'OKP', crv: 'X25519', x: validX })).toBe(false);
+      expect(isX25519PrivateJwk({ kty: 'OKP', crv: 'X25519', x: validX, d: 'short' })).toBe(false);
+      expect(isX25519PrivateJwk({ kty: 'OKP', crv: 'Ed25519', x: validX, d: validD })).toBe(false);
     });
   });
 });

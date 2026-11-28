@@ -50,8 +50,16 @@ export * from '@enbox/auth/browser';
 // The connect kernel pieces wallet apps need alongside the popup
 // transports: opening/sealing envelopes and the deny token.
 
-export { CONNECT_DENIED_TOKEN, ConnectProvider } from '@enbox/connect';
-export type { ConnectApproval, ConnectRequest } from '@enbox/connect';
+export {
+  CONNECT_DENIED_TOKEN,
+  CONNECT_VERIFICATION_SYMBOL_COUNT,
+  CONNECT_VERIFICATION_SYMBOLS,
+  ConnectProvider,
+  createConnectVerificationHandshake,
+  formatVerificationSymbols,
+  postRelayHandshake,
+} from '@enbox/connect';
+export type { ConnectApproval, ConnectRequest, ConnectVerificationHandshake, ConnectVerificationSymbol } from '@enbox/connect';
 
 // ─── Browser-specific exports ───────────────────────────────────
 //
@@ -83,7 +91,7 @@ export { fetchWalletWellKnown, probeWalletWellKnown, WALLET_WELL_KNOWN_PATH } fr
 export type { WalletWellKnownDocument } from './ui/wallet-well-known.js';
 export { discoverWalletConnectServerUrl, runConnectModal } from './ui/connect-modal.js';
 export type { ConnectMethod, ConnectModalDeps, ConnectModalOptions, ConnectModalPalette, ConnectModalTheme } from './ui/connect-modal.js';
-export { MAX_PIN_ATTEMPTS, RelayConnectCancelledError, runRelayConnect } from './relay-connect-runner.js';
+export { RelayConnectCancelledError, runRelayConnect } from './relay-connect-runner.js';
 export type { RelayConnectOptions } from './relay-connect-runner.js';
 export { encodeQr, qrToSvg } from './ui/qr.js';
 export type { QrCode, QrSvgOptions } from './ui/qr.js';

@@ -185,15 +185,22 @@ describe('connect envelope', () => {
   });
 
   describe('assertX25519PublicJwk', () => {
-    it('should accept a public X25519 JWK', () => {
-      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc' })).not.toThrow();
+    const validX = 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8';
+
+    it('should accept a canonical public X25519 JWK', () => {
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: validX })).not.toThrow();
     });
 
-    it('should reject non-objects, non-X25519 keys, and private key material', () => {
+    it('should reject non-objects, non-X25519 keys, non-canonical coordinates, and private key material', () => {
       expect(() => assertX25519PublicJwk('not-a-jwk')).toThrow('X25519 public JWK');
-      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'Ed25519', x: 'abc' })).toThrow('X25519 public JWK');
-      expect(() => assertX25519PublicJwk({ kty: 'EC', crv: 'X25519', x: 'abc' })).toThrow('X25519 public JWK');
-      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc', d: 'secret' })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk(null)).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk([])).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'Ed25519', x: validX })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'EC', crv: 'X25519', x: validX })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc' })).toThrow('X25519 public JWK');
+      // Non-canonical trailing bits (last base64url char '9' is not in [AEIMQUYcgkosw048]).
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: `${validX.slice(0, 42)}9` })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: validX, d: validX })).toThrow('X25519 public JWK');
     });
   });
 
@@ -459,30 +466,31 @@ describe('connect envelope', () => {
   });
 
   describe('sealResponse / openResponse', () => {
-    it('should reject an expired owner proof after delayed PIN entry even while its envelope is still valid', async () => {
+    it('should reject an expired owner proof after a verification delay even while its envelope is still valid', async () => {
       const owner = await DidJwk.create();
       const delegate = await DidJwk.create();
       const { request, responsePrivateKey } = await createTestRequest({
         authentication: { version: 1, audience: 'https://identity.example', challenge: randomToken() },
       });
+      const walletHandshake = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: walletHandshake.x };
       const issuedAt = Math.floor(Date.now() / 1_000);
       const clock = spyOn(Date, 'now').mockReturnValue(issuedAt * 1_000);
-      const pin = '1234';
       try {
         for (const authenticationOnly of [false, true]) {
           clock.mockReturnValue(issuedAt * 1_000);
           const original: ConnectRequest = { ...request,
             ...(authenticationOnly ? { requestType: 'authenticate' } : { delegateDid: delegate.uri }) };
           const authenticationProof = await createOwnerAuthenticationProof({ request: original, owner });
-          const common = { request: original, providerDid: owner.uri, signer: delegate, pin };
+          const common = { request: original, providerDid: owner.uri, signer: delegate, handshakeKey };
           const jwe = authenticationOnly
             ? await ConnectProvider.sealAuthenticationResponse({ ...common, approval: { authenticationProof } })
             : await ConnectProvider.sealApprovedResponse({ ...common,
               approval: { authenticationProof, delegateDid: delegate.uri, delegateGrants: [], sessionRevocations: [] } });
           clock.mockReturnValue((issuedAt + 301) * 1_000);
           const opened = await (authenticationOnly ? openAuthenticationResponse : openResponse)({
-            jwe, pin, recipientPrivateKey : responsePrivateKey,
-            expected            : { clientDid: original.clientDid, nonce: original.nonce, state: original.state },
+            jwe, recipientPrivateKey : responsePrivateKey,
+            expected            : { clientDid: original.clientDid, nonce: original.nonce, state: original.state, handshakeKey },
           });
           expect(opened.exp).toBe(issuedAt + 600);
           let consumed = false;
@@ -534,7 +542,7 @@ describe('connect envelope', () => {
       }
     });
 
-    it('should round-trip a response without a PIN', async () => {
+    it('should round-trip a response without a handshake key', async () => {
       const { clientDid, request, responsePrivateKey } = await createTestRequest();
       const walletSigner = await DidJwk.create();
       const response = buildTestResponse(request);
@@ -547,6 +555,7 @@ describe('connect envelope', () => {
       expect(header.typ).toBe(CONNECT_RESPONSE_JWE_TYP);
       expect(header.cty).toBe('JWT');
       expect(header.apu).toBe(Convert.string(request.state).toBase64Url());
+      expect(header.apv).toBeUndefined();
 
       const opened = await openResponse({
         jwe,
@@ -589,57 +598,58 @@ describe('connect envelope', () => {
       }
     });
 
-    it('should round-trip a response with a PIN', async () => {
+    it('should round-trip a response bound to a handshake key via apv', async () => {
       const { clientDid, request, responsePrivateKey } = await createTestRequest();
       const walletSigner = await DidJwk.create();
+      const walletHandshake = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: walletHandshake.x };
       const response = buildTestResponse(request);
 
-      const jwe = await sealResponse({ response, signer: walletSigner, responseKey: request.responseKey, pin: '4291' });
+      const jwe = await sealResponse({
+        response,
+        signer      : walletSigner,
+        responseKey : request.responseKey,
+        handshakeKey,
+      });
+
+      const header = Convert.base64Url(jwe.split('.')[0]).toObject() as Record<string, unknown>;
+      expect(header.apv).toBe(handshakeKey.x);
 
       const opened = await openResponse({
         jwe,
         recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
-        pin                 : '4291',
+        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state, handshakeKey },
       });
       expect(opened).toEqual(response);
     });
 
-    it('should fail closed on a wrong PIN', async () => {
+    it('should fail closed when apv is unexpected, mismatched, or missing', async () => {
       const { clientDid, request, responsePrivateKey } = await createTestRequest();
       const walletSigner = await DidJwk.create();
+      const handshakeA = await X25519.generateKey();
+      const handshakeB = await X25519.generateKey();
+      const keyA: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakeA.x };
+      const keyB: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakeB.x };
 
-      const jwe = await sealResponse({
+      const withKeyA = await sealResponse({
+        response     : buildTestResponse(request),
+        signer       : walletSigner,
+        responseKey  : request.responseKey,
+        handshakeKey : keyA,
+      });
+      const withoutKey = await sealResponse({
         response    : buildTestResponse(request),
         signer      : walletSigner,
         responseKey : request.responseKey,
-        pin         : '4291',
       });
 
-      await expect(openResponse({
-        jwe,
-        recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
-        pin                 : '0000',
-      })).rejects.toThrow();
-    });
-
-    it('should fail closed when the PIN is omitted on open', async () => {
-      const { clientDid, request, responsePrivateKey } = await createTestRequest();
-      const walletSigner = await DidJwk.create();
-
-      const jwe = await sealResponse({
-        response    : buildTestResponse(request),
-        signer      : walletSigner,
-        responseKey : request.responseKey,
-        pin         : '4291',
-      });
-
-      await expect(openResponse({
-        jwe,
-        recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
-      })).rejects.toThrow();
+      const baseExpected = { clientDid: clientDid.uri, nonce: request.nonce, state: request.state };
+      await expect(openResponse({ jwe: withKeyA, recipientPrivateKey: responsePrivateKey, expected: baseExpected }))
+        .rejects.toThrow('"apv"');
+      await expect(openResponse({ jwe: withKeyA, recipientPrivateKey: responsePrivateKey, expected: { ...baseExpected, handshakeKey: keyB } }))
+        .rejects.toThrow('"apv"');
+      await expect(openResponse({ jwe: withoutKey, recipientPrivateKey: responsePrivateKey, expected: { ...baseExpected, handshakeKey: keyA } }))
+        .rejects.toThrow('"apv"');
     });
 
     it('should reject an aud mismatch', async () => {

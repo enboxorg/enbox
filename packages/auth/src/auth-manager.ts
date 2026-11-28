@@ -154,7 +154,7 @@ function assertRestoreFromPhraseOptions(options: unknown): asserts options is Re
  *   connectServerUrl: 'https://enbox-dwn.fly.dev/connect',
  *   permissionRequests: [{ moduleDefinition: MyModule.definition }],
  *   onWalletUriReady: (uri) => showQRCode(uri),
- *   validatePin: () => promptUserForPin(),
+ *   onVerificationReady: (symbols) => showVerificationSymbols(symbols),
  * });
  * ```
  */
@@ -394,7 +394,8 @@ export class AuthManager {
    * Connect to an external wallet via the Enbox Connect relay protocol.
    *
    * This runs the full WalletConnect flow: generates a URI for QR display,
-   * validates the PIN, imports the delegated DID, and processes grants.
+   * derives pre-approval SAS verification symbols, imports the delegated DID,
+   * and processes grants.
    *
    * @param options - Wallet connect configuration.
    * @returns An active AgentSession with delegated permissions.

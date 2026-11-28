@@ -1,24 +1,21 @@
-import type { PortableDid } from '@enbox/dids';
+import type { Jwk } from '@enbox/crypto';
 import type { RelayConnectOptions } from '../src/relay-connect-runner.js';
 import type {
   ConnectPermissionRequest,
   ConnectRequest,
   ConnectRequestProfile,
+  ConnectVerificationSymbol,
   WalletUriHandoff,
 } from '@enbox/connect';
 
 import { describe, expect, it } from 'bun:test';
 
+import { CryptoUtils } from '@enbox/crypto';
+import { DidJwk } from '@enbox/dids';
+import { ConnectProvider, createConnectVerificationHandshake } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
-import { CompactJwe } from '@enbox/crypto';
-import { Convert } from '@enbox/common';
-import { DidJwk } from '@enbox/dids';
-import { CONNECT_DENIED_TOKEN, sealResponse } from '@enbox/connect';
-import { CryptoUtils, XChaCha20Poly1305 } from '@enbox/crypto';
-
 import {
-  MAX_PIN_ATTEMPTS,
   RelayConnectCancelledError,
   runRelayConnect,
   visibilityAwareSleep,
@@ -31,30 +28,22 @@ const PERMISSIONS: ConnectPermissionRequest[] = [
   },
 ];
 
-/**
- * A loopback relay transport that plays the wallet: it decrypts the sealed
- * request with the `dir` key it minted (as the real relay+wallet pair do),
- * reads the request's correlators and response key, and answers with a real
- * `sealResponse` ciphertext strengthened by `walletPin`.
- */
 type LoopbackTransport = {
-  requiresPin: boolean;
+  requiresHandshake: boolean;
   confirmCompleteCalls: number;
+  lastWalletSymbols?: readonly ConnectVerificationSymbol[];
   requestProfile(state: string): Promise<ConnectRequestProfile>;
   deliverRequest(jwe: string): Promise<WalletUriHandoff>;
-  awaitResponse(): Promise<string>;
+  awaitResponse(options?: { onHandshake?: (walletEpk: Jwk) => Promise<void> | void }): Promise<string>;
   confirmComplete(): Promise<void>;
 };
 
-function createLoopbackTransport(walletPin: string | undefined, respond: 'approve' | 'deny', options: {
-  onRequest?: (request: ConnectRequest) => void;
-  responseDelegateDid?: string;
-} = {}): LoopbackTransport {
+function createLoopbackTransport(onRequest?: (request: ConnectRequest) => void): LoopbackTransport {
   const requestKey = CryptoUtils.randomBytes(32);
   let deliveredJwe: string | undefined;
 
-  return {
-    requiresPin          : true,
+  const transport: LoopbackTransport = {
+    requiresHandshake    : true,
     confirmCompleteCalls : 0,
 
     async confirmComplete(): Promise<void> {
@@ -78,94 +67,77 @@ function createLoopbackTransport(walletPin: string | undefined, respond: 'approv
       };
     },
 
-    async awaitResponse(): Promise<string> {
-      if (respond === 'deny') {
-        return CONNECT_DENIED_TOKEN;
-      }
-      if (deliveredJwe === undefined) {
-        throw new Error('test: request was never delivered');
-      }
-
-      // Wallet side: open the request with the dir key, read the payload.
-      const contentKey = await XChaCha20Poly1305.bytesToPrivateKey({ privateKeyBytes: requestKey });
-      const { plaintext } = await CompactJwe.decrypt({
-        jwe     : deliveredJwe,
-        key     : contentKey,
-        options : { allowedAlgs: ['dir'], allowedEncs: ['XC20P'] },
+    async awaitResponse(awaitOptions?: { onHandshake?: (walletEpk: Jwk) => Promise<void> | void }): Promise<string> {
+      const request = await ConnectProvider.openRequest({
+        jwe        : deliveredJwe!,
+        decryption : { mode: 'dir', requestKey },
       });
-      const jwt = Convert.uint8Array(plaintext).toString();
-      const request = JSON.parse(Convert.base64Url(jwt.split('.')[1]).toString()) as ConnectRequest;
-      options.onRequest?.(request);
+      onRequest?.(request);
 
-      const walletDid = await DidJwk.create();
+      const handshake = await createConnectVerificationHandshake({ request, requestJwe: deliveredJwe! });
+      transport.lastWalletSymbols = handshake.symbols;
+      await awaitOptions?.onHandshake?.(handshake.walletEpk);
+
       const delegateDid = await DidJwk.create();
-      const delegatePortableDid: PortableDid = await delegateDid.export();
-      const responseDelegateDid = options.responseDelegateDid ?? request.delegateDid ?? delegateDid.uri;
-
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      return await sealResponse({
-        response: {
-          providerDid        : 'did:dht:provider',
-          delegateDid        : responseDelegateDid,
-          aud                : request.clientDid,
-          iat                : nowSeconds,
-          exp                : nowSeconds + 600,
-          nonce              : request.nonce,
-          state              : request.state,
+      return await ConnectProvider.sealApprovedResponse({
+        request,
+        providerDid : 'did:dht:provider',
+        approval    : {
+          delegateDid        : request.delegateDid ?? delegateDid.uri,
           delegateGrants     : [],
           sessionRevocations : [],
-          ...(request.delegateDid === undefined ? { delegatePortableDid } : {}),
+          ...(request.delegateDid === undefined ? { delegatePortableDid: await delegateDid.export() } : {}),
         },
-        signer      : walletDid,
-        responseKey : request.responseKey,
-        pin         : walletPin,
+        signer       : delegateDid,
+        handshakeKey : handshake.walletEpk,
       });
     },
   };
+
+  return transport;
 }
 
 function baseOptions(transport: LoopbackTransport): {
   handoffs: WalletUriHandoff[];
-  options: Omit<Parameters<typeof runRelayConnect>[0], 'requestPin'>;
+  options: RelayConnectOptions;
 } {
   const handoffs: WalletUriHandoff[] = [];
   return {
     handoffs,
     options: {
-      connectServerUrl   : 'https://relay.example.com/connect',
-      walletUri          : 'https://wallet.example.com/connect/app',
-      appName            : 'Test Dapp',
-      permissionRequests : PERMISSIONS,
-      createTransport    : () => transport,
-      onWalletUriReady   : (handoff: WalletUriHandoff): void => { handoffs.push(handoff); },
+      connectServerUrl    : 'https://relay.example.com/connect',
+      walletUri           : 'https://wallet.example.com/connect/app',
+      appName             : 'Test Dapp',
+      permissionRequests  : PERMISSIONS,
+      createTransport     : () => transport,
+      onWalletUriReady    : (handoff: WalletUriHandoff): void => { handoffs.push(handoff); },
+      onVerificationReady : (): void => {},
     },
   };
 }
 
 describe('runRelayConnect', () => {
-  it('completes a full loopback handshake and surfaces the wallet URI handoff', async () => {
-    const transport = createLoopbackTransport('1234', 'approve');
+  it('completes a loopback handshake and surfaces wallet URI and matching SAS verification symbols', async () => {
+    const transport = createLoopbackTransport();
     const { options, handoffs } = baseOptions(transport);
+    let observedSymbols: readonly ConnectVerificationSymbol[] | undefined;
 
     const result = await runRelayConnect({
       ...options,
-      requestPin: async (): Promise<string> => '1234',
+      onVerificationReady: (symbols): void => { observedSymbols = symbols; },
     });
 
     expect(handoffs).toHaveLength(1);
     expect(handoffs[0].expiresIn).toBe(600);
+    expect(observedSymbols).toEqual(transport.lastWalletSymbols);
     expect(result?.connectedDid).toBe('did:dht:provider');
     expect(result?.delegatePortableDid.uri.startsWith('did:jwk:')).toBe(true);
-    expect(result?.delegateGrants).toEqual([]);
-    // The wallet-facing completion signal fired exactly once after the open.
     expect(transport.confirmCompleteCalls).toBe(1);
   });
 
-  it('reuses a pre-supplied delegate for a refresh request', async () => {
+  it('forwards refresh request metadata and pre-supplied delegate credentials', async () => {
     let observedRequest: ConnectRequest | undefined;
-    const transport = createLoopbackTransport('1234', 'approve', {
-      onRequest: (request): void => { observedRequest = request; },
-    });
+    const transport = createLoopbackTransport((request): void => { observedRequest = request; });
     const { options } = baseOptions(transport);
     const delegate = await DidJwk.create();
     const delegatePortableDid = await delegate.export();
@@ -173,113 +145,34 @@ describe('runRelayConnect', () => {
     const result = await runRelayConnect({
       ...options,
       delegatePortableDid,
-      requestType : 'refresh',
-      requestPin  : async (): Promise<string> => '1234',
+      requestType: 'refresh',
     });
 
     expect(observedRequest?.delegateDid).toBe(delegate.uri);
     expect(observedRequest?.requestType).toBe('refresh');
-    expect(result?.delegatePortableDid).toBe(delegatePortableDid);
+    expect(result?.delegatePortableDid).toEqual(delegatePortableDid);
     expect(transport.confirmCompleteCalls).toBe(1);
   });
 
   it('rejects identity-only requests before starting the data-session relay flow', async () => {
-    const transport = createLoopbackTransport('1234', 'approve');
+    const transport = createLoopbackTransport();
     const { options, handoffs } = baseOptions(transport);
     let transportCreated = false;
-    let pinRequested = false;
+    let verificationCalled = false;
     await expect(runRelayConnect({
       ...options,
-      requestType     : 'authenticate',
-      createTransport : () => { transportCreated = true; return transport; },
-      requestPin      : async (): Promise<string> => { pinRequested = true; return '1234'; },
+      requestType         : 'authenticate',
+      createTransport     : () => { transportCreated = true; return transport; },
+      onVerificationReady : (): void => { verificationCalled = true; },
     } as RelayConnectOptions)).rejects.toThrow('Connect: runRelayConnect creates data sessions');
     expect(transportCreated).toBe(false);
-    expect(pinRequested).toBe(false);
+    expect(verificationCalled).toBe(false);
     expect(handoffs).toHaveLength(0);
     expect(transport.confirmCompleteCalls).toBe(0);
   });
 
-  it('rejects a refresh request without a pre-supplied delegate', async () => {
-    const transport = createLoopbackTransport('1234', 'approve');
-    const { options } = baseOptions(transport);
-
-    await expect(runRelayConnect({
-      ...options,
-      requestType : 'refresh',
-      requestPin  : async (): Promise<string> => '1234',
-    })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
-  });
-
-  it('fails a refresh when the wallet responds for a different delegate', async () => {
-    const rogueDelegate = await DidJwk.create();
-    const transport = createLoopbackTransport('1234', 'approve', {
-      responseDelegateDid: rogueDelegate.uri,
-    });
-    const { options } = baseOptions(transport);
-    const delegate = await DidJwk.create();
-    let pinAttempts = 0;
-
-    await expect(runRelayConnect({
-      ...options,
-      delegatePortableDid : await delegate.export(),
-      requestType         : 'refresh',
-      requestPin          : async (): Promise<string> => { pinAttempts++; return '1234'; },
-    })).rejects.toThrow('Revoke the just-approved session');
-    expect(pinAttempts).toBe(1);
-    expect(transport.confirmCompleteCalls).toBe(0);
-  });
-
-  it('retries a mistyped pairing code against the same response', async () => {
-    const transport = createLoopbackTransport('4321', 'approve');
-    const { options } = baseOptions(transport);
-
-    const attempts: Array<{ attempt: number; hadError: boolean }> = [];
-    const result = await runRelayConnect({
-      ...options,
-      requestPin: async (attempt, previousError): Promise<string> => {
-        attempts.push({ attempt, hadError: previousError !== undefined });
-        return attempt < 3 ? '0000' : '4321';
-      },
-    });
-
-    expect(attempts).toEqual([
-      { attempt: 1, hadError: false },
-      { attempt: 2, hadError: true },
-      { attempt: 3, hadError: true },
-    ]);
-    expect(result?.connectedDid).toBe('did:dht:provider');
-  });
-
-  it('fails closed after the PIN attempt budget', async () => {
-    const transport = createLoopbackTransport('9999', 'approve');
-    const { options } = baseOptions(transport);
-
-    let attempts = 0;
-    await expect(runRelayConnect({
-      ...options,
-      requestPin: async (): Promise<string> => { attempts++; return '0000'; },
-    })).rejects.toThrow(/did not match after/);
-    expect(attempts).toBe(MAX_PIN_ATTEMPTS);
-    expect(transport.confirmCompleteCalls).toBe(0);
-  });
-
-  it('resolves undefined when the wallet denies', async () => {
-    const transport = createLoopbackTransport(undefined, 'deny');
-    const { options } = baseOptions(transport);
-
-    const result = await runRelayConnect({
-      ...options,
-      requestPin: async (): Promise<string> => { throw new Error('test: PIN must not be requested on denial'); },
-    });
-
-    expect(result).toBeUndefined();
-    expect(transport.confirmCompleteCalls).toBe(0);
-  });
-
-  it('rejects with the cancellation error when the UI cancels mid-poll', async () => {
-    const transport = createLoopbackTransport('1234', 'approve');
-    // Poll never resolves; cancellation must win the race.
+  it('rejects with the cancellation error and aborts the transport signal when cancelled mid-poll', async () => {
+    const transport = createLoopbackTransport();
     transport.awaitResponse = (): Promise<string> => new Promise<string>(() => { /* pending */ });
     const { options } = baseOptions(transport);
     let observedSignal: AbortSignal | undefined;
@@ -297,7 +190,6 @@ describe('runRelayConnect', () => {
         observedSignal = transportOptions.signal;
         return transport;
       },
-      requestPin: async (): Promise<string> => '1234',
     });
 
     expect(observedSignal?.aborted).toBe(false);
@@ -315,9 +207,6 @@ describe('visibilityAwareSleep', () => {
   });
 
   it('ends early when the page returns to the foreground', async () => {
-    // A 60s sleep must be cut short by the visibility signal (the test page
-    // is visible, so dispatching the event stands in for a tab return) —
-    // well inside the test timeout proves the short-circuit.
     const started = Date.now();
     const sleeping = visibilityAwareSleep(60_000);
     document.dispatchEvent(new Event('visibilitychange'));

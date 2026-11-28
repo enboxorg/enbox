@@ -625,11 +625,11 @@ describe('delegated connection lifecycle', () => {
       manager.on('session-start', () => { sessionStarts++; });
 
       const walletConnectPromise = manager.walletConnect({
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async (): Promise<string> => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       });
       let walletConnectSettled = false;
       void walletConnectPromise.then(

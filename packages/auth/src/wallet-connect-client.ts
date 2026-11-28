@@ -4,9 +4,9 @@
  * Thin adapter over the `@enbox/connect` kernel: it normalizes the
  * auth-level options into a kernel `ConnectClient` handshake carried by the
  * `RelayClientTransport`, surfaces the wallet URI to the caller (QR code /
- * deep link seam), collects the PIN through the existing `validatePin` seam,
- * and returns the kernel `ConnectResult` for the shared auth completion path
- * (`validateConnectResultGrants` → `importDelegateAndSetupSync` →
+ * deep link seam), surfaces the ECDH SAS verification symbols through
+ * `onVerificationReady`, and returns the kernel `ConnectResult` for the shared
+ * auth completion path (`validateConnectResultGrants` → `importDelegateAndSetupSync` →
  * `finalizeDelegateSession`).
  *
  * Pre-supplied delegate DIDs are augmented here (Ed25519 → X25519 private-key
@@ -26,6 +26,7 @@ import type {
   ConnectPermissionRequest,
   ConnectRequestType,
   ConnectResult,
+  ConnectVerificationSymbol,
 } from '@enbox/connect';
 import type { DwnModuleDefinition, DwnPermissionScope } from '@enbox/agent';
 
@@ -114,12 +115,11 @@ export type WalletConnectClientOptions = {
   onWalletUriReady: (uri: string) => Promise<void> | void;
 
   /**
-   * Called to collect the PIN from the user. The PIN strengthens the
-   * decryption key for the connect response from the relay.
-   *
-   * @returns A promise that resolves to the PIN as a string.
+   * Called once the wallet publishes its ephemeral handshake key and the 3
+   * pre-approval SAS verification symbols are derived. Display these symbols
+   * so the user can tap the matching 3 tiles in their wallet before approving.
    */
-  validatePin: () => Promise<string>;
+  onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
 
   /**
    * Milliseconds to poll the relay for a wallet response.
@@ -163,69 +163,18 @@ export type ModulePermissionOptions = {
  * @returns The kernel `ConnectResult`, or `undefined` when the user denied
  *          the request in the wallet.
  */
-async function initClient({
-  displayName,
-  appIcon,
-  applicationId,
-  clientMetadata,
-  requestedSessionTtlSeconds,
-  preSupplyDelegateDid,
-  delegatePortableDid,
-  requestType,
-  expectedProviderDid,
-  authentication,
-  authenticationResolver,
-  onAuthenticationRequest,
-  connectServerUrl,
-  walletUri,
-  permissionRequests,
-  onWalletUriReady,
-  validatePin,
-  timeoutMs,
-  pollIntervalMs,
-}: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
-  if ((requestType as ConnectRequestType | undefined) === 'authenticate') {
-    throw new Error('Connect: use WalletConnect.initAuthentication for an authentication-only request.');
-  }
-  if (requestType === 'refresh' && delegatePortableDid === undefined) {
-    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
-  }
-
-  const localDelegatePortableDid = await resolveLocalDelegatePortableDid({
-    delegatePortableDid,
-    preSupplyDelegateDid,
-  });
-
-  const client = new ConnectClient({
-    transport: new RelayClientTransport({
-      connectServerUrl,
-      walletUri,
-      timeoutMs,
-      pollIntervalMs,
-    }),
-    onWalletUriReady : async (handoff): Promise<void> => { await onWalletUriReady(handoff.walletUri); },
-    requestPin       : validatePin,
-    authenticationResolver,
-    onAuthenticationRequest,
-  });
-
-  return await client.connect({
-    appName             : displayName,
-    appIcon,
-    applicationId,
-    clientMetadata,
-    permissionRequests,
-    requestedSessionTtlSeconds,
-    delegatePortableDid : localDelegatePortableDid,
-    requestType,
-    expectedProviderDid,
-    authentication,
-  });
-}
-
-/** Run a relay login without importing credentials or creating an AgentSession. */
-async function initAuthentication(options: WalletAuthenticationClientOptions): Promise<ConnectAuthenticationResult | undefined> {
-  const client = new ConnectClient({
+function createRelayConnectClient(options: Pick<
+  WalletConnectClientOptions,
+  | 'connectServerUrl'
+  | 'walletUri'
+  | 'timeoutMs'
+  | 'pollIntervalMs'
+  | 'onWalletUriReady'
+  | 'onVerificationReady'
+  | 'authenticationResolver'
+  | 'onAuthenticationRequest'
+>): ConnectClient {
+  return new ConnectClient({
     transport: new RelayClientTransport({
       connectServerUrl : options.connectServerUrl,
       walletUri        : options.walletUri,
@@ -233,11 +182,42 @@ async function initAuthentication(options: WalletAuthenticationClientOptions): P
       pollIntervalMs   : options.pollIntervalMs,
     }),
     onWalletUriReady        : async (handoff): Promise<void> => { await options.onWalletUriReady(handoff.walletUri); },
-    requestPin              : options.validatePin,
+    onVerificationReady     : options.onVerificationReady,
     authenticationResolver  : options.authenticationResolver,
     onAuthenticationRequest : options.onAuthenticationRequest,
   });
-  return await client.authenticate({
+}
+
+async function initClient(options: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
+  if ((options.requestType as ConnectRequestType | undefined) === 'authenticate') {
+    throw new Error('Connect: use WalletConnect.initAuthentication for an authentication-only request.');
+  }
+  if (options.requestType === 'refresh' && options.delegatePortableDid === undefined) {
+    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+  }
+
+  const localDelegatePortableDid = await resolveLocalDelegatePortableDid({
+    delegatePortableDid  : options.delegatePortableDid,
+    preSupplyDelegateDid : options.preSupplyDelegateDid,
+  });
+
+  return await createRelayConnectClient(options).connect({
+    appName                    : options.displayName,
+    appIcon                    : options.appIcon,
+    applicationId              : options.applicationId,
+    clientMetadata             : options.clientMetadata,
+    permissionRequests         : options.permissionRequests,
+    requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
+    delegatePortableDid        : localDelegatePortableDid,
+    requestType                : options.requestType,
+    expectedProviderDid        : options.expectedProviderDid,
+    authentication             : options.authentication,
+  });
+}
+
+/** Run a relay login without importing credentials or creating an AgentSession. */
+async function initAuthentication(options: WalletAuthenticationClientOptions): Promise<ConnectAuthenticationResult | undefined> {
+  return await createRelayConnectClient(options).authenticate({
     appName             : options.displayName,
     appIcon             : options.appIcon,
     applicationId       : options.applicationId,

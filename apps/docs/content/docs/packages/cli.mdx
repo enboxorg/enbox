@@ -1,6 +1,6 @@
 ---
 title: "@enbox/cli"
-description: CLI-first Enbox entrypoint for app APIs, auth, and relay/PIN wallet connect.
+description: CLI-first Enbox entrypoint for app APIs, auth, and relay wallet connect.
 ---
 
 `@enbox/cli` is the terminal-focused package for Enbox apps. It re-exports the
@@ -70,8 +70,9 @@ await store.dispose();
 ```
 
 The handler uses the encrypted relay flow. It prints a terminal QR code and
-wallet link by default, prompts for the wallet-displayed PIN, then returns the
-delegated session through the connection-store lifecycle.
+wallet link by default, displays 3 pre-approval SAS verification symbols once
+the wallet opens the request, then returns the delegated session through the
+connection-store lifecycle.
 
 When `connectServerUrl` is omitted, the handler resolves the relay from
 `connectServerUrlProvider`, then from the wallet origin's
@@ -91,4 +92,4 @@ approval link in the local default browser instead of printing a QR code.
 | `defineModule()` | Type-safe module definition helper |
 | `recordCodecs` | JSON, text, bytes, and Blob record codecs |
 | `AuthManager` | Auth/session lifecycle from `@enbox/auth` |
-| `CliConnectHandler` | Terminal relay/PIN wallet connect handler |
+| `CliConnectHandler` | Terminal relay wallet connect handler |

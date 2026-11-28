@@ -586,6 +586,40 @@ export function isOkpPublicJwk(obj: unknown): obj is JwkParamsOkpPublic {
   return true;
 }
 
+/** Canonical 32-byte base64url encoding (43 chars, zero unused low 2 bits). */
+const CANONICAL_BASE64URL_32_PATTERN = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+
+/**
+ * Checks if `value` is a canonical unpadded base64url encoding of exactly 32 bytes
+ * (43 characters with zeroed trailing padding bits).
+ */
+export function isCanonicalBase64Url32(value: unknown): value is string {
+  return typeof value === 'string' && CANONICAL_BASE64URL_32_PATTERN.test(value);
+}
+
+/**
+ * Checks if the provided object is a public (no `d`) X25519 OKP JWK with a
+ * canonical 32-byte `x` coordinate.
+ */
+export function isX25519PublicJwk(obj: unknown): obj is JwkParamsOkpPublic {
+  return !Array.isArray(obj)
+    && isOkpPublicJwk(obj)
+    && obj.crv === 'X25519'
+    && isCanonicalBase64Url32(obj.x);
+}
+
+/**
+ * Checks if the provided object is a private X25519 OKP JWK with canonical
+ * 32-byte `x` and `d` coordinates.
+ */
+export function isX25519PrivateJwk(obj: unknown): obj is JwkParamsOkpPrivate {
+  return !Array.isArray(obj)
+    && isOkpPrivateJwk(obj)
+    && obj.crv === 'X25519'
+    && isCanonicalBase64Url32(obj.x)
+    && isCanonicalBase64Url32(obj.d);
+}
+
 /**
  * Checks if the provided object is a valid private key in JWK format of any supported type.
  *

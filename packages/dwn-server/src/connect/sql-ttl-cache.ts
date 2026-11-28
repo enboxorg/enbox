@@ -68,6 +68,42 @@ export class SqlTtlCache {
   }
 
   /**
+   * Inserts a cache entry only if no non-expired entry already exists for `key`.
+   * Removes any expired entry for `key` first so reusing an expired key succeeds.
+   *
+   * @returns `{ inserted: true }` when inserted, or `{ inserted: false, existing }`
+   *          when a live entry already exists.
+   */
+  public async insertIfAbsent(
+    key: string,
+    value: object,
+    ttl: number,
+  ): Promise<{ inserted: boolean; existing?: object }> {
+    const now = Date.now();
+    await this.db
+      .deleteFrom(SqlTtlCache.cacheTableName)
+      .where('key', '=', key)
+      .where('expiry', '<=', now)
+      .execute();
+
+    const expiry = now + (ttl * 1000);
+    const objectString = JSON.stringify(value);
+    try {
+      await this.db
+        .insertInto(SqlTtlCache.cacheTableName)
+        .values({ key, value: objectString, expiry })
+        .execute();
+      return { inserted: true };
+    } catch (error) {
+      const existing = await this.get(key);
+      if (existing !== undefined) {
+        return { inserted: false, existing };
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Retrieves a cache entry if it is not expired and cleans up expired entries.
    */
   public async get(key: string): Promise<object | undefined> {
@@ -88,7 +124,7 @@ export class SqlTtlCache {
     // if the entry is expired, don't return it and delete it
     const expiry = typeof entry.expiry === 'string' ? Number.parseInt(entry.expiry, 10) : entry.expiry;
     if (Date.now() >= expiry) {
-      this.delete(key); // no need to await
+      await this.delete(key);
       return undefined;
     }
 
@@ -96,7 +132,7 @@ export class SqlTtlCache {
       return JSON.parse(entry.value);
     } catch {
       // Corrupt entry — remove it and return undefined.
-      this.delete(key); // no need to await
+      await this.delete(key);
       return undefined;
     }
   }

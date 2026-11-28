@@ -241,6 +241,80 @@ describe('Connect scenarios', () => {
     }
   });
 
+  const postJson = (url: string, body: unknown): Promise<Response> => fetch(url, {
+    method  : 'POST',
+    headers : { 'Content-Type': 'application/json' },
+    body    : JSON.stringify(body),
+  });
+
+  it('stores write-once SAS handshake keys, handles concurrent POSTs, and cleans up on complete', async () => {
+    const state = `handshake-${randomUUID()}`;
+    const handshakeGetUrl = `${connectBaseUrl}/connect/handshake/${state}`;
+    const handshakePostUrl = `${connectBaseUrl}/connect/handshake`;
+    const walletEpkA = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
+    const walletEpkB = { kty: 'OKP', crv: 'X25519', x: 'vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ' };
+
+    // Before the wallet posts a handshake key, GET reports ready: false.
+    let getResult = await fetch(handshakeGetUrl);
+    expect(getResult.status).toBe(200);
+    expect(await getResult.json()).toEqual({ ready: false });
+
+    // First write creates (201); GET is non-destructive; identical re-POST is idempotent (200); conflict is 409.
+    expect((await postJson(handshakePostUrl, { state, walletEpk: walletEpkA })).status).toBe(201);
+    for (let i = 0; i < 2; i++) {
+      getResult = await fetch(handshakeGetUrl);
+      expect(getResult.status).toBe(200);
+      expect(await getResult.json()).toEqual({ ready: true, walletEpk: walletEpkA });
+    }
+    expect((await postJson(handshakePostUrl, { state, walletEpk: walletEpkA })).status).toBe(200);
+    expect((await postJson(handshakePostUrl, { state, walletEpk: walletEpkB })).status).toBe(409);
+
+    // Original key remains intact after rejected conflict.
+    expect(await (await fetch(handshakeGetUrl)).json()).toEqual({ ready: true, walletEpk: walletEpkA });
+
+    // Concurrent identical and conflicting POSTs never fail with 500.
+    const raceIdenticalState = `race-same-${randomUUID()}`;
+    const [r1, r2] = await Promise.all([
+      postJson(handshakePostUrl, { state: raceIdenticalState, walletEpk: walletEpkA }),
+      postJson(handshakePostUrl, { state: raceIdenticalState, walletEpk: walletEpkA }),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 201]);
+
+    const raceConflictState = `race-diff-${randomUUID()}`;
+    const [c1, c2] = await Promise.all([
+      postJson(handshakePostUrl, { state: raceConflictState, walletEpk: walletEpkA }),
+      postJson(handshakePostUrl, { state: raceConflictState, walletEpk: walletEpkB }),
+    ]);
+    expect([c1.status, c2.status].sort()).toEqual([201, 409]);
+
+    // Completing the connect session cleans up the handshake entry.
+    expect((await postJson(`${connectBaseUrl}/connect/complete`, { state })).status).toBe(201);
+    expect(await (await fetch(handshakeGetUrl)).json()).toEqual({ ready: false });
+  });
+
+  it('rejects malformed payloads, bad state encoding, and oversized bodies on handshake/complete routes', async () => {
+    const state = `validate-${randomUUID()}`;
+    const handshakePostUrl = `${connectBaseUrl}/connect/handshake`;
+    const completePostUrl = `${connectBaseUrl}/connect/complete`;
+    const walletEpk = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
+
+    for (const badBody of [
+      {},
+      { state },
+      { state: 'bad/state with spaces', walletEpk },
+      { state, walletEpk: { kty: 'OKP', crv: 'Ed25519', x: walletEpk.x } },
+      { state, walletEpk: { ...walletEpk, d: 'private-material' } },
+      { state, walletEpk: { kty: 'OKP', crv: 'X25519', x: 'short' } },
+    ]) {
+      expect((await postJson(handshakePostUrl, badBody)).status).toBe(400);
+    }
+
+    expect((await postJson(handshakePostUrl, { state, walletEpk, pad: 'x'.repeat(5_000) })).status).toBe(413);
+    expect((await postJson(completePostUrl, { state, pad: 'x'.repeat(5_000) })).status).toBe(413);
+    expect((await fetch(`${connectBaseUrl}/connect/handshake/%ZZ`)).status).toBe(400);
+    expect((await fetch(`${connectBaseUrl}/connect/complete/%ZZ`)).status).toBe(400);
+  });
+
   it('should clean up objects that are expired', async () => {
     // Scenario:
     // 1. App sends the Connect Request object to the Connect server.

@@ -19,7 +19,7 @@
     },
     {
       "id": "ecdh-es-xc20p",
-      "description": "ECDH-ES (X25519) Direct Key Agreement with XChaCha20-Poly1305 content encryption, no PIN.",
+      "description": "ECDH-ES (X25519) Direct Key Agreement with XChaCha20-Poly1305 content encryption.",
       "protectedHeader": {
         "alg": "ECDH-ES",
         "enc": "XC20P"
@@ -46,37 +46,8 @@
       "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJlcGsiOnsia3R5IjoiT0tQIiwiY3J2IjoiWDI1NTE5IiwieCI6InZ4dnZic285LUVvMW1KWlJfb0NjNmhJb2g3MkVtV0tCYzBpXzIxYzVMd1EifX0..DKvidQJ8tr1MuGbC3Xbs5TgEMdQhas8j.HbSbHDCrwDTBZUOVLlpwOu9Th3BbZNx2av-FAZn2wA-rzidbqWZr0A.MdfF-eV8r8-cLf3mOV1f3Q"
     },
     {
-      "id": "ecdh-es-xc20p-pin",
-      "description": "ECDH-ES (X25519) with the PIN KDF wrapper: CEK' = HKDF-SHA256(ikm=CEK, salt=UTF8(pin), info=UTF8('enbox/connect/v2/pin')).",
-      "protectedHeader": {
-        "alg": "ECDH-ES",
-        "enc": "XC20P"
-      },
-      "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
-      "pin": "123456",
-      "recipientPrivateKeyJwk": {
-        "kty": "OKP",
-        "crv": "X25519",
-        "d": "6MhvD2eS3STS3VuoRnubWBoT64arEN1SAWC3pgFSt9Y",
-        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
-      },
-      "recipientPublicKeyJwk": {
-        "kty": "OKP",
-        "crv": "X25519",
-        "x": "ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8"
-      },
-      "ephemeralPrivateKeyJwk": {
-        "kty": "OKP",
-        "crv": "X25519",
-        "d": "p3dpF94RII9NCBNf_7eFFS5k6LhCTxz-3M0QpcxMSGc",
-        "x": "vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ"
-      },
-      "nonceBase64Url": "6QGAVmfGUI3pLUQLyGF64JqMAQSRh3nk",
-      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJlcGsiOnsia3R5IjoiT0tQIiwiY3J2IjoiWDI1NTE5IiwieCI6InZ4dnZic285LUVvMW1KWlJfb0NjNmhJb2g3MkVtV0tCYzBpXzIxYzVMd1EifX0..6QGAVmfGUI3pLUQLyGF64JqMAQSRh3nk.KD-8x5o3HLyKy17RK-G_Ln-qKpkR_OxYpqVVDW51PVGD_AwrZpgKFQ.1XZV0B3ZXdi-arX5Yx6q8g"
-    },
-    {
       "id": "ecdh-es-xc20p-apu-apv",
-      "description": "ECDH-ES (X25519) with \"apu\"/\"apv\" agreement party info bound into the Concat KDF and the AAD, plus the PIN KDF wrapper.",
+      "description": "ECDH-ES (X25519) with \"apu\"/\"apv\" agreement party info bound into the Concat KDF and the AAD.",
       "protectedHeader": {
         "alg": "ECDH-ES",
         "enc": "XC20P",
@@ -84,7 +55,6 @@
         "apv": "aHR0cHM6Ly93YWxsZXQuZXhhbXBsZQ"
       },
       "plaintextUtf8": "Enbox Connect v2 JWE conformance vector.",
-      "pin": "123456",
       "apuUtf8": "did:example:alice",
       "apvUtf8": "https://wallet.example",
       "recipientPrivateKeyJwk": {
@@ -105,7 +75,7 @@
         "x": "vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ"
       },
       "nonceBase64Url": "JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc",
-      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJhcHUiOiJaR2xrT21WNFlXMXdiR1U2WVd4cFkyVSIsImFwdiI6ImFIUjBjSE02THk5M1lXeHNaWFF1WlhoaGJYQnNaUSIsImVwayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJYMjU1MTkiLCJ4Ijoidnh2dmJzbzktRW8xbUpaUl9vQ2M2aElvaDcyRW1XS0JjMGlfMjFjNUx3USJ9fQ..JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc.vFkP81Eaqs3fpsoD-hiFsmTbBKF04a-RvwlvqTw6Rz4szJtnvZ2N8w.a0twCSoJBAeVaFa3Amyn8w"
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJhcHUiOiJaR2xrT21WNFlXMXdiR1U2WVd4cFkyVSIsImFwdiI6ImFIUjBjSE02THk5M1lXeHNaWFF1WlhoaGJYQnNaUSIsImVwayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJYMjU1MTkiLCJ4Ijoidnh2dmJzbzktRW8xbUpaUl9vQ2M2aElvaDcyRW1XS0JjMGlfMjFjNUx3USJ9fQ..JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc.fndW2TPOAzc-YuMh0_YLy1_GiPU_iiTwnEBZHlw5t-_LgjCtvmFpRQ.l_kolQJjvUfUGn3Z2wHiGw"
     },
     {
       "id": "pbes2-hs512-a256kw-a256gcm",
@@ -139,14 +109,7 @@
       "id": "tamper-altered-apv",
       "description": "ECDH-ES apu/apv vector with the \"apv\" protected header value altered; the AAD and derived CEK both change so decryption MUST fail.",
       "vectorId": "ecdh-es-xc20p-apu-apv",
-      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJhcHUiOiJaR2xrT21WNFlXMXdiR1U2WVd4cFkyVSIsImFwdiI6ImFIUjBjSE02THk5bGRtbHNMbVY0WVcxd2JHVSIsImVwayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJYMjU1MTkiLCJ4Ijoidnh2dmJzbzktRW8xbUpaUl9vQ2M2aElvaDcyRW1XS0JjMGlfMjFjNUx3USJ9fQ..JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc.vFkP81Eaqs3fpsoD-hiFsmTbBKF04a-RvwlvqTw6Rz4szJtnvZ2N8w.a0twCSoJBAeVaFa3Amyn8w"
-    },
-    {
-      "id": "tamper-wrong-pin",
-      "description": "ECDH-ES PIN vector decrypted with the wrong PIN; the PIN KDF derives a different CEK so decryption MUST fail.",
-      "vectorId": "ecdh-es-xc20p-pin",
-      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJlcGsiOnsia3R5IjoiT0tQIiwiY3J2IjoiWDI1NTE5IiwieCI6InZ4dnZic285LUVvMW1KWlJfb0NjNmhJb2g3MkVtV0tCYzBpXzIxYzVMd1EifX0..6QGAVmfGUI3pLUQLyGF64JqMAQSRh3nk.KD-8x5o3HLyKy17RK-G_Ln-qKpkR_OxYpqVVDW51PVGD_AwrZpgKFQ.1XZV0B3ZXdi-arX5Yx6q8g",
-      "wrongPin": "654321"
+      "jweCompact": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiWEMyMFAiLCJhcHUiOiJaR2xrT21WNFlXMXdiR1U2WVd4cFkyVSIsImFwdiI6ImFIUjBjSE02THk5bGRtbHNMbVY0WVcxd2JHVSIsImVwayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJYMjU1MTkiLCJ4Ijoidnh2dmJzbzktRW8xbUpaUl9vQ2M2aElvaDcyRW1XS0JjMGlfMjFjNUx3USJ9fQ..JFQJvsQLtiooODk1Y88p_9ybyR1JMOTc.fndW2TPOAzc-YuMh0_YLy1_GiPU_iiTwnEBZHlw5t-_LgjCtvmFpRQ.l_kolQJjvUfUGn3Z2wHiGw"
     }
   ]
 }

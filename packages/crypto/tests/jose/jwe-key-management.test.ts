@@ -142,27 +142,6 @@ describe('JweKeyManagement', () => {
         expect((decryptCek as Jwk).k).toBe((encryptCek as Jwk).k);
       });
 
-      it('should derive matching CEKs with a PIN and different CEKs with the wrong PIN', async () => {
-        const joseHeader = { alg: 'ECDH-ES', enc: 'XC20P' } as const;
-
-        const { cek: encryptCek, headerParams } = await JweKeyManagement.encrypt({
-          key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey, pin: '123456' },
-          joseHeader,
-        });
-
-        const correctPinCek = await JweKeyManagement.decrypt({
-          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, pin: '123456' },
-          joseHeader : { ...joseHeader, ...headerParams },
-        });
-        expect((correctPinCek as Jwk).k).toBe((encryptCek as Jwk).k);
-
-        const wrongPinCek = await JweKeyManagement.decrypt({
-          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, pin: '654321' },
-          joseHeader : { ...joseHeader, ...headerParams },
-        });
-        expect((wrongPinCek as Jwk).k).not.toBe((encryptCek as Jwk).k);
-      });
-
       it('should bind apu and apv into the derived CEK', async () => {
         const apu = Convert.string('alice').toBase64Url();
         const apv = Convert.string('bob').toBase64Url();

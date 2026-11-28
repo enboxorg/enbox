@@ -1,3 +1,4 @@
+import type { ConnectVerificationSymbol } from '../src/sas.js';
 import type { DataEncodedRecordsWriteMessage } from '@enbox/dwn-sdk-js';
 import type { Jwk } from '@enbox/crypto';
 import type {
@@ -9,6 +10,7 @@ import type {
   WalletUriHandoff,
 } from '../src/types.js';
 
+import { createConnectVerificationHandshake } from '../src/sas.js';
 import { DidJwk } from '@enbox/dids';
 import { assertExpectedProviderDid, ConnectProvider } from '../src/provider.js';
 import { ConnectClient, randomToken } from '../src/client.js';
@@ -25,27 +27,33 @@ const TEST_REVOCATIONS = [
   { grantId: 'grant-2', revocationGrantId: 'revocation-2' },
 ];
 
+type LoopbackWalletResult = {
+  response: string;
+  handshakeKey?: Jwk;
+  handshakeKeys?: Jwk[];
+};
+
 /**
  * In-memory loopback transport: `deliverRequest` hands the sealed request
- * straight to a wallet handler which produces the response ciphertext that
- * `awaitResponse` resolves with. Supports both channel profiles.
+ * straight to a wallet handler which optionally yields a `handshakeKey`
+ * (pre-approval SAS `walletEpk`) and the response ciphertext.
  */
 class LoopbackTransport implements ConnectTransport {
-  public readonly requiresPin: boolean;
+  public readonly requiresHandshake: boolean;
 
   /** Number of best-effort completion signals received from the client. */
   public confirmCompleteCalls = 0;
 
   private readonly _profileFactory: () => Promise<Omit<ConnectRequestProfile, 'state'>>;
-  private readonly _walletHandler: (jwe: string) => Promise<string>;
-  private _responsePromise?: Promise<string>;
+  private readonly _walletHandler: (jwe: string) => Promise<LoopbackWalletResult>;
+  private _responsePromise?: Promise<LoopbackWalletResult>;
 
-  constructor({ requiresPin, profileFactory, walletHandler }: {
-    requiresPin: boolean;
+  constructor({ requiresHandshake, profileFactory, walletHandler }: {
+    requiresHandshake: boolean;
     profileFactory: () => Promise<Omit<ConnectRequestProfile, 'state'>>;
-    walletHandler: (jwe: string) => Promise<string>;
+    walletHandler: (jwe: string) => Promise<LoopbackWalletResult>;
   }) {
-    this.requiresPin = requiresPin;
+    this.requiresHandshake = requiresHandshake;
     this._profileFactory = profileFactory;
     this._walletHandler = walletHandler;
   }
@@ -59,11 +67,18 @@ class LoopbackTransport implements ConnectTransport {
     this._responsePromise = this._walletHandler(jwe);
   }
 
-  public async awaitResponse(): Promise<string> {
+  public async awaitResponse(options?: {
+    onHandshake?: (walletEpk: Jwk) => Promise<void> | void;
+  }): Promise<string> {
     if (this._responsePromise === undefined) {
       throw new Error('LoopbackTransport: no request delivered.');
     }
-    return await this._responsePromise;
+    const result = await this._responsePromise;
+    const keys = result.handshakeKeys ?? (result.handshakeKey === undefined ? [] : [result.handshakeKey]);
+    for (const key of keys) {
+      await options?.onHandshake?.(key);
+    }
+    return result.response;
   }
 
   public async confirmComplete(): Promise<void> {
@@ -71,28 +86,37 @@ class LoopbackTransport implements ConnectTransport {
   }
 }
 
-/** Creates a loopback transport carrying the relay (dir + PIN) profile. */
-function createRelayLoopback(walletHandler: (jwe: string, requestKey: Uint8Array) => Promise<string>): LoopbackTransport {
+/** Creates a loopback transport carrying the relay (dir + SAS handshake) profile. */
+function createRelayLoopback(
+  walletHandler: (jwe: string, requestKey: Uint8Array) => Promise<LoopbackWalletResult>,
+): LoopbackTransport {
   let requestKey: Uint8Array;
   return new LoopbackTransport({
-    requiresPin    : true,
-    profileFactory : async (): Promise<Omit<ConnectRequestProfile, 'state'>> => {
+    requiresHandshake : true,
+    profileFactory    : async (): Promise<Omit<ConnectRequestProfile, 'state'>> => {
       requestKey = CryptoUtils.randomBytes(32);
       const reply: ReplyDescriptor = { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' };
       return { encryption: { mode: 'dir', requestKey }, reply };
     },
-    walletHandler: (jwe: string): Promise<string> => walletHandler(jwe, requestKey),
+    walletHandler: (jwe: string): Promise<LoopbackWalletResult> => walletHandler(jwe, requestKey),
   });
 }
 
-/** Simulates the wallet-side approval: opens the request and seals a minted-delegate response. */
-async function approveWithMintedDelegate({ jwe, requestKey, providerDid, pin }: {
+/** Simulates the wallet-side approval: opens the request, runs SAS handshake, and seals a minted-delegate response. */
+async function approveWithMintedDelegate({ jwe, requestKey, providerDid, handshakeKeyOverride }: {
   jwe: string;
   requestKey: Uint8Array;
   providerDid: string;
-  pin?: string;
-}): Promise<{ responseJwe: string; request: ConnectRequest; delegateDid: string }> {
+  handshakeKeyOverride?: Jwk;
+}): Promise<{
+  responseJwe: string;
+  request: ConnectRequest;
+  delegateDid: string;
+  handshakeKey: Jwk;
+  symbols: readonly ConnectVerificationSymbol[];
+}> {
   const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+  const handshake = await createConnectVerificationHandshake({ request, requestJwe: jwe });
 
   const delegate = await DidJwk.create();
   const approval: ConnectApproval = {
@@ -106,11 +130,11 @@ async function approveWithMintedDelegate({ jwe, requestKey, providerDid, pin }: 
     request,
     providerDid,
     approval,
-    signer: delegate,
-    pin,
+    signer       : delegate,
+    handshakeKey : handshakeKeyOverride ?? handshake.walletEpk,
   });
 
-  return { responseJwe, request, delegateDid: delegate.uri };
+  return { responseJwe, request, delegateDid: delegate.uri, handshakeKey: handshake.walletEpk, symbols: handshake.symbols };
 }
 
 describe('ConnectClient + ConnectProvider (loopback)', () => {
@@ -118,7 +142,6 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const owner = await DidJwk.create();
     const delegate = await DidJwk.create();
     const portable = await delegate.export();
-    const pin = '163902';
     for (const requestType of ['connect', 'refresh'] as const) {
       const metadata = { origin: 'https://approved.example' };
       const permissionRequests: ConnectRequest['permissionRequests'] = [{
@@ -126,17 +149,27 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         permissionScopes : [{ interface: 'Records', method: 'Read', module: 'https://approved.example/module' }],
       }];
       const approvedPermissions = structuredClone(permissionRequests);
-      const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+      const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
         const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+        const handshake = await createConnectVerificationHandshake({ request, requestJwe: jwe });
         expect(request.clientMetadata).toEqual({ origin: 'https://approved.example' });
         expect(request.permissionRequests).toEqual(approvedPermissions);
         expect(request.requestType).toBe(requestType);
-        return ConnectProvider.sealApprovedResponse({ request, providerDid : owner.uri, signer      : delegate, pin,
-          approval    : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [],
-            ...(requestType === 'refresh' ? {} : { delegatePortableDid: portable }) },
+        const response = await ConnectProvider.sealApprovedResponse({
+          request,
+          providerDid  : owner.uri,
+          signer       : delegate,
+          handshakeKey : handshake.walletEpk,
+          approval     : {
+            delegateDid        : delegate.uri,
+            delegateGrants     : TEST_GRANTS,
+            sessionRevocations : [],
+            ...(requestType === 'refresh' ? {} : { delegatePortableDid: portable }),
+          },
         });
+        return { response, handshakeKey: handshake.walletEpk };
       });
-      const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
+      const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
       const options = {
         appName        : 'Snapshot application',
         requestType,
@@ -152,22 +185,24 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     }
   });
 
-  it('should complete a relay-profile handshake with a PIN', async () => {
+  it('should complete a relay-profile handshake with matching pre-approval SAS verification symbols', async () => {
     const provider = await DidJwk.create();
-    const pin = '482913';
     let observedRequest: ConnectRequest | undefined;
     let mintedDelegateDid: string | undefined;
+    let walletSymbols: readonly ConnectVerificationSymbol[] | undefined;
+    let appSymbols: readonly ConnectVerificationSymbol[] | undefined;
 
-    const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
-      const approved = await approveWithMintedDelegate({ jwe, requestKey, providerDid: provider.uri, pin });
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
+      const approved = await approveWithMintedDelegate({ jwe, requestKey, providerDid: provider.uri });
       observedRequest = approved.request;
       mintedDelegateDid = approved.delegateDid;
-      return approved.responseJwe;
+      walletSymbols = approved.symbols;
+      return { response: approved.responseJwe, handshakeKey: approved.handshakeKey };
     });
 
     const client = new ConnectClient({
       transport,
-      requestPin: async (): Promise<string> => pin,
+      onVerificationReady: (symbols): void => { appSymbols = symbols; },
     });
 
     const result = await client.connect({
@@ -178,6 +213,10 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       permissionRequests         : [],
       requestedSessionTtlSeconds : 3600,
     });
+
+    // Both sides independently derived the exact same 3 SAS symbols.
+    expect(appSymbols).toBeDefined();
+    expect(appSymbols).toEqual(walletSymbols);
 
     // The wallet saw the request the client built.
     expect(observedRequest).toBeDefined();
@@ -201,19 +240,19 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     expect(transport.confirmCompleteCalls).toBe(1);
   });
 
-  it('should complete a popup-profile handshake without a PIN', async () => {
+  it('should complete a popup-profile handshake without a SAS handshake', async () => {
     const provider = await DidJwk.create();
     const walletOrigin = 'https://wallet.example';
     const walletEphemeral = await X25519.generateKey();
     const walletEpk: Jwk = { kty: 'OKP', crv: 'X25519', x: walletEphemeral.x };
 
     const transport = new LoopbackTransport({
-      requiresPin    : false,
-      profileFactory : async (): Promise<Omit<ConnectRequestProfile, 'state'>> => ({
+      requiresHandshake : false,
+      profileFactory    : async (): Promise<Omit<ConnectRequestProfile, 'state'>> => ({
         encryption : { mode: 'ecdh-es', walletEpk, walletOrigin },
         reply      : { mode: 'post_message' },
       }),
-      walletHandler: async (jwe: string): Promise<string> => {
+      walletHandler: async (jwe: string): Promise<LoopbackWalletResult> => {
         const request = await ConnectProvider.openRequest({
           jwe,
           decryption: { mode: 'ecdh-es', recipientPrivateKey: walletEphemeral, walletOrigin },
@@ -221,7 +260,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         expect(request.reply).toEqual({ mode: 'post_message' });
 
         const delegate = await DidJwk.create();
-        return await ConnectProvider.sealApprovedResponse({
+        const response = await ConnectProvider.sealApprovedResponse({
           request,
           providerDid : provider.uri,
           approval    : {
@@ -232,6 +271,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
           },
           signer: delegate,
         });
+        return { response };
       },
     });
 
@@ -248,16 +288,16 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const provider = await DidJwk.create();
     const localDelegate = await DidJwk.create();
     const localPortableDid = await localDelegate.export();
-    const pin = '073114';
 
-    const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
       const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+      const handshake = await createConnectVerificationHandshake({ request, requestJwe: jwe });
       expect(request.delegateDid).toBe(localDelegate.uri);
       expect(request.requestType).toBe('refresh');
       expect(request.expectedProviderDid).toBe(provider.uri);
 
       const responseSigner = await DidJwk.create();
-      return await ConnectProvider.sealApprovedResponse({
+      const response = await ConnectProvider.sealApprovedResponse({
         request,
         providerDid : provider.uri,
         approval    : {
@@ -265,12 +305,13 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
           delegateGrants     : TEST_GRANTS,
           sessionRevocations : TEST_REVOCATIONS,
         },
-        signer: responseSigner,
-        pin,
+        signer       : responseSigner,
+        handshakeKey : handshake.walletEpk,
       });
+      return { response, handshakeKey: handshake.walletEpk };
     });
 
-    const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
     const result = await client.connect({
       appName             : 'Pre-supplied App',
       permissionRequests  : [],
@@ -285,8 +326,8 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
   });
 
   it('should reject a refresh request without a pre-supplied delegate', async () => {
-    const transport = createRelayLoopback(async (): Promise<string> => ConnectProvider.denyToken());
-    const client = new ConnectClient({ transport });
+    const transport = createRelayLoopback(async (): Promise<LoopbackWalletResult> => ({ response: ConnectProvider.denyToken() }));
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({
       appName            : 'Invalid Refresh App',
@@ -295,72 +336,98 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
   });
 
-  it('should resolve undefined when the wallet denies the request', async () => {
-    const transport = createRelayLoopback(async (): Promise<string> => ConnectProvider.denyToken());
+  it('should require onVerificationReady when the transport requires a SAS handshake', () => {
+    const transport = createRelayLoopback(async (): Promise<LoopbackWalletResult> => ({ response: ConnectProvider.denyToken() }));
+    expect(() => new ConnectClient({ transport })).toThrow('onVerificationReady');
+  });
 
+  it('should reject a conflicting second handshake key from the transport (write-once)', async () => {
+    const provider = await DidJwk.create();
+    const rogueKey = await X25519.generateKey();
+    const roguePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: rogueKey.x };
+
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
+      const approved = await approveWithMintedDelegate({ jwe, requestKey, providerDid: provider.uri });
+      return { response: approved.responseJwe, handshakeKeys: [approved.handshakeKey, roguePublicKey] };
+    });
+
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
+    await expect(client.connect({ appName: 'Conflicting Handshake App', permissionRequests: [] }))
+      .rejects.toThrow('conflicting wallet handshake key');
+  });
+
+  it('should resolve undefined when the wallet denies the request without a handshake', async () => {
+    const transport = createRelayLoopback(async (): Promise<LoopbackWalletResult> => ({ response: ConnectProvider.denyToken() }));
+
+    let verificationFired = false;
     const client = new ConnectClient({
       transport,
-      requestPin: async (): Promise<string> => { throw new Error('PIN must not be requested on denial'); },
+      onVerificationReady: (): void => { verificationFired = true; },
     });
     const result = await client.connect({ appName: 'Denied App', permissionRequests: [] });
 
     expect(result).toBeUndefined();
+    expect(verificationFired).toBe(false);
     expect(transport.confirmCompleteCalls).toBe(0);
   });
 
-  it('should fail closed end-to-end when the user enters the wrong PIN', async () => {
+  it('should fail closed end-to-end when the response apv does not match the handshake walletEpk', async () => {
     const provider = await DidJwk.create();
+    const attackerKey = await X25519.generateKey();
+    const attackerPublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: attackerKey.x };
 
-    const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
       const approved = await approveWithMintedDelegate({
         jwe,
         requestKey,
-        providerDid : provider.uri,
-        pin         : '482913',
+        providerDid          : provider.uri,
+        handshakeKeyOverride : attackerPublicKey,
       });
-      return approved.responseJwe;
+      return { response: approved.responseJwe, handshakeKey: approved.handshakeKey };
     });
 
-    const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => '000000' });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
-    await expect(client.connect({ appName: 'Wrong PIN App', permissionRequests: [] })).rejects.toThrow();
+    await expect(client.connect({ appName: 'Split-View Attack App', permissionRequests: [] })).rejects.toThrow('"apv"');
     expect(transport.confirmCompleteCalls).toBe(0);
   });
 
-  it('should reject when the transport requires a PIN but no requestPin callback exists', async () => {
+  it('should fail closed when a relay response arrives without a verified handshake', async () => {
     const provider = await DidJwk.create();
-    const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
-      const approved = await approveWithMintedDelegate({ jwe, requestKey, providerDid: provider.uri, pin: '1234' });
-      return approved.responseJwe;
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
+      const approved = await approveWithMintedDelegate({ jwe, requestKey, providerDid: provider.uri });
+      return { response: approved.responseJwe };
     });
 
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
-    await expect(client.connect({ appName: 'No PIN Callback App', permissionRequests: [] }))
-      .rejects.toThrow('no `requestPin` callback');
+    await expect(client.connect({ appName: 'Missing Handshake App', permissionRequests: [] }))
+      .rejects.toThrow('without a verified wallet handshake');
+    expect(transport.confirmCompleteCalls).toBe(0);
   });
 
   it('should reject when the wallet grants to a different delegate than requested', async () => {
     const provider = await DidJwk.create();
     const localDelegate = await DidJwk.create();
-    const pin = '556677';
 
-    const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
       const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+      const handshake = await createConnectVerificationHandshake({ request, requestJwe: jwe });
 
       // A misbehaving wallet ignores the request-supplied delegate. Bypass the
       // provider's own guard by lying about the request's `delegateDid`.
       const rogueDelegate = await DidJwk.create();
-      return await ConnectProvider.sealApprovedResponse({
-        request     : { ...request, delegateDid: rogueDelegate.uri },
-        providerDid : provider.uri,
-        approval    : { delegateDid: rogueDelegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [] },
-        signer      : rogueDelegate,
-        pin,
+      const response = await ConnectProvider.sealApprovedResponse({
+        request      : { ...request, delegateDid: rogueDelegate.uri },
+        providerDid  : provider.uri,
+        approval     : { delegateDid: rogueDelegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [] },
+        signer       : rogueDelegate,
+        handshakeKey : handshake.walletEpk,
       });
+      return { response, handshakeKey: handshake.walletEpk };
     });
 
-    const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({
       appName             : 'Delegate Mismatch App',
@@ -371,23 +438,24 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
 
   it('should reject when a wallet-minted response omits the portable delegate DID', async () => {
     const provider = await DidJwk.create();
-    const pin = '998877';
 
-    const transport = createRelayLoopback(async (jwe, requestKey): Promise<string> => {
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
       const request = await ConnectProvider.openRequest({ jwe, decryption: { mode: 'dir', requestKey } });
+      const handshake = await createConnectVerificationHandshake({ request, requestJwe: jwe });
 
       // Bypass the provider guard by pretending the request pre-supplied the delegate.
       const delegate = await DidJwk.create();
-      return await ConnectProvider.sealApprovedResponse({
-        request     : { ...request, delegateDid: delegate.uri },
-        providerDid : provider.uri,
-        approval    : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [] },
-        signer      : delegate,
-        pin,
+      const response = await ConnectProvider.sealApprovedResponse({
+        request      : { ...request, delegateDid: delegate.uri },
+        providerDid  : provider.uri,
+        approval     : { delegateDid: delegate.uri, delegateGrants: TEST_GRANTS, sessionRevocations: [] },
+        signer       : delegate,
+        handshakeKey : handshake.walletEpk,
       });
+      return { response, handshakeKey: handshake.walletEpk };
     });
 
-    const client = new ConnectClient({ transport, requestPin: async (): Promise<string> => pin });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({ appName: 'Missing Portable App', permissionRequests: [] }))
       .rejects.toThrow('omitted `delegatePortableDid`');
@@ -473,10 +541,56 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       })).rejects.toThrow('Connect expected wallet profile');
     });
 
+    it('should enforce handshakeKey rules for direct_post and post_message channels', async () => {
+      const provider = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const responsePrivateKey = await X25519.generateKey();
+      const handshakePrivateKey = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakePrivateKey.x };
+
+      const baseRequest: ConnectRequest = {
+        clientDid           : provider.uri,
+        appName             : 'Channel Guard App',
+        permissionRequests  : [],
+        supportedDidMethods : ['did:jwk'],
+        nonce               : randomToken(),
+        state               : randomToken(),
+        responseKey         : { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x },
+        reply               : { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' },
+      };
+      const approval: ConnectApproval = {
+        delegateDid         : delegate.uri,
+        delegatePortableDid : await delegate.export(),
+        delegateGrants      : [],
+        sessionRevocations  : [],
+      };
+      const authRequest: ConnectRequest = {
+        ...baseRequest,
+        requestType    : 'authenticate',
+        authentication : { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+      };
+
+      const sealers = [
+        (request: ConnectRequest, key?: Jwk): Promise<string> =>
+          ConnectProvider.sealApprovedResponse({ request, providerDid: provider.uri, approval, signer: delegate, handshakeKey: key }),
+        (request: ConnectRequest, key?: Jwk): Promise<string> =>
+          ConnectProvider.sealAuthenticationResponse({
+            request, providerDid: provider.uri, approval: { authenticationProof: 'proof' }, signer: delegate, handshakeKey: key,
+          }),
+      ];
+      for (const [seal, req] of [[sealers[0], baseRequest], [sealers[1], authRequest]] as const) {
+        await expect(seal(req, undefined)).rejects.toThrow('`handshakeKey` is required');
+        await expect(seal({ ...req, reply: { mode: 'post_message' } }, handshakeKey))
+          .rejects.toThrow('`handshakeKey` must not be supplied');
+      }
+    });
+
     it('should reject approval output that contradicts a request-supplied delegate', async () => {
       const provider = await DidJwk.create();
       const localDelegate = await DidJwk.create();
       const responsePrivateKey = await X25519.generateKey();
+      const handshakePrivateKey = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakePrivateKey.x };
 
       const request: ConnectRequest = {
         clientDid           : provider.uri,
@@ -497,6 +611,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         providerDid : provider.uri,
         approval    : { delegateDid: otherDelegate.uri, delegateGrants: [], sessionRevocations: [] },
         signer      : otherDelegate,
+        handshakeKey,
       })).rejects.toThrow('does not match the request-supplied');
 
       await expect(ConnectProvider.sealApprovedResponse({
@@ -509,6 +624,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
           sessionRevocations  : [],
         },
         signer: otherDelegate,
+        handshakeKey,
       })).rejects.toThrow('must not return delegate key material');
 
       await expect(ConnectProvider.sealApprovedResponse({
@@ -516,6 +632,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         providerDid : provider.uri,
         approval    : { delegateDid: otherDelegate.uri, delegateGrants: [], sessionRevocations: [] },
         signer      : otherDelegate,
+        handshakeKey,
       })).rejects.toThrow('must include `delegatePortableDid`');
     });
   });

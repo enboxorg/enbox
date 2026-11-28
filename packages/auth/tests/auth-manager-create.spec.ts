@@ -738,11 +738,11 @@ describe('AuthManager.walletConnect()', () => {
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
     const session = await manager.walletConnect({
-      displayName        : 'Test App',
-      connectServerUrl   : 'https://relay.example.com',
-      permissionRequests : [],
-      onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
+      displayName         : 'Test App',
+      connectServerUrl    : 'https://relay.example.com',
+      permissionRequests  : [],
+      onWalletUriReady    : () => {},
+      onVerificationReady : () => {},
     });
 
     expect(initCalls).toHaveLength(1);
@@ -771,11 +771,11 @@ describe('AuthManager.walletConnect()', () => {
 
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
     await manager.walletConnect({
-      displayName        : 'Test App',
-      connectServerUrl   : 'https://relay.example.com',
-      permissionRequests : [],
-      onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
+      displayName         : 'Test App',
+      connectServerUrl    : 'https://relay.example.com',
+      permissionRequests  : [],
+      onWalletUriReady    : () => {},
+      onVerificationReady : () => {},
     });
 
     expect(initCalls).toHaveLength(0);
@@ -799,11 +799,11 @@ describe('AuthManager.walletConnect()', () => {
 
     const manager = await AuthManager.create({ password: 'my-password', storage: new MemoryStorage() });
     await manager.walletConnect({
-      displayName        : 'Test App',
-      connectServerUrl   : 'https://relay.example.com',
-      permissionRequests : [],
-      onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
+      displayName         : 'Test App',
+      connectServerUrl    : 'https://relay.example.com',
+      permissionRequests  : [],
+      onWalletUriReady    : () => {},
+      onVerificationReady : () => {},
     });
 
     expect(initCalls[0].password).toBe('my-password');
@@ -828,11 +828,11 @@ describe('AuthManager.walletConnect()', () => {
     manager.on('vault-unlocked', () => { events.push('vault-unlocked'); });
 
     await manager.walletConnect({
-      displayName        : 'Test App',
-      connectServerUrl   : 'https://relay.example.com',
-      permissionRequests : [],
-      onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
+      displayName         : 'Test App',
+      connectServerUrl    : 'https://relay.example.com',
+      permissionRequests  : [],
+      onWalletUriReady    : () => {},
+      onVerificationReady : () => {},
     });
 
     expect(events).toContain('vault-unlocked');
@@ -856,20 +856,20 @@ describe('AuthManager.walletConnect()', () => {
     const manager = await AuthManager.create({ storage: new MemoryStorage() });
 
     const first = manager.walletConnect({
-      displayName        : 'Test App',
-      connectServerUrl   : 'https://relay.example.com',
-      permissionRequests : [],
-      onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
+      displayName         : 'Test App',
+      connectServerUrl    : 'https://relay.example.com',
+      permissionRequests  : [],
+      onWalletUriReady    : () => {},
+      onVerificationReady : () => {},
     });
 
     await expect(
       manager.walletConnect({
-        displayName        : 'Test App 2',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '5678',
+        displayName         : 'Test App 2',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       })
     ).rejects.toThrow('A connection attempt is already in progress');
 
@@ -887,11 +887,11 @@ describe('AuthManager.walletConnect()', () => {
 
     try {
       await manager.walletConnect({
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       });
     } catch { /* expected */ }
 
@@ -916,11 +916,11 @@ describe('AuthManager.walletConnect()', () => {
 
     const manager = await AuthManager.create({ sync: '20s', storage: new MemoryStorage() });
     await manager.walletConnect({
-      displayName        : 'Test App',
-      connectServerUrl   : 'https://relay.example.com',
-      permissionRequests : [],
-      onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
+      displayName         : 'Test App',
+      connectServerUrl    : 'https://relay.example.com',
+      permissionRequests  : [],
+      onWalletUriReady    : () => {},
+      onVerificationReady : () => {},
     });
 
     expect(syncCalls).toHaveLength(1);

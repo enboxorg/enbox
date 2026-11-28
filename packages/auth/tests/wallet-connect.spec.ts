@@ -336,11 +336,11 @@ describe('walletConnect', () => {
     const session = await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: 'off' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 
@@ -358,11 +358,11 @@ describe('walletConnect', () => {
       walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
-          displayName        : 'Test App',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
+          displayName         : 'Test App',
+          connectServerUrl    : 'https://relay.example.com',
+          permissionRequests  : [],
+          onWalletUriReady    : () => {},
+          onVerificationReady : () => {},
         },
       )
     ).rejects.toThrow('Connection was denied by the wallet');
@@ -380,11 +380,11 @@ describe('walletConnect', () => {
       await walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
-          displayName        : 'Test App',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
+          displayName         : 'Test App',
+          connectServerUrl    : 'https://relay.example.com',
+          permissionRequests  : [],
+          onWalletUriReady    : () => {},
+          onVerificationReady : () => {},
         },
       );
     } catch (error: unknown) {
@@ -419,11 +419,11 @@ describe('walletConnect', () => {
     const session = await runWalletConnect(
       context,
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 
@@ -470,7 +470,7 @@ describe('walletConnect', () => {
         connectServerUrl     : 'https://relay.example.com',
         permissionRequests   : [],
         onWalletUriReady     : () => {},
-        validatePin          : async () => '1234',
+        onVerificationReady  : () => {},
         preSupplyDelegateDid : true,
         delegatePortableDid  : delegatePortableDid,
       },
@@ -505,12 +505,12 @@ describe('walletConnect', () => {
     await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
-        walletUri          : 'custom://wallet',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
+        walletUri           : 'custom://wallet',
       },
     );
 
@@ -537,11 +537,11 @@ describe('walletConnect', () => {
     await walletConnect(
       { userAgent: agent, emitter, storage }, // no defaultSync = live mode
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 
@@ -570,11 +570,11 @@ describe('walletConnect', () => {
     await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '30s' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 
@@ -607,11 +607,11 @@ describe('walletConnect', () => {
     const session = await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : CHAT_PERMISSION_REQUESTS,
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : CHAT_PERMISSION_REQUESTS,
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 
@@ -636,11 +636,11 @@ describe('walletConnect', () => {
       walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
-          displayName        : 'Test App',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
+          displayName         : 'Test App',
+          connectServerUrl    : 'https://relay.example.com',
+          permissionRequests  : [],
+          onWalletUriReady    : () => {},
+          onVerificationReady : () => {},
         },
       )
     ).rejects.toThrow('Wallet connect failed: import failed');
@@ -672,11 +672,11 @@ describe('walletConnect', () => {
       walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
-          displayName        : 'Test App',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : CHAT_PERMISSION_REQUESTS,
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
+          displayName         : 'Test App',
+          connectServerUrl    : 'https://relay.example.com',
+          permissionRequests  : CHAT_PERMISSION_REQUESTS,
+          onWalletUriReady    : () => {},
+          onVerificationReady : () => {},
         },
       )
     ).rejects.toThrow('Wallet connect failed');
@@ -710,11 +710,11 @@ describe('walletConnect', () => {
       walletConnect(
         { userAgent: agent, emitter, storage, defaultSync: '15s' },
         {
-          displayName        : 'Test App',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : CHAT_PERMISSION_REQUESTS,
-          onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
+          displayName         : 'Test App',
+          connectServerUrl    : 'https://relay.example.com',
+          permissionRequests  : CHAT_PERMISSION_REQUESTS,
+          onWalletUriReady    : () => {},
+          onVerificationReady : () => {},
         },
       )
     ).rejects.toThrow('Wallet connect failed: trigger cleanup');
@@ -740,12 +740,12 @@ describe('walletConnect', () => {
     await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
-        sync               : '45s',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
+        sync                : '45s',
       },
     );
 
@@ -773,11 +773,11 @@ describe('walletConnect', () => {
     await walletConnect(
       { userAgent: agent, emitter, storage, defaultSync: '15s' },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 
@@ -814,11 +814,11 @@ describe('walletConnect', () => {
         },
       },
       {
-        displayName        : 'Test App',
-        connectServerUrl   : 'https://relay.example.com',
-        permissionRequests : [],
-        onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
+        displayName         : 'Test App',
+        connectServerUrl    : 'https://relay.example.com',
+        permissionRequests  : [],
+        onWalletUriReady    : () => {},
+        onVerificationReady : () => {},
       },
     );
 

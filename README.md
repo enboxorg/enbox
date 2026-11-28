@@ -129,7 +129,7 @@ await store.dispose();
 Create one connection store for the application/data path and retain it for the
 application lifetime. Separate stores intentionally do not coordinate.
 
-For terminal tools, `@enbox/cli` provides the same app APIs with a relay/PIN
+For terminal tools, `@enbox/cli` provides the same app APIs with a relay
 connect handler that prints a QR code or opens the wallet approval link.
 
 See [packages/api/README.md](./packages/api/README.md) and the
@@ -179,7 +179,7 @@ configuration, storage backends, and registration options.
 | [`@enbox/api`](./packages/api) | High-level SDK: connection lifecycle, typed modules, and records |
 | [`@enbox/auth`](./packages/auth) | Headless auth, local vault connect, wallet connect, session restore |
 | [`@enbox/browser`](./packages/browser) | Browser helpers and polyfills |
-| [`@enbox/cli`](./packages/cli) | CLI helpers and relay/PIN wallet connect handler |
+| [`@enbox/cli`](./packages/cli) | CLI helpers and relay wallet connect handler |
 | [`@enbox/modules`](./packages/modules) | Shared module definitions and JSON Schemas |
 | [`@enbox/module-codegen`](./packages/module-codegen) | TypeScript generation from module definitions and schemas |
 | [`@enbox/agent`](./packages/agent) | Identity vault, key management, local DWN, sync engine |

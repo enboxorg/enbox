@@ -12,6 +12,7 @@
  */
 
 import type { BearerDid } from '@enbox/dids';
+import type { Jwk } from '@enbox/crypto';
 import type { ConnectApproval, ConnectAuthenticationResponse, ConnectRequest, ConnectRequestDecryption, ConnectResponse } from './types.js';
 
 import { CONNECT_DENIED_TOKEN } from './types.js';
@@ -70,7 +71,8 @@ export class ConnectProvider {
    * Seals the output of an approved connect ceremony into a response
    * envelope: stamps `aud`/`nonce`/`state` echoes and the `iat`/`exp` window,
    * signs the payload with the wallet's response signer, and encrypts it to
-   * the request's `responseKey` (with the PIN wrapper on relay channels).
+   * the request's `responseKey` (binding `handshakeKey` into `apv` on relay
+   * channels).
    *
    * @param params - The sealing parameters.
    * @param params.request - The opened request being approved.
@@ -79,17 +81,18 @@ export class ConnectProvider {
    * @param params.signer - The wallet's response signing `did:jwk` (the minted
    *   delegate for wallet-minted sessions, or a fresh DID when the request
    *   pre-supplied its own delegate).
-   * @param params.pin - The user-verified PIN on relay channels.
+   * @param params.handshakeKey - Optional wallet ephemeral X25519 handshake public key on relay channels.
    * @returns A promise resolving to the sealed response as a Compact JWE string.
    */
-  public static async sealApprovedResponse({ request, providerDid, approval, signer, pin }: {
+  public static async sealApprovedResponse({ request, providerDid, approval, signer, handshakeKey }: {
     request: ConnectRequest;
     providerDid: string;
     approval: ConnectApproval;
     signer: BearerDid;
-    pin?: string;
+    handshakeKey?: Jwk;
   }): Promise<string> {
     assertExpectedProviderDid(request, providerDid);
+    assertChannelHandshakeKey(request, handshakeKey);
     if (request.requestType === 'authenticate') { throw new ConnectAuthenticationError('invalid-request'); }
     if ((request.authentication === undefined) !== (approval.authenticationProof === undefined)) {
       throw new ConnectAuthenticationError('invalid-proof');
@@ -120,19 +123,20 @@ export class ConnectProvider {
       ...(approval.delegatePortableDid !== undefined ? { delegatePortableDid: approval.delegatePortableDid } : {}),
     };
 
-    return await sealResponse({ response, signer, responseKey: request.responseKey, pin });
+    return await sealResponse({ response, signer, responseKey: request.responseKey, handshakeKey });
   }
 
   /** Seal a verified-request owner's authentication-only approval; no delegate fields are permitted. */
-  public static async sealAuthenticationResponse({ request, providerDid, approval, signer, pin }: {
+  public static async sealAuthenticationResponse({ request, providerDid, approval, signer, handshakeKey }: {
     request: ConnectRequest;
     providerDid: string;
     approval: { authenticationProof: string };
     signer: BearerDid;
-    pin?: string;
+    handshakeKey?: Jwk;
   }): Promise<string> {
     assertConnectAuthenticationRequest(request);
     assertExpectedProviderDid(request, providerDid);
+    assertChannelHandshakeKey(request, handshakeKey);
     if (typeof approval.authenticationProof !== 'string' || approval.authenticationProof.length === 0 ||
         ['delegateDid', 'delegatePortableDid', 'delegateGrants', 'sessionRevocations'].some(key => Object.hasOwn(approval, key))) {
       throw new ConnectAuthenticationError('invalid-proof');
@@ -143,7 +147,7 @@ export class ConnectProvider {
       iat, exp                 : iat + CONNECT_RESPONSE_TTL_SECONDS, nonce               : request.nonce, state               : request.state,
       authenticationProof : approval.authenticationProof,
     };
-    return sealAuthenticationResponse({ response, signer, responseKey: request.responseKey, pin });
+    return sealAuthenticationResponse({ response, signer, responseKey: request.responseKey, handshakeKey });
   }
 
   /**
@@ -152,5 +156,15 @@ export class ConnectProvider {
    */
   public static denyToken(): string {
     return CONNECT_DENIED_TOKEN;
+  }
+}
+
+/** Enforces that `direct_post` responses bind `handshakeKey` and `post_message` responses do not. */
+function assertChannelHandshakeKey(request: ConnectRequest, handshakeKey: Jwk | undefined): void {
+  if (request.reply.mode === 'direct_post' && handshakeKey === undefined) {
+    throw new Error('Connect: `handshakeKey` is required when sealing a `direct_post` relay response.');
+  }
+  if (request.reply.mode === 'post_message' && handshakeKey !== undefined) {
+    throw new Error('Connect: `handshakeKey` must not be supplied for `post_message` responses.');
   }
 }

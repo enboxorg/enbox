@@ -9,8 +9,9 @@
  */
 
 import type { DwnModuleDefinition } from '@enbox/agent';
+import type { Jwk } from '@enbox/crypto';
 import type { WalletConnectClientOptions } from '../src/wallet-connect-client.js';
-import type { ConnectRequest, ConnectResponse } from '@enbox/connect';
+import type { ConnectRequest, ConnectVerificationSymbol } from '@enbox/connect';
 
 import sinon from 'sinon';
 
@@ -19,14 +20,20 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { DidJwk } from '@enbox/dids';
 import { Ed25519 } from '@enbox/crypto';
 import { WalletConnect } from '../src/wallet-connect-client.js';
-import { CONNECT_DENIED_TOKEN, ConnectProvider, createOwnerAuthenticationProof, parseWalletConnectUri, randomToken, sealResponse } from '@enbox/connect';
+import {
+  CONNECT_DENIED_TOKEN,
+  ConnectProvider,
+  createConnectVerificationHandshake,
+  createOwnerAuthenticationProof,
+  parseWalletConnectUri,
+  randomToken,
+} from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 const providerDid = 'did:dht:provider789';
 const connectServerUrl = 'https://relay.test/connect';
 const walletUri = 'https://wallet.test/connect/app';
 const relayRequestUri = 'https://relay.test/connect/authorize/req-1.jwt';
-const pin = '1234';
 
 const TestModuleDefinition = {
   module    : 'https://example.com/modules/wallet-connect-test',
@@ -37,8 +44,14 @@ const TestModuleDefinition = {
 
 const delegateGrants = [{ recordId: 'grant-1' }] as any;
 
-/** Wallet-side behavior: receives the opened request, returns the relay `id_token` body. */
-type WalletBehavior = (request: ConnectRequest) => Promise<string>;
+type WalletOutcome = {
+  idToken: string;
+  handshakeKey?: Jwk;
+  symbols?: readonly ConnectVerificationSymbol[];
+};
+
+/** Wallet-side behavior: receives the opened request + raw JWE, returns the relay token and optional SAS handshake key. */
+type WalletBehavior = (request: ConnectRequest, requestJwe: string) => Promise<WalletOutcome>;
 
 type StubRelay = {
   /** Sealed request JWEs pushed to the relay `par` route. */
@@ -47,21 +60,25 @@ type StubRelay = {
   walletUris: string[];
   /** Requests the wallet side successfully opened. */
   openedRequests: ConnectRequest[];
+  /** Verification symbols derived on the wallet side, when a SAS handshake ran. */
+  walletSymbols: () => readonly ConnectVerificationSymbol[] | undefined;
   /** The `onWalletUriReady` callback wired to the wallet behavior. */
   onWalletUriReady: (uri: string) => Promise<void>;
 };
 
 /**
- * Stubs `globalThis.fetch` with an in-memory relay (`par` + `token` routes)
+ * Stubs `globalThis.fetch` with an in-memory relay (`par` + `handshake` + `token` routes)
  * and returns an `onWalletUriReady` callback that runs the wallet side:
- * parse the fragment, open the sealed request, and post the wallet
- * behavior's `id_token` for the client's token poll to collect.
+ * parse the fragment, open the sealed request, publish the SAS handshake key,
+ * and post the wallet behavior's `id_token` for the client's token poll to collect.
  */
 function stubRelay(wallet: WalletBehavior): StubRelay {
   const parRequests: string[] = [];
   const walletUris: string[] = [];
   const openedRequests: ConnectRequest[] = [];
   let tokenBody: string | undefined;
+  let handshakeKey: Jwk | undefined;
+  let derivedSymbols: readonly ConnectVerificationSymbol[] | undefined;
 
   sinon.stub(globalThis, 'fetch').callsFake(async (input: any, init?: any): Promise<Response> => {
     const url = String(input);
@@ -73,6 +90,19 @@ function stubRelay(wallet: WalletBehavior): StubRelay {
         JSON.stringify({ request_uri: relayRequestUri, expires_in: 600 }),
         { status: 201, headers: { 'Content-Type': 'application/json' } },
       );
+    }
+
+    if (url.startsWith(`${connectServerUrl}/handshake/`)) {
+      if (handshakeKey === undefined) {
+        return new Response(JSON.stringify({ ready: false }), {
+          status  : 200,
+          headers : { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ ready: true, walletEpk: handshakeKey }), {
+        status  : 200,
+        headers : { 'Content-Type': 'application/json' },
+      });
     }
 
     if (url.startsWith(`${connectServerUrl}/token/`)) {
@@ -92,27 +122,36 @@ function stubRelay(wallet: WalletBehavior): StubRelay {
       throw new Error('wallet URI did not carry connect fragment params');
     }
 
+    const requestJwe = parRequests[parRequests.length - 1];
     const request = await ConnectProvider.openRequest({
-      jwe        : parRequests[parRequests.length - 1],
+      jwe        : requestJwe,
       decryption : { mode: 'dir', requestKey: parsed.encryptionKey },
     });
     openedRequests.push(request);
-    tokenBody = await wallet(request);
+    const outcome = await wallet(request, requestJwe);
+    handshakeKey = outcome.handshakeKey;
+    derivedSymbols = outcome.symbols;
+    tokenBody = outcome.idToken;
   };
 
-  return { parRequests, walletUris, openedRequests, onWalletUriReady };
+  return {
+    parRequests,
+    walletUris,
+    openedRequests,
+    walletSymbols: (): readonly ConnectVerificationSymbol[] | undefined => derivedSymbols,
+    onWalletUriReady,
+  };
 }
 
 /** Wallet behavior: approve with a wallet-minted delegate DID. */
-function approveWithWalletMintedDelegate(
-  options: { responsePin?: string } = {},
-): { wallet: WalletBehavior; delegateUri: () => string } {
+function approveWithWalletMintedDelegate(): { wallet: WalletBehavior; delegateUri: () => string } {
   let mintedDelegateUri = '';
 
-  const wallet: WalletBehavior = async (request) => {
+  const wallet: WalletBehavior = async (request, requestJwe) => {
+    const handshake = await createConnectVerificationHandshake({ request, requestJwe });
     const delegate = await DidJwk.create();
     mintedDelegateUri = delegate.uri;
-    return await ConnectProvider.sealApprovedResponse({
+    const idToken = await ConnectProvider.sealApprovedResponse({
       request,
       providerDid,
       approval: {
@@ -121,17 +160,19 @@ function approveWithWalletMintedDelegate(
         delegateGrants,
         sessionRevocations  : [{ grantId: 'grant-1', revocationGrantId: 'revoke-1' }],
       },
-      signer : delegate,
-      pin    : options.responsePin ?? pin,
+      signer       : delegate,
+      handshakeKey : handshake.walletEpk,
     });
+    return { idToken, handshakeKey: handshake.walletEpk, symbols: handshake.symbols };
   };
 
   return { wallet, delegateUri: (): string => mintedDelegateUri };
 }
 
 /** Wallet behavior: approve grants to the request's pre-supplied delegate DID. */
-const approveWithPreSuppliedDelegate: WalletBehavior = async (request) => {
-  return await ConnectProvider.sealApprovedResponse({
+const approveWithPreSuppliedDelegate: WalletBehavior = async (request, requestJwe) => {
+  const handshake = await createConnectVerificationHandshake({ request, requestJwe });
+  const idToken = await ConnectProvider.sealApprovedResponse({
     request,
     providerDid,
     approval: {
@@ -139,35 +180,11 @@ const approveWithPreSuppliedDelegate: WalletBehavior = async (request) => {
       delegateGrants,
       sessionRevocations : [],
     },
-    signer: await DidJwk.create(),
-    pin,
+    signer       : await DidJwk.create(),
+    handshakeKey : handshake.walletEpk,
   });
+  return { idToken, handshakeKey: handshake.walletEpk, symbols: handshake.symbols };
 };
-
-/** Wallet behavior: seal a hand-built (guard-bypassing) response payload. */
-function sealRawResponse(build: (request: ConnectRequest) => Partial<ConnectResponse>): WalletBehavior {
-  return async (request) => {
-    const iat = Math.floor(Date.now() / 1000);
-    const response: ConnectResponse = {
-      providerDid,
-      delegateDid        : 'did:jwk:wallet-delegate',
-      aud                : request.clientDid,
-      iat,
-      exp                : iat + 600,
-      nonce              : request.nonce,
-      state              : request.state,
-      delegateGrants,
-      sessionRevocations : [],
-      ...build(request),
-    };
-    return await sealResponse({
-      response,
-      signer      : await DidJwk.create(),
-      responseKey : request.responseKey,
-      pin,
-    });
-  };
-}
 
 describe('WalletConnect', () => {
   afterEach(() => {
@@ -178,16 +195,21 @@ describe('WalletConnect', () => {
     it('returns verified identity-only completion without delegate credentials or requested modules', async () => {
       const owner = await DidJwk.create();
       const authentication = { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() };
-      const relay = stubRelay(async (request) => ConnectProvider.sealAuthenticationResponse({
-        request, providerDid : owner.uri,
-        approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) },
-        signer      : await DidJwk.create(), pin,
-      }));
+      const relay = stubRelay(async (request, requestJwe) => {
+        const handshake = await createConnectVerificationHandshake({ request, requestJwe });
+        const idToken = await ConnectProvider.sealAuthenticationResponse({
+          request, providerDid  : owner.uri,
+          approval     : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) },
+          signer       : await DidJwk.create(), handshakeKey : handshake.walletEpk,
+        });
+        return { idToken, handshakeKey: handshake.walletEpk, symbols: handshake.symbols };
+      });
       let registered: Readonly<ConnectRequest> | undefined;
       const result = await WalletConnect.initAuthentication({
         displayName             : 'OAuth sign-in', walletUri, connectServerUrl, authentication,
         expectedProviderDid     : owner.uri, onWalletUriReady        : relay.onWalletUriReady,
-        validatePin             : async (): Promise<string> => pin, pollIntervalMs          : 1,
+        onVerificationReady     : (): void => {},
+        pollIntervalMs          : 1,
         onAuthenticationRequest : async (request): Promise<void> => {
           expect(relay.parRequests).toHaveLength(0);
           registered = request;
@@ -209,7 +231,8 @@ describe('WalletConnect', () => {
       await expect(WalletConnect.initAuthentication({
         displayName             : 'OAuth sign-in', walletUri, connectServerUrl,
         authentication          : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
-        onWalletUriReady        : relay.onWalletUriReady, validatePin             : async (): Promise<string> => pin,
+        onWalletUriReady        : relay.onWalletUriReady,
+        onVerificationReady     : (): void => {},
         onAuthenticationRequest : async (): Promise<void> => { throw new Error('Registration unavailable'); },
       })).rejects.toThrow('Registration unavailable');
       expect(relay.parRequests).toHaveLength(0);
@@ -219,20 +242,24 @@ describe('WalletConnect', () => {
     it('retains verified owner authentication alongside approved data grants', async () => {
       const owner = await DidJwk.create();
       const authentication = { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() };
-      const relay = stubRelay(async (request) => {
+      const relay = stubRelay(async (request, requestJwe) => {
+        const handshake = await createConnectVerificationHandshake({ request, requestJwe });
         const delegate = await DidJwk.create();
-        return ConnectProvider.sealApprovedResponse({
-          request, providerDid : owner.uri, signer      : delegate, pin,
-          approval    : {
+        const idToken = await ConnectProvider.sealApprovedResponse({
+          request, providerDid  : owner.uri, signer       : delegate, handshakeKey : handshake.walletEpk,
+          approval     : {
             delegateDid         : delegate.uri, delegatePortableDid : await delegate.export(), delegateGrants, sessionRevocations  : [],
             authenticationProof : await createOwnerAuthenticationProof({ request, owner }),
           },
         });
+        return { idToken, handshakeKey: handshake.walletEpk, symbols: handshake.symbols };
       });
       const result = await WalletConnect.initClient({
-        displayName        : 'OAuth and data', walletUri, connectServerUrl, authentication,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
+        displayName         : 'OAuth and data', walletUri, connectServerUrl, authentication,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       });
       expect(result?.authentication?.subject).toBe(owner.uri);
       expect(result?.authentication?.proof.split('.')).toHaveLength(3);
@@ -241,21 +268,25 @@ describe('WalletConnect', () => {
 
     it('fails closed when an old wallet omits the requested owner proof', async () => {
       const legacy = approveWithWalletMintedDelegate();
-      const relay = stubRelay(async (request) => legacy.wallet({ ...request, authentication: undefined }));
+      const relay = stubRelay(async (request, requestJwe) => legacy.wallet({ ...request, authentication: undefined }, requestJwe));
       await expect(WalletConnect.initClient({
-        displayName        : 'OAuth and data', walletUri, connectServerUrl,
-        authentication     : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady, validatePin        : async (): Promise<string> => pin, pollIntervalMs     : 1,
+        displayName         : 'OAuth and data', walletUri, connectServerUrl,
+        authentication      : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       })).rejects.toThrow();
     });
 
     it('handles wallet denial and rejects identity-only requests through the data adapter', async () => {
-      const relay = stubRelay(async () => CONNECT_DENIED_TOKEN);
+      const relay = stubRelay(async () => ({ idToken: CONNECT_DENIED_TOKEN }));
       const common = {
-        displayName      : 'OAuth sign-in', walletUri, connectServerUrl,
-        authentication   : { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() },
-        onWalletUriReady : relay.onWalletUriReady, validatePin      : async (): Promise<string> => pin, pollIntervalMs   : 1,
+        displayName         : 'OAuth sign-in', walletUri, connectServerUrl,
+        authentication      : { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() },
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       };
       expect(await WalletConnect.initAuthentication(common)).toBeUndefined();
       const before = relay.parRequests.length;
@@ -266,10 +297,10 @@ describe('WalletConnect', () => {
   });
 
   describe('initClient — relay flow', () => {
-    it('should complete the full relay flow and return delegate info', async () => {
+    it('should complete the full relay flow and surface matching SAS verification symbols', async () => {
       const minted = approveWithWalletMintedDelegate();
       const relay = stubRelay(minted.wallet);
-      const pinPrompts: number[] = [];
+      const observedSymbols: Array<readonly ConnectVerificationSymbol[]> = [];
 
       const result = await WalletConnect.initClient({
         displayName                : 'Sample App',
@@ -277,7 +308,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests         : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady           : relay.onWalletUriReady,
-        validatePin                : async (): Promise<string> => { pinPrompts.push(1); return pin; },
+        onVerificationReady        : (symbols): void => { observedSymbols.push(symbols); },
         applicationId              : 'com.example.test',
         requestedSessionTtlSeconds : 2_592_000,
         pollIntervalMs             : 1,
@@ -289,7 +320,8 @@ describe('WalletConnect', () => {
       expect(result!.delegatePortableDid.uri).toBe(minted.delegateUri());
       expect(result!.delegateGrants).toHaveLength(1);
       expect(result!.sessionRevocations).toEqual([{ grantId: 'grant-1', revocationGrantId: 'revoke-1' }]);
-      expect(pinPrompts).toHaveLength(1);
+      expect(observedSymbols).toHaveLength(1);
+      expect(observedSymbols[0]).toEqual(relay.walletSymbols()!);
 
       // The wallet-side request carried the client fields.
       expect(relay.openedRequests).toHaveLength(1);
@@ -321,7 +353,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
-        validatePin          : async (): Promise<string> => pin,
+        onVerificationReady  : (): void => {},
         preSupplyDelegateDid : true,
         pollIntervalMs       : 1,
       });
@@ -341,7 +373,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : (): void => {},
-        validatePin          : async (): Promise<string> => pin,
+        onVerificationReady  : (): void => {},
         preSupplyDelegateDid : true,
         requestType          : 'refresh',
       })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
@@ -371,7 +403,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : relay.onWalletUriReady,
-        validatePin         : async (): Promise<string> => pin,
+        onVerificationReady : (): void => {},
         delegatePortableDid,
         requestType         : 'refresh',
         expectedProviderDid : providerDid,
@@ -391,7 +423,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : (): void => {},
-        validatePin         : async (): Promise<string> => pin,
+        onVerificationReady : (): void => {},
         delegatePortableDid : {
           uri         : 'did:jwk:local-delegate',
           document    : {},
@@ -401,132 +433,28 @@ describe('WalletConnect', () => {
       })).rejects.toThrow('Delegate portable DID must include an Ed25519 private key.');
     });
 
-    it('should reject a wallet response for a different delegate DID when pre-supply is enabled', async () => {
-      const relay = stubRelay(sealRawResponse(() => ({ delegateDid: 'did:jwk:other-delegate' })));
-
-      await expect(WalletConnect.initClient({
-        displayName          : 'Sample App',
-        walletUri,
-        connectServerUrl,
-        permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady     : relay.onWalletUriReady,
-        validatePin          : async (): Promise<string> => pin,
-        preSupplyDelegateDid : true,
-        pollIntervalMs       : 1,
-      })).rejects.toThrow('wallet returned delegate DID \'did:jwk:other-delegate\'');
-      expect(relay.openedRequests[0].delegateDid?.startsWith('did:jwk:')).toBe(true);
-    });
-
-    it('should reject a wallet-minted response that omits delegatePortableDid', async () => {
-      const relay = stubRelay(sealRawResponse(() => ({})));
-
-      await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri,
-        connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        validatePin        : async (): Promise<string> => pin,
-        pollIntervalMs     : 1,
-      })).rejects.toThrow('Connect: wallet response omitted `delegatePortableDid`.');
-    });
-
-    it('should fail closed when the user enters the wrong PIN', async () => {
-      // The response is sealed with the wallet's PIN; a different PIN on the
-      // client derives a different CEK and the AEAD tag check fails — the
-      // PIN itself never transits the relay.
-      const minted = approveWithWalletMintedDelegate({ responsePin: '9999' });
-      const relay = stubRelay(minted.wallet);
-
-      await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri,
-        connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        validatePin        : async (): Promise<string> => pin,
-        pollIntervalMs     : 1,
-      })).rejects.toThrow();
-    });
-
-    it('should return undefined without prompting for a PIN when the wallet explicitly denies access', async () => {
-      const relay = stubRelay(async (): Promise<string> => CONNECT_DENIED_TOKEN);
-      const validatePin = sinon.stub<[], Promise<string>>().resolves(pin);
-
-      const result = await WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri,
-        connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        validatePin,
-        pollIntervalMs     : 1,
-      });
-
-      expect(result).toBeUndefined();
-      expect(validatePin.called).toBe(false);
-    });
-
     it('should await wallet URI handling before polling for the response', async () => {
       let callbackComplete = false;
-      const relay = stubRelay(async (): Promise<string> => {
+      const relay = stubRelay(async (): Promise<WalletOutcome> => {
         await new Promise((resolve): void => { setTimeout(resolve, 0); });
         callbackComplete = true;
-        return CONNECT_DENIED_TOKEN;
+        return { idToken: CONNECT_DENIED_TOKEN };
       });
 
       const result = await WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        validatePin        : async (): Promise<string> => pin,
-        pollIntervalMs     : 1,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       });
 
       // The wallet behavior (running inside `onWalletUriReady`) finished
       // before the first token poll could observe a response.
       expect(callbackComplete).toBe(true);
       expect(result).toBeUndefined();
-    });
-
-    it('should reject when polling exceeds the custom timeout', async () => {
-      const fetchStub = sinon.stub(globalThis, 'fetch');
-      fetchStub.onFirstCall().resolves(
-        new Response(JSON.stringify({ request_uri: relayRequestUri, expires_in: 600 }), {
-          status  : 201,
-          headers : { 'Content-Type': 'application/json' },
-        })
-      );
-      fetchStub.callsFake(async (): Promise<Response> => new Response('Not Found', { status: 404 }));
-
-      await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri,
-        connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : (): void => {},
-        validatePin        : async (): Promise<string> => pin,
-        timeoutMs          : 5,
-        pollIntervalMs     : 1,
-      })).rejects.toThrow('timed out');
-      expect(fetchStub.callCount).toBeGreaterThan(1);
-    });
-
-    it('should throw when the pushed authorization request is rejected', async () => {
-      sinon.stub(globalThis, 'fetch').resolves(
-        new Response('Bad Request', { status: 400, statusText: 'Bad Request' })
-      );
-
-      await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
-        walletUri,
-        connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : (): void => {},
-        validatePin        : async (): Promise<string> => pin,
-      })).rejects.toThrow('Connect: pushed authorization request failed with HTTP 400.');
     });
   });
 
