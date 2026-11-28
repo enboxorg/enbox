@@ -51,11 +51,8 @@ export * from '@enbox/auth/browser';
 // transports: opening/sealing envelopes and the deny token.
 
 export {
-  APP_MANIFEST_WELL_KNOWN_PATH,
   assertValidRedirectUri,
   buildRedirectReturnUri,
-  completeRedirectAuthentication,
-  completeRedirectConnect,
   CONNECT_DENIED_TOKEN,
   CONNECT_VERIFICATION_SYMBOL_COUNT,
   CONNECT_VERIFICATION_SYMBOLS,
@@ -65,12 +62,7 @@ export {
   formatVerificationSymbols,
   generateRedirectResponseSecret,
   isRedirectUriVerifiedInManifest,
-  parseRedirectReturnUri,
   postRelayHandshake,
-  prepareRedirectConnectRequest,
-  REDIRECT_RETURN_ERROR_PARAM,
-  REDIRECT_RETURN_KEY_PARAM,
-  REDIRECT_RETURN_STATE_PARAM,
 } from '@enbox/connect';
 export type {
   ConnectAppManifest,
@@ -79,9 +71,6 @@ export type {
   ConnectVerificationHandshake,
   ConnectVerificationSymbol,
   PendingRedirectConnectSession,
-  PreparedRedirectConnect,
-  PrepareRedirectConnectParams,
-  RedirectReturnPayload,
 } from '@enbox/connect';
 
 // ─── Browser-specific exports ───────────────────────────────────
@@ -99,7 +88,6 @@ export { WalletPostMessageTransport } from './dweb-connect-wallet.js';
 export type { WalletPostMessageTransportOptions } from './dweb-connect-wallet.js';
 export {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
-  DWEB_CONNECT_HELLO_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_PATH,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
@@ -107,7 +95,6 @@ export {
 } from './dweb-connect-messages.js';
 export type {
   DWebConnectAckMessage,
-  DWebConnectHelloMessage,
   DWebConnectLoadedMessage,
   DWebConnectRequestMessage,
   DWebConnectResponseMessage,
@@ -116,16 +103,10 @@ export {
   completeRedirectAuthenticationFromWindow,
   completeRedirectConnectFromWindow,
   getPendingRedirectConnectType,
-  hasPendingRedirectConnect,
-  isIosStandalonePwa,
-  isSessionStorageAvailable,
-  PENDING_REDIRECT_MAX_AGE_MS,
-  PENDING_REDIRECT_STORAGE_KEY,
   startRedirectConnect,
 } from './redirect-connect.js';
 export type {
   CompleteRedirectConnectOptions,
-  RedirectSessionStorage,
   StartRedirectConnectOptions,
 } from './redirect-connect.js';
 export { fetchWalletWellKnown, probeWalletWellKnown, WALLET_WELL_KNOWN_PATH } from './ui/wallet-well-known.js';

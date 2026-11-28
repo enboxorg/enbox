@@ -11,9 +11,8 @@
  * @module
  */
 
-import type { PortableDid } from '@enbox/dids';
 import type {
-  ConnectAuthenticationResolver,
+  CompleteRedirectOptions,
   ConnectRequestType,
   ConnectResult,
   PendingRedirectConnectSession,
@@ -21,10 +20,10 @@ import type {
 } from '@enbox/connect';
 
 import {
+  assertPendingRedirectSessionMode,
   completeRedirectAuthentication,
   completeRedirectConnect,
-  ConnectAuthenticationError,
-  DEFAULT_REDIRECT_SESSION_MAX_AGE_MS,
+  isPendingRedirectSessionExpired,
   parseRedirectReturnUri,
   prepareRedirectConnectRequest,
 } from '@enbox/connect';
@@ -36,9 +35,6 @@ export const PENDING_REDIRECT_STORAGE_KEY = 'enbox:connect:pendingRedirect';
 
 /** Probe key used to verify `sessionStorage` is writable. */
 const SESSION_STORAGE_PROBE_KEY = 'enbox:connect:storageProbe';
-
-/** Maximum age (10 minutes) of a stored pending redirect session. */
-export const PENDING_REDIRECT_MAX_AGE_MS = DEFAULT_REDIRECT_SESSION_MAX_AGE_MS;
 
 /** Minimal storage seam for tests and environments with restricted storage. */
 export type RedirectSessionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -61,8 +57,8 @@ export type StartRedirectConnectOptions = Omit<PrepareRedirectConnectParams, 'cl
   navigate?: (url: string) => void;
 };
 
-/** Options for {@link completeRedirectConnectFromWindow}. */
-export type CompleteRedirectConnectOptions = {
+/** Options for {@link completeRedirectConnectFromWindow} and {@link completeRedirectAuthenticationFromWindow}. */
+export type CompleteRedirectConnectOptions = Omit<CompleteRedirectOptions, 'pendingSession' | 'returnUrl'> & {
   /** Override `sessionStorage` (defaults to `globalThis.sessionStorage`). */
   storage?: RedirectSessionStorage;
 
@@ -71,27 +67,6 @@ export type CompleteRedirectConnectOptions = {
 
   /** Override history fragment scrubbing (defaults to `window.history.replaceState`). */
   scrubFragment?: () => void;
-
-  /** Local delegate credentials re-supplied from the vault when completing a `refresh` redirect. */
-  localDelegatePortableDid?: PortableDid;
-
-  /** Optional provider DID guard enforced when opening the returned response. */
-  expectedProviderDid?: string;
-
-  /** Fetch implementation override. */
-  fetchFn?: PrepareRedirectConnectParams['fetchFn'];
-
-  /** DID resolver used to verify an owner authentication proof. */
-  authenticationResolver?: ConnectAuthenticationResolver;
-
-  /** Per-request HTTP timeout in milliseconds. */
-  timeoutMs?: number;
-
-  /** Clock override returning epoch milliseconds. */
-  now?: () => number;
-
-  /** Sleep override used between short relay-propagation retries. */
-  sleepFn?: (ms: number) => Promise<void>;
 };
 
 /**
@@ -117,8 +92,7 @@ export function isIosStandalonePwa(
   const ua = nav.userAgent ?? '';
   const isIpadDesktopUa = (nav.platform === 'MacIntel' || /Macintosh/i.test(ua))
     && (nav.maxTouchPoints ?? 0) > 1;
-  const isIosDevice = /iPad|iPhone|iPod/i.test(ua) || isIpadDesktopUa;
-  if (!isIosDevice) {
+  if (!(/iPad|iPhone|iPod/i.test(ua) || isIpadDesktopUa)) {
     return false;
   }
   return win?.matchMedia?.('(display-mode: standalone)').matches === true
@@ -186,6 +160,7 @@ function isValidPendingSessionShape(value: unknown): value is PendingRedirectCon
 function readStoredSession(
   storage: RedirectSessionStorage | undefined,
   nowMs: number,
+  maxSessionAgeMs?: number,
 ): StoredRedirectSession | undefined {
   if (storage === undefined) {
     return undefined;
@@ -195,25 +170,13 @@ function readStoredSession(
     if (raw === null) {
       return undefined;
     }
-    const parsed = JSON.parse(raw) as unknown;
-    let session: unknown;
-    let walletUrl: string | undefined;
-    if (typeof parsed === 'object' && parsed !== null && 'session' in parsed) {
-      const envelope = parsed as { session?: unknown; walletUrl?: unknown };
-      session = envelope.session;
-      walletUrl = typeof envelope.walletUrl === 'string' ? envelope.walletUrl : undefined;
-    } else {
-      session = parsed;
-    }
-
-    if (!isValidPendingSessionShape(session)) {
+    const parsed = JSON.parse(raw) as { session?: unknown; walletUrl?: unknown } | null;
+    const session = typeof parsed === 'object' && parsed !== null ? parsed.session : undefined;
+    if (!isValidPendingSessionShape(session) || isPendingRedirectSessionExpired(session, nowMs, maxSessionAgeMs)) {
       storage.removeItem(PENDING_REDIRECT_STORAGE_KEY);
       return undefined;
     }
-    if (nowMs - session.createdAt > PENDING_REDIRECT_MAX_AGE_MS || session.createdAt > nowMs + 60_000) {
-      storage.removeItem(PENDING_REDIRECT_STORAGE_KEY);
-      return undefined;
-    }
+    const walletUrl = typeof parsed?.walletUrl === 'string' ? parsed.walletUrl : undefined;
     return { session, walletUrl };
   } catch {
     try { storage.removeItem(PENDING_REDIRECT_STORAGE_KEY); } catch { /* best effort */ }
@@ -251,8 +214,6 @@ export async function startRedirectConnect(
     ...(options.walletUrl === undefined ? {} : { walletUrl: options.walletUrl }),
   };
   storage.setItem(PENDING_REDIRECT_STORAGE_KEY, JSON.stringify(stored));
-
-  options.signal?.throwIfAborted();
 
   const navigate = options.navigate ?? ((url: string): void => { window.location.assign(url); });
   navigate(prepared.walletUri);
@@ -297,19 +258,6 @@ export function getPendingRedirectConnectType(options: {
   return stored.session.request.requestType ?? 'connect';
 }
 
-/**
- * Returns `true` when the current URL carries an Enbox redirect return
- * fragment (`#enbox_state=...`) AND a non-expired pending redirect session
- * is stored in `sessionStorage`.
- */
-export function hasPendingRedirectConnect(options: {
-  storage?: RedirectSessionStorage;
-  href?: string;
-  now?: () => number;
-} = {}): boolean {
-  return getPendingRedirectConnectType(options) !== undefined;
-}
-
 function consumeRedirectReturn(
   options: CompleteRedirectConnectOptions,
   expectedMode: 'connect' | 'authenticate',
@@ -336,7 +284,8 @@ function consumeRedirectReturn(
   (options.scrubFragment ?? defaultScrubFragment)();
 
   const storage = options.storage ?? defaultSessionStorage();
-  const stored = readStoredSession(storage, (options.now ?? ((): number => Date.now()))());
+  const nowMs = (options.now ?? ((): number => Date.now()))();
+  const stored = readStoredSession(storage, nowMs, options.maxSessionAgeMs);
   if (stored === undefined) {
     throw new Error('[@enbox/browser] No pending redirect connect session was found (it may have expired or been started in another tab).');
   }
@@ -347,13 +296,7 @@ function consumeRedirectReturn(
   if (stored.session.state !== parsed.state) {
     throw new Error('Connect: redirect return `enbox_state` does not match the pending session.');
   }
-  const isAuthSession = stored.session.request.requestType === 'authenticate';
-  if (expectedMode === 'connect' && isAuthSession) {
-    throw new Error('Connect: use completeRedirectAuthentication() for an authentication-only redirect session.');
-  }
-  if (expectedMode === 'authenticate' && !isAuthSession) {
-    throw new ConnectAuthenticationError('invalid-request');
-  }
+  assertPendingRedirectSessionMode(stored.session, expectedMode);
 
   try {
     storage?.removeItem(PENDING_REDIRECT_STORAGE_KEY);
@@ -374,16 +317,11 @@ export async function completeRedirectConnectFromWindowWithMeta(
     return undefined;
   }
 
+  const { storage: _storage, href: _href, scrubFragment: _scrub, ...completeOptions } = options;
   const result = await completeRedirectConnect({
-    pendingSession           : consumed.stored.session,
-    returnUrl                : consumed.href,
-    localDelegatePortableDid : options.localDelegatePortableDid,
-    expectedProviderDid      : options.expectedProviderDid,
-    fetchFn                  : options.fetchFn,
-    authenticationResolver   : options.authenticationResolver,
-    timeoutMs                : options.timeoutMs,
-    now                      : options.now,
-    sleepFn                  : options.sleepFn,
+    ...completeOptions,
+    pendingSession : consumed.stored.session,
+    returnUrl      : consumed.href,
   });
 
   return { result, walletUrl: consumed.stored.walletUrl };
@@ -410,20 +348,17 @@ export async function completeRedirectConnectFromWindow(
  * Completes a pending authentication-only redirect flow on return from the wallet.
  */
 export async function completeRedirectAuthenticationFromWindow(
-  options: CompleteRedirectConnectOptions = {},
+  options: Omit<CompleteRedirectConnectOptions, 'localDelegatePortableDid'> = {},
 ): Promise<Awaited<ReturnType<typeof completeRedirectAuthentication>>> {
   const consumed = consumeRedirectReturn(options, 'authenticate');
   if (consumed === undefined) {
     return undefined;
   }
 
+  const { storage: _storage, href: _href, scrubFragment: _scrub, ...completeOptions } = options;
   return await completeRedirectAuthentication({
-    pendingSession         : consumed.stored.session,
-    returnUrl              : consumed.href,
-    fetchFn                : options.fetchFn,
-    authenticationResolver : options.authenticationResolver,
-    timeoutMs              : options.timeoutMs,
-    now                    : options.now,
-    sleepFn                : options.sleepFn,
+    ...completeOptions,
+    pendingSession : consumed.stored.session,
+    returnUrl      : consumed.href,
   });
 }

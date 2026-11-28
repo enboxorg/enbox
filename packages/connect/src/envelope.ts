@@ -29,7 +29,7 @@ import type { ConnectAuthenticationResponse, ConnectPermissionRequest, ConnectRe
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
-import { CompactJwe, isX25519PublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
+import { CompactJwe, CryptoUtils, isX25519PublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 import { ModulesConfigure, validatePermissionScope } from '@enbox/dwn-sdk-js';
 
 import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
@@ -57,7 +57,18 @@ export const RESPONSE_SECRET_BYTE_LENGTH = 32;
 const MAX_REDIRECT_URI_LENGTH = 2_048;
 
 /** Loopback hosts allowed to use `http:` for local development redirect/callback URIs. */
-export const LOCAL_REDIRECT_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const LOCAL_REDIRECT_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Returns whether `origin` is a canonical `https:` origin or loopback `http:` origin. */
+export function isSafeConnectOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin
+      && (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname)));
+  } catch {
+    return false;
+  }
+}
 
 /** ASCII control characters forbidden in connect URLs. */
 // eslint-disable-next-line no-control-regex
@@ -152,6 +163,36 @@ function requireResponseKey(payload: Record<string, unknown>, context: string): 
   }
 }
 
+/** Shared URL validator for connect `redirectUri` and `callbackUrl` values. */
+function parseSafeConnectUrl(value: unknown, field: string, context: string): URL {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REDIRECT_URI_LENGTH) {
+    fail(context, field, 'must be a non-empty URL string (max 2048 chars)');
+  }
+  if (/\s/.test(value) || ASCII_CONTROL_PATTERN.test(value) || value.includes('\\')) {
+    fail(context, field, 'must not contain whitespace, control characters, or backslashes');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(context, field, 'must be a valid URL');
+  }
+  const isLocalHttp = parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !isLocalHttp) {
+    fail(context, field, 'must use HTTPS (or http on localhost)');
+  }
+  if (parsed.port === '0') {
+    fail(context, field, 'must not use port 0');
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    fail(context, field, 'must not contain credentials');
+  }
+  if (parsed.hash !== '' || value.includes('#')) {
+    fail(context, field, 'must not contain a fragment');
+  }
+  return parsed;
+}
+
 /**
  * Validates a connect `redirectUri`: must be a canonical `https:` URL (or
  * `http:` on loopback for local development), with NO control chars, NO
@@ -160,33 +201,9 @@ function requireResponseKey(payload: Record<string, unknown>, context: string): 
  * NO existing fragment (`url.hash === ''`).
  */
 export function assertValidRedirectUri(value: unknown, context = 'invalid connect request'): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REDIRECT_URI_LENGTH) {
-    fail(context, 'reply.redirectUri', 'must be a non-empty URL string (max 2048 chars)');
-  }
-  if (/\s/.test(value) || ASCII_CONTROL_PATTERN.test(value) || value.includes('\\')) {
-    fail(context, 'reply.redirectUri', 'must not contain whitespace, control characters, or backslashes');
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    fail(context, 'reply.redirectUri', 'must be a valid URL');
-  }
-  const isLocalHttp = parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname);
-  if (parsed.protocol !== 'https:' && !isLocalHttp) {
-    fail(context, 'reply.redirectUri', 'must use HTTPS (or http on localhost)');
-  }
-  if (parsed.port === '0') {
-    fail(context, 'reply.redirectUri', 'must not use port 0');
-  }
-  if (parsed.username !== '' || parsed.password !== '') {
-    fail(context, 'reply.redirectUri', 'must not contain credentials');
-  }
-  if (parsed.search !== '' || value.includes('?')) {
+  const parsed = parseSafeConnectUrl(value, 'reply.redirectUri', context);
+  if (parsed.search !== '' || (value as string).includes('?')) {
     fail(context, 'reply.redirectUri', 'must not contain a query string');
-  }
-  if (parsed.hash !== '' || value.includes('#')) {
-    fail(context, 'reply.redirectUri', 'must not contain a fragment');
   }
   if (parsed.href !== value && parsed.origin !== value) {
     fail(context, 'reply.redirectUri', 'must be in canonical URL form');
@@ -199,31 +216,7 @@ export function assertValidRedirectUri(value: unknown, context = 'invalid connec
  * credentials, control characters, whitespace, backslashes, or fragment.
  */
 export function assertValidCallbackUrl(value: unknown, context = 'invalid connect request'): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REDIRECT_URI_LENGTH) {
-    fail(context, 'reply.callbackUrl', 'must be a non-empty URL string (max 2048 chars)');
-  }
-  if (/\s/.test(value) || ASCII_CONTROL_PATTERN.test(value) || value.includes('\\')) {
-    fail(context, 'reply.callbackUrl', 'must not contain whitespace, control characters, or backslashes');
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    fail(context, 'reply.callbackUrl', 'must be a valid URL');
-  }
-  const isLocalHttp = parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname);
-  if (parsed.protocol !== 'https:' && !isLocalHttp) {
-    fail(context, 'reply.callbackUrl', 'must use HTTPS (or http on localhost)');
-  }
-  if (parsed.port === '0') {
-    fail(context, 'reply.callbackUrl', 'must not use port 0');
-  }
-  if (parsed.username !== '' || parsed.password !== '') {
-    fail(context, 'reply.callbackUrl', 'must not contain credentials');
-  }
-  if (parsed.hash !== '' || value.includes('#')) {
-    fail(context, 'reply.callbackUrl', 'must not contain a fragment');
-  }
+  parseSafeConnectUrl(value, 'reply.callbackUrl', context);
 }
 
 /** Validates the `reply` field against the {@link ConnectRequest} reply union. */
@@ -518,9 +511,12 @@ export async function sealAuthenticationResponse(params: {
   return sealResponseEnvelope(params);
 }
 
-function assertResponseSecret(secret: Uint8Array): void {
+export function assertResponseSecret(secret: unknown): asserts secret is Uint8Array {
   if (!(secret instanceof Uint8Array) || secret.byteLength !== RESPONSE_SECRET_BYTE_LENGTH) {
     throw new Error(`Connect: response secret must be ${RESPONSE_SECRET_BYTE_LENGTH} bytes.`);
+  }
+  if (CryptoUtils.isAllZeroBytes(secret)) {
+    throw new Error('Connect: response secret must not be all zeros.');
   }
 }
 

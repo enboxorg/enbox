@@ -5,7 +5,7 @@ import type { ConnectAuthenticationParams, ConnectRequest, VerifiedConnectAuthen
 import { Convert } from '@enbox/common';
 import { assertValidCallbackUrl, assertValidRedirectUri } from './envelope.js';
 import { Did, DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
-import { Ed25519, isOkpPublicJwk, isPublicJwk, Secp256k1, Secp256r1, Sha256 } from '@enbox/crypto';
+import { Ed25519, isPublicJwk, isX25519PublicJwk, Secp256k1, Secp256r1, Sha256 } from '@enbox/crypto';
 
 export const CONNECT_OWNER_AUTHENTICATION_TYP = 'enbox-connect-owner-authentication+jwt';
 export const CONNECT_AUTHENTICATION_MAX_AGE_SECONDS = 300;
@@ -266,20 +266,19 @@ function assertAuthenticationReply(request: ConnectRequest): void {
   if (!reply || !['post_message', 'direct_post', 'redirect'].includes(reply.mode)) {
     throw new ConnectAuthenticationError('invalid-request');
   }
-  if (reply.mode === 'direct_post' || reply.mode === 'redirect') {
-    try {
-      assertValidCallbackUrl(reply.callbackUrl);
-    } catch {
-      throw new ConnectAuthenticationError('invalid-request');
-    }
-  }
-  if (reply.mode !== 'redirect') {
+  if (reply.mode === 'post_message') {
     return;
   }
   try {
-    assertValidRedirectUri(reply.redirectUri);
+    assertValidCallbackUrl(reply.callbackUrl);
+    if (reply.mode === 'redirect') {
+      assertValidRedirectUri(reply.redirectUri);
+    }
   } catch {
     throw new ConnectAuthenticationError('invalid-request');
+  }
+  if (reply.mode !== 'redirect') {
+    return;
   }
   const parsedRedirect = new URL(reply.redirectUri);
   const parsedAudience = new URL(request.authentication!.audience);
@@ -291,7 +290,7 @@ function assertAuthenticationReply(request: ConnectRequest): void {
   }
 }
 
-function assertAuthenticationRequestIdentity(request: ConnectRequest): void {
+function assertAuthenticationRequestFields(request: ConnectRequest): void {
   if (typeof request.clientDid !== 'string' || typeof request.nonce !== 'string' || typeof request.state !== 'string') {
     throw new ConnectAuthenticationError('invalid-request');
   }
@@ -300,18 +299,13 @@ function assertAuthenticationRequestIdentity(request: ConnectRequest): void {
     throw new ConnectAuthenticationError('invalid-request');
   }
   if (typeof request.appName !== 'string' || request.appName.length === 0 || request.appName.length > 256 ||
-      !/^[A-Za-z0-9_-]{22,128}$/u.test(request.nonce) || !/^[A-Za-z0-9_-]{22,128}$/u.test(request.state)) {
-    throw new ConnectAuthenticationError('invalid-request');
-  }
-}
-
-function assertAuthenticationRequestShape(request: ConnectRequest): void {
-  if (!Array.isArray(request.permissionRequests) || request.permissionRequests.length > 32 ||
+      !/^[A-Za-z0-9_-]{22,128}$/u.test(request.nonce) || !/^[A-Za-z0-9_-]{22,128}$/u.test(request.state) ||
+      !Array.isArray(request.permissionRequests) || request.permissionRequests.length > 32 ||
       !Array.isArray(request.supportedDidMethods) || request.supportedDidMethods.length === 0 ||
       request.supportedDidMethods.length > 8 ||
       new Set(request.supportedDidMethods).size !== request.supportedDidMethods.length ||
       request.supportedDidMethods.some(method => typeof method !== 'string' || !/^did:[a-z0-9]+$/u.test(method)) ||
-      !isOkpPublicJwk(request.responseKey) || request.responseKey.crv !== 'X25519') {
+      !isX25519PublicJwk(request.responseKey)) {
     throw new ConnectAuthenticationError('invalid-request');
   }
 }
@@ -320,8 +314,7 @@ function assertAuthenticationRequestShape(request: ConnectRequest): void {
 export function assertConnectRequestAuthentication(request: ConnectRequest): void {
   if (!object(request)) { throw new ConnectAuthenticationError('invalid-request'); }
   assertConnectAuthenticationParams(request.authentication);
-  assertAuthenticationRequestIdentity(request);
-  assertAuthenticationRequestShape(request);
+  assertAuthenticationRequestFields(request);
   assertAuthenticationReply(request);
   if (request.requestType !== undefined && !['connect', 'refresh', 'authenticate'].includes(request.requestType)) {
     throw new ConnectAuthenticationError('invalid-request');

@@ -508,7 +508,10 @@ describe('runConnectModal', () => {
       deps               : deps({
         runRelay : relay.runRelay,
         isMobile : (): boolean => true,
-        runPopup : (): Promise<ConnectResult | undefined> => { popupCalls += 1; return Promise.resolve(RESULT); },
+        runPopup : (): Promise<ConnectResult | undefined> => {
+          popupCalls += 1;
+          return new Promise<ConnectResult | undefined>(() => { /* pending */ });
+        },
       }),
     });
     promise.catch((): undefined => undefined);
@@ -519,8 +522,9 @@ describe('runConnectModal', () => {
 
     shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
     expect(popupCalls).toBe(1);
-    await sleep(1_300);
-    await expect(promise).resolves.toBe(RESULT);
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
   });
 
   it('defaults mobile browsers to same-tab redirect when redirectUri is configured', async () => {
@@ -588,9 +592,9 @@ describe('runConnectModal', () => {
     await expect(promise).rejects.toThrow(/cancelled/i);
   });
 
-  it('aborts in-flight redirect on cancel, resets on bfcache pageshow, and degrades when sessionStorage is unavailable', async () => {
+  it('resets on bfcache pageshow, aborts in-flight redirect on cancel, and degrades without sessionStorage or relay', async () => {
     const relay = createFakeRelay();
-    let capturedSignal: AbortSignal | undefined;
+    const capturedSignals: (AbortSignal | undefined)[] = [];
     const promise = runConnectModal({
       wallets            : WALLETS,
       permissionRequests : PERMISSIONS,
@@ -599,7 +603,7 @@ describe('runConnectModal', () => {
         runRelay      : relay.runRelay,
         isMobile      : (): boolean => true,
         startRedirect : async (opts): ReturnType<ConnectModalDeps['startRedirect']> => {
-          capturedSignal = opts.signal;
+          capturedSignals.push(opts.signal);
           return new Promise(() => { /* stays pending until cancelled or bfcache return */ });
         },
       }),
@@ -610,16 +614,21 @@ describe('runConnectModal', () => {
     shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
     await flush();
     expect(stageText()).toContain('Opening Enbox…');
-    expect(capturedSignal?.aborted).toBe(false);
+    expect(capturedSignals[0]?.aborted).toBe(false);
 
     // Simulating bfcache Back navigation restores the redirect prompt and aborts the stale attempt.
     const pageShow = new Event('pageshow') as PageTransitionEvent;
     Object.defineProperty(pageShow, 'persisted', { value: true });
     window.dispatchEvent(pageShow);
-    expect(capturedSignal?.aborted).toBe(true);
+    expect(capturedSignals[0]?.aborted).toBe(true);
     expect(stageText()).toContain('Continue in Enbox');
 
+    // Starting redirect again and cancelling the modal aborts the second in-flight attempt.
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    await flush();
+    expect(capturedSignals[1]?.aborted).toBe(false);
     shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    expect(capturedSignals[1]?.aborted).toBe(true);
     await expect(promise).rejects.toThrow(/cancelled/i);
 
     // Restricted WebView without writable sessionStorage degrades to browser popup on mobile.

@@ -158,10 +158,10 @@ export interface BrowserConnectHandlerOptions {
    * When set on a mobile browser (excluding iOS standalone PWAs), the connect
    * modal defaults to a one-tap same-tab redirect to the wallet and returns to
    * this URL with `#enbox_state=...&enbox_key=...`. On return, check
-   * {@link getPendingRedirectConnectType} (or {@link hasPendingRedirectConnect})
-   * and invoke `auth.connect()` (or `auth.restoreSession()` + `auth.refresh()`
-   * for `'refresh'`): this handler automatically completes the pending redirect
-   * without reopening the modal and records the chosen wallet.
+   * {@link getPendingRedirectConnectType} and invoke `auth.connect()` (or
+   * `auth.restoreSession()` + `auth.refresh()` for `'refresh'`): this handler
+   * automatically completes the pending redirect without reopening the modal
+   * and records the chosen wallet.
    */
   redirectUri?: string;
 

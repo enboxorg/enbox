@@ -219,8 +219,7 @@ export class PopupClientTransport implements ConnectTransport {
     // this ping to pin the dapp origin without ever falling back to `'*'`.
     this._helloPollId = setInterval((): void => {
       if (this._settled || this._walletEpkReceived || this._popup.closed === true) {
-        clearInterval(this._helloPollId);
-        this._helloPollId = undefined;
+        this.stopHelloPing();
         return;
       }
       try {
@@ -331,8 +330,7 @@ export class PopupClientTransport implements ConnectTransport {
     }
 
     this._walletEpkReceived = true;
-    clearInterval(this._helloPollId);
-    this._helloPollId = undefined;
+    this.stopHelloPing();
     this._resolveWalletEpk?.(walletEpk);
   }
 
@@ -385,11 +383,15 @@ export class PopupClientTransport implements ConnectTransport {
     this._rejectResponse(error);
   }
 
+  private stopHelloPing(): void {
+    clearInterval(this._helloPollId);
+    this._helloPollId = undefined;
+  }
+
   private cleanup(): void {
     clearTimeout(this._timeoutId);
     clearInterval(this._closedPollId);
-    clearInterval(this._helloPollId);
-    this._helloPollId = undefined;
+    this.stopHelloPing();
     if (this._messageListener !== undefined) {
       window.removeEventListener('message', this._messageListener);
       this._messageListener = undefined;

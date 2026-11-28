@@ -172,30 +172,17 @@ function assertChannelBinding(
   handshakeKey: Jwk | undefined,
   responseSecret: Uint8Array | undefined,
 ): void {
-  if (request.reply.mode === 'direct_post') {
-    if (handshakeKey === undefined) {
-      throw new Error('Connect: `handshakeKey` is required when sealing a `direct_post` relay response.');
-    }
-    if (responseSecret !== undefined) {
-      throw new Error('Connect: `responseSecret` must not be supplied for `direct_post` responses.');
-    }
-    return;
+  const mode = request.reply.mode;
+  if (mode === 'direct_post' && handshakeKey === undefined) {
+    throw new Error('Connect: `handshakeKey` is required when sealing a `direct_post` relay response.');
   }
-
-  if (request.reply.mode === 'redirect') {
-    if (responseSecret === undefined) {
-      throw new Error('Connect: redirect responses require a 32-byte `responseSecret`.');
-    }
-    if (handshakeKey !== undefined) {
-      throw new Error('Connect: `handshakeKey` must not be supplied for `redirect` responses.');
-    }
-    return;
+  if (mode !== 'direct_post' && handshakeKey !== undefined) {
+    throw new Error(`Connect: \`handshakeKey\` must not be supplied for \`${mode}\` responses.`);
   }
-
-  if (handshakeKey !== undefined) {
-    throw new Error('Connect: `handshakeKey` must not be supplied for `post_message` responses.');
+  if (mode === 'redirect' && responseSecret === undefined) {
+    throw new Error('Connect: redirect responses require a 32-byte `responseSecret`.');
   }
-  if (responseSecret !== undefined) {
-    throw new Error('Connect: `responseSecret` must not be supplied for `post_message` responses.');
+  if (mode !== 'redirect' && responseSecret !== undefined) {
+    throw new Error(`Connect: \`responseSecret\` must not be supplied for \`${mode}\` responses.`);
   }
 }

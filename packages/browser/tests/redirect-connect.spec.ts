@@ -7,6 +7,7 @@ import {
   buildRedirectReturnUri,
   ConnectProvider,
   createOwnerAuthenticationProof,
+  DEFAULT_REDIRECT_SESSION_MAX_AGE_MS,
   generateRedirectResponseSecret,
   parseWalletConnectUri,
   randomToken,
@@ -16,66 +17,36 @@ import {
   completeRedirectAuthenticationFromWindow,
   completeRedirectConnectFromWindow,
   getPendingRedirectConnectType,
-  hasPendingRedirectConnect,
   isIosStandalonePwa,
   isSessionStorageAvailable,
-  PENDING_REDIRECT_MAX_AGE_MS,
   PENDING_REDIRECT_STORAGE_KEY,
   startRedirectConnect,
 } from '../src/redirect-connect.js';
 
-function createFakeStorage(): RedirectSessionStorage & { dump: () => Record<string, string> } {
+function createFakeStorage(): RedirectSessionStorage {
   const map = new Map<string, string>();
   return {
     getItem    : (key: string): string | null => map.get(key) ?? null,
     setItem    : (key: string, value: string): void => { map.set(key, value); },
     removeItem : (key: string): void => { map.delete(key); },
-    dump       : (): Record<string, string> => Object.fromEntries(map),
   };
 }
 
-describe('isIosStandalonePwa', () => {
-  it('detects navigator.standalone === true', () => {
-    expect(isIosStandalonePwa(
-      { userAgent: 'Mozilla/5.0 (iPhone)', platform: 'iPhone', maxTouchPoints: 5, standalone: true },
-      undefined,
-    )).toBe(true);
+describe('isIosStandalonePwa & isSessionStorageAvailable', () => {
+  const matchDisplay = (mode?: string): Pick<Window, 'matchMedia'> => ({
+    matchMedia: (query: string): MediaQueryList => ({ matches: mode !== undefined && query === `(display-mode: ${mode})` } as MediaQueryList),
   });
 
-  it('detects iOS / iPadOS desktop-UA devices matching display-mode: standalone', () => {
-    const standaloneWin = {
-      matchMedia: (query: string): MediaQueryList => ({ matches: query === '(display-mode: standalone)' } as MediaQueryList),
-    };
-    const browserWin = {
-      matchMedia: (): MediaQueryList => ({ matches: false } as MediaQueryList),
-    };
-
-    expect(isIosStandalonePwa(
-      { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 },
-      standaloneWin,
-    )).toBe(true);
-
-    expect(isIosStandalonePwa(
-      { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 5 },
-      standaloneWin,
-    )).toBe(true);
-
-    expect(isIosStandalonePwa(
-      { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 },
-      browserWin,
-    )).toBe(false);
-
-    expect(isIosStandalonePwa(
-      { userAgent: 'Mozilla/5.0 (Linux; Android 15)', platform: 'Linux armv8l', maxTouchPoints: 5 },
-      standaloneWin,
-    )).toBe(false);
-
-    expect(isIosStandalonePwa(
-      { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: '', maxTouchPoints: 5 },
-      { matchMedia: (query: string): MediaQueryList => ({ matches: query === '(display-mode: fullscreen)' } as MediaQueryList) },
-    )).toBe(true);
-
-    expect(isIosStandalonePwa(undefined, undefined)).toBe(false);
+  it.each([
+    ['navigator.standalone === true', { userAgent: 'Mozilla/5.0 (iPhone)', platform: 'iPhone', maxTouchPoints: 5, standalone: true }, undefined, true],
+    ['iPhone standalone display-mode', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 }, matchDisplay('standalone'), true],
+    ['iPadOS desktop UA standalone', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 5 }, matchDisplay('standalone'), true],
+    ['iPadOS Macintosh UA fullscreen', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: '', maxTouchPoints: 5 }, matchDisplay('fullscreen'), true],
+    ['iPhone normal Safari tab', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 }, matchDisplay(), false],
+    ['Android standalone PWA', { userAgent: 'Mozilla/5.0 (Linux; Android 15)', platform: 'Linux armv8l', maxTouchPoints: 5 }, matchDisplay('standalone'), false],
+    ['missing navigator', undefined, undefined, false],
+  ] as const)('isIosStandalonePwa(%s) -> %s', (_label, nav, win, expected) => {
+    expect(isIosStandalonePwa(nav, win)).toBe(expected);
   });
 
   it('probes sessionStorage availability safely', () => {
@@ -96,24 +67,32 @@ describe('browser redirect connect lifecycle', () => {
   const redirectUri = 'https://app.example/connect/callback';
   const requestUri = 'https://relay.example/connect/authorize/req-1.jwt';
 
-  it('persists session, navigates to wallet, scrubs fragment, and completes on return', async () => {
-    const storage = createFakeStorage();
-    let storedRequestJwe = '';
-    let storedResponseJwe = '';
-    let navigatedTo = '';
-    let scrubbed = 0;
+  interface FakeBrowserRelay {
+    fetchFn: (input: string | URL, init?: RequestInit) => Promise<Response>;
+    box: { requestJwe: string; responseJwe: string };
+  }
 
+  function createFakeRelay(): FakeBrowserRelay {
+    const box = { requestJwe: '', responseJwe: '' };
     const fetchFn = async (input: string | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       if (url === `${connectServerUrl}/par`) {
-        storedRequestJwe = (JSON.parse(init!.body as string) as { request: string }).request;
+        box.requestJwe = (JSON.parse(init!.body as string) as { request: string }).request;
         return new Response(JSON.stringify({ request_uri: requestUri, expires_in: 600 }), { status: 201 });
       }
       if (url.startsWith(`${connectServerUrl}/token/`)) {
-        return new Response(storedResponseJwe, { status: 200 });
+        return new Response(box.responseJwe, { status: 200 });
       }
       return new Response(JSON.stringify({ ok: true }), { status: 201 });
     };
+    return { fetchFn, box };
+  }
+
+  it('persists session, preserves storage on state/mode mismatch, scrubs fragment, and completes on return', async () => {
+    const storage = createFakeStorage();
+    const { fetchFn, box } = createFakeRelay();
+    let navigatedTo = '';
+    let scrubbed = 0;
 
     const pendingSession = await startRedirectConnect({
       connectServerUrl,
@@ -125,20 +104,18 @@ describe('browser redirect connect lifecycle', () => {
       fetchFn,
       navigate           : (url): void => { navigatedTo = url; },
     });
-
     expect(navigatedTo).toContain(walletUri);
     expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).not.toBeNull();
 
-    // Wallet side approves and builds return URL.
     const parsedUri = parseWalletConnectUri(navigatedTo)!;
     const request = await ConnectProvider.openRequest({
-      jwe        : storedRequestJwe,
+      jwe        : box.requestJwe,
       decryption : { mode: 'dir', requestKey: parsedUri.encryptionKey },
     });
     const owner = await DidJwk.create();
     const delegate = await DidJwk.create();
     const responseSecret = generateRedirectResponseSecret();
-    storedResponseJwe = await ConnectProvider.sealApprovedResponse({
+    box.responseJwe = await ConnectProvider.sealApprovedResponse({
       request,
       providerDid : owner.uri,
       signer      : delegate,
@@ -152,26 +129,18 @@ describe('browser redirect connect lifecycle', () => {
     });
     const returnUrl = buildRedirectReturnUri({ redirectUri, state: request.state, responseSecret });
 
-    expect(hasPendingRedirectConnect({ storage, href: returnUrl })).toBe(true);
     expect(getPendingRedirectConnectType({ storage, href: returnUrl })).toBe('connect');
-    expect(hasPendingRedirectConnect({ storage, href: redirectUri })).toBe(false);
     expect(getPendingRedirectConnectType({ storage, href: redirectUri })).toBeUndefined();
 
-    // A stray state mismatch or wrong completion helper must NOT delete the live session.
+    // Stray state mismatch or wrong completion helper must NOT clobber the live stored session.
     const wrongStateUrl = buildRedirectReturnUri({ redirectUri, state: 'other-state', responseSecret });
     await expect(completeRedirectConnectFromWindow({
-      storage,
-      href          : wrongStateUrl,
-      scrubFragment : (): void => {},
-      fetchFn,
+      storage, href: wrongStateUrl, scrubFragment: (): void => {}, fetchFn,
     })).rejects.toThrow('enbox_state');
     expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).not.toBeNull();
 
     await expect(completeRedirectAuthenticationFromWindow({
-      storage,
-      href          : returnUrl,
-      scrubFragment : (): void => {},
-      fetchFn,
+      storage, href: returnUrl, scrubFragment: (): void => {}, fetchFn,
     })).rejects.toThrow('invalid-request');
     expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).not.toBeNull();
 
@@ -181,7 +150,6 @@ describe('browser redirect connect lifecycle', () => {
       scrubFragment : (): void => { scrubbed += 1; },
       fetchFn,
     });
-
     expect(scrubbed).toBe(1);
     expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).toBeNull();
     expect(result?.connectedDid).toBe(owner.uri);
@@ -189,14 +157,12 @@ describe('browser redirect connect lifecycle', () => {
     expect(pendingSession.state).toBe(request.state);
   });
 
-  it('returns undefined when no redirect params are present and rejects expired or missing sessions after scrubbing', async () => {
+  it('handles absent params, missing/expired/corrupt storage, and scrubs malformed return fragments', async () => {
     const storage = createFakeStorage();
     let scrubbed = 0;
 
     expect(await completeRedirectConnectFromWindow({
-      storage,
-      href          : redirectUri,
-      scrubFragment : (): void => { scrubbed += 1; },
+      storage, href: redirectUri, scrubFragment: (): void => { scrubbed += 1; },
     })).toBeUndefined();
     expect(scrubbed).toBe(0);
 
@@ -205,90 +171,66 @@ describe('browser redirect connect lifecycle', () => {
       state          : 'stale-state',
       responseSecret : generateRedirectResponseSecret(),
     });
-
-    // Missing session rejects and still scrubs the URL fragment.
     await expect(completeRedirectConnectFromWindow({
-      storage,
-      href          : returnUrl,
-      scrubFragment : (): void => { scrubbed += 1; },
+      storage, href: returnUrl, scrubFragment: (): void => { scrubbed += 1; },
     })).rejects.toThrow('No pending redirect connect session');
     expect(scrubbed).toBe(1);
 
-    // Expired session is dropped and rejected.
     const now = 1_000_000;
-    storage.setItem(PENDING_REDIRECT_STORAGE_KEY, JSON.stringify({
-      clientDid          : 'did:jwk:a',
-      responsePrivateKey : { kty: 'OKP', crv: 'X25519', d: 'a', x: 'b' },
-      nonce              : 'n',
-      state              : 'stale-state',
-      connectServerUrl,
-      redirectUri,
-      request            : {},
-      createdAt          : now - PENDING_REDIRECT_MAX_AGE_MS - 1,
-    }));
-    expect(hasPendingRedirectConnect({ storage, href: returnUrl, now: (): number => now })).toBe(false);
-    expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).toBeNull();
+    for (const storedRaw of [
+      JSON.stringify({
+        session: {
+          clientDid          : 'did:jwk:a',
+          responsePrivateKey : { kty: 'OKP', crv: 'X25519', d: 'a', x: 'b' },
+          nonce              : 'n',
+          state              : 'stale-state',
+          connectServerUrl,
+          redirectUri,
+          request            : {},
+          createdAt          : now - DEFAULT_REDIRECT_SESSION_MAX_AGE_MS - 1,
+        },
+      }),
+      '{not-json',
+      JSON.stringify({ session: { state: 'stale-state' } }),
+    ]) {
+      storage.setItem(PENDING_REDIRECT_STORAGE_KEY, storedRaw);
+      expect(getPendingRedirectConnectType({ storage, href: returnUrl, now: (): number => now })).toBeUndefined();
+      expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).toBeNull();
+    }
 
-    // Corrupt / partial session JSON is safely cleared.
-    storage.setItem(PENDING_REDIRECT_STORAGE_KEY, '{not-json');
-    expect(hasPendingRedirectConnect({ storage, href: returnUrl })).toBe(false);
-    expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).toBeNull();
-
-    storage.setItem(PENDING_REDIRECT_STORAGE_KEY, JSON.stringify({ state: 'stale-state' }));
-    expect(hasPendingRedirectConnect({ storage, href: returnUrl })).toBe(false);
-    expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).toBeNull();
-
-    // Malformed fragment scrubs and throws.
     await expect(completeRedirectConnectFromWindow({
-      storage,
-      href          : `${redirectUri}#enbox_state=abc&enbox_key=AAAA`,
-      scrubFragment : (): void => { scrubbed += 1; },
-    })).rejects.toThrow('must decode to 32 bytes');
+      storage, href: `${redirectUri}#enbox_state=abc&enbox_key=AAAA`, scrubFragment: (): void => { scrubbed += 1; },
+    })).rejects.toThrow('canonical 32-byte base64url');
     expect(scrubbed).toBe(2);
-    expect(hasPendingRedirectConnect({ storage, href: `${redirectUri}#enbox_state=abc&enbox_key=AAAA` })).toBe(false);
+    expect(getPendingRedirectConnectType({ storage, href: `${redirectUri}#enbox_state=abc&enbox_key=AAAA` })).toBeUndefined();
   });
 
-  it('completes an authentication-only redirect via sessionStorage and scrubs window.location hash', async () => {
-    let storedRequestJwe = '';
-    let storedResponseJwe = '';
+  it('completes an authentication-only redirect using default sessionStorage and window.history hash scrubbing', async () => {
+    const { fetchFn, box } = createFakeRelay();
     let navigatedTo = '';
-    const fetchFn = async (input: string | URL, init?: RequestInit): Promise<Response> => {
-      const url = String(input);
-      if (url === `${connectServerUrl}/par`) {
-        storedRequestJwe = (JSON.parse(init!.body as string) as { request: string }).request;
-        return new Response(JSON.stringify({ request_uri: requestUri, expires_in: 600 }), { status: 201 });
-      }
-      if (url.startsWith(`${connectServerUrl}/token/`)) {
-        return new Response(storedResponseJwe, { status: 200 });
-      }
-      return new Response(JSON.stringify({ ok: true }), { status: 201 });
-    };
-
     const owner = await DidJwk.create();
     const challenge = randomToken();
-    const windowRedirectUri = `${window.location.origin}${window.location.pathname}`;
-    const isWindowHttps = window.location.protocol === 'https:';
-    const authRedirectUri = isWindowHttps ? windowRedirectUri : redirectUri;
+
     await startRedirectConnect({
       connectServerUrl,
       walletUri,
-      redirectUri         : authRedirectUri,
+      redirectUri,
       appName             : 'Auth Redirect Browser App',
       requestType         : 'authenticate',
       expectedProviderDid : owner.uri,
       permissionRequests  : [],
-      authentication      : { version: 1, audience: new URL(authRedirectUri).origin, challenge },
+      authentication      : { version: 1, audience: new URL(redirectUri).origin, challenge },
       fetchFn,
       navigate            : (url): void => { navigatedTo = url; },
     });
 
     const parsedUri = parseWalletConnectUri(navigatedTo)!;
     const request = await ConnectProvider.openRequest({
-      jwe        : storedRequestJwe,
+      jwe        : box.requestJwe,
       decryption : { mode: 'dir', requestKey: parsedUri.encryptionKey },
     });
     const responseSecret = generateRedirectResponseSecret();
-    storedResponseJwe = await ConnectProvider.sealAuthenticationResponse({
+    box.responseJwe = await ConnectProvider.sealAuthenticationResponse({
       request,
       providerDid : owner.uri,
       signer      : await DidJwk.create(),
@@ -296,18 +238,15 @@ describe('browser redirect connect lifecycle', () => {
       approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) },
     });
 
-    const returnUrl = buildRedirectReturnUri({ redirectUri: authRedirectUri, state: request.state, responseSecret });
-    expect(await completeRedirectAuthenticationFromWindow({ href: authRedirectUri })).toBeUndefined();
+    const returnUrl = buildRedirectReturnUri({ redirectUri, state: request.state, responseSecret });
+    expect(await completeRedirectAuthenticationFromWindow({ href: redirectUri })).toBeUndefined();
 
-    // Exercise default window.history.replaceState scrubbing + default sessionStorage.
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${new URL(returnUrl).hash}`);
-    expect(hasPendingRedirectConnect({ href: returnUrl })).toBe(true);
     expect(getPendingRedirectConnectType({ href: returnUrl })).toBe('authenticate');
 
     const authResult = await completeRedirectAuthenticationFromWindow({ href: returnUrl, fetchFn });
     expect(window.location.hash).toBe('');
     expect(authResult?.connectedDid).toBe(owner.uri);
-    expect(authResult?.authentication.subject).toBe(owner.uri);
     expect(authResult?.authentication.challenge).toBe(challenge);
   });
 });

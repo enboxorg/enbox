@@ -171,12 +171,16 @@ describe('JweKeyManagement', () => {
         expect((omittedSecretCek as Jwk).k).not.toBe((encryptCek as Jwk).k);
       });
 
-      it('should reject an ECDH-ES secret that is not 32 bytes', async () => {
+      it('should reject an ECDH-ES secret that is not 32 bytes or is all zeros', async () => {
         const joseHeader = { alg: 'ECDH-ES', enc: 'XC20P' } as const;
         await expect(JweKeyManagement.encrypt({
           key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey, secret: new Uint8Array(16) },
           joseHeader,
         })).rejects.toThrow('32-byte Uint8Array');
+        await expect(JweKeyManagement.encrypt({
+          key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey, secret: new Uint8Array(32) },
+          joseHeader,
+        })).rejects.toThrow('must not be all zeros');
 
         const { headerParams } = await JweKeyManagement.encrypt({
           key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey },
@@ -186,6 +190,10 @@ describe('JweKeyManagement', () => {
           key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, secret: new Uint8Array(31) },
           joseHeader : { ...joseHeader, ...headerParams },
         })).rejects.toThrow('32-byte Uint8Array');
+        await expect(JweKeyManagement.decrypt({
+          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, secret: new Uint8Array(32) },
+          joseHeader : { ...joseHeader, ...headerParams },
+        })).rejects.toThrow('must not be all zeros');
       });
 
       it('should bind apu and apv into the derived CEK', async () => {
@@ -463,28 +471,6 @@ describe('JweKeyManagement', () => {
             joseHeader : { alg: 'RSA-OAEP', enc: 'A256GCM' },
           })
         ).rejects.toThrow('Unsupported');
-      });
-    });
-
-    describe('ECDH-ES redirect secret hardening', () => {
-      it('should reject an all-zero or wrong-length 32-byte redirect secret', async () => {
-        const { X25519 } = await import('../../src/primitives/x25519.js');
-        const recipient = await X25519.generateKey();
-        const peerPublicKey = { kty: 'OKP', crv: 'X25519', x: recipient.x };
-
-        await expect(
-          JweKeyManagement.encrypt({
-            key        : { mode: 'ecdh-es', peerPublicKey, secret: new Uint8Array(32) },
-            joseHeader : { alg: 'ECDH-ES', enc: 'XC20P' },
-          }),
-        ).rejects.toThrow('must not be all zeros');
-
-        await expect(
-          JweKeyManagement.encrypt({
-            key        : { mode: 'ecdh-es', peerPublicKey, secret: new Uint8Array(16) },
-            joseHeader : { alg: 'ECDH-ES', enc: 'XC20P' },
-          }),
-        ).rejects.toThrow('must be a 32-byte Uint8Array');
       });
     });
   });

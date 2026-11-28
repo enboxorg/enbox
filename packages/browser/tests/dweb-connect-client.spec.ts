@@ -678,11 +678,15 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       }
     });
 
-    it('should discover the dapp origin via hello handshake when document.referrer is empty (no-referrer)', async () => {
-      const referrerSpy = spyOn(document, 'referrer', 'get').mockReturnValue('');
+    it.each([
+      ['empty (no-referrer)', ''],
+      ['opaque (about:blank)', 'about:blank'],
+      ['same-origin wallet unlock redirect', `${WALLET_ORIGIN}/unlock`],
+    ])('should discover the dapp origin via hello handshake when document.referrer is %s', async (_label, referrer) => {
+      const referrerSpy = spyOn(document, 'referrer', 'get').mockReturnValue(referrer);
 
       try {
-        const { flow } = await startDappFlow({ appName: 'No-Referrer Dapp' });
+        const { flow } = await startDappFlow({ appName: 'Hello Handshake Dapp' });
         const transport = await WalletPostMessageTransport.create({
           dappWindow     : fakeOpener,
           helloTimeoutMs : 2_000,
@@ -721,35 +725,6 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
           .rejects.toThrow('Unable to determine the dapp origin');
       } finally {
         referrerSpy.mockRestore();
-      }
-    });
-
-    it('should ignore opaque/malformed document.referrer and discover cross-origin dapp via hello even after same-origin wallet redirect', async () => {
-      // 1. Opaque referrer ('about:blank') falls through to hello ping.
-      const opaqueSpy = spyOn(document, 'referrer', 'get').mockReturnValue('about:blank');
-      try {
-        const { flow } = await startDappFlow({ appName: 'Opaque Referrer Dapp' });
-        const transport = await WalletPostMessageTransport.create({ dappWindow: fakeOpener, helloTimeoutMs: 2_000 });
-        walletTransports.push(transport);
-        expect(transport.dappOrigin).toBe(DAPP_ORIGIN);
-        const { delegateDidUri } = await approveRequest(transport);
-        expect((await flow)?.delegatePortableDid.uri).toBe(delegateDidUri);
-      } finally {
-        opaqueSpy.mockRestore();
-      }
-
-      // 2. Same-origin referrer (e.g. wallet redirected /dweb-connect → /unlock → /dweb-connect)
-      // still gives the cross-origin dapp a chance to announce its true origin via hello.
-      const sameOriginSpy = spyOn(document, 'referrer', 'get').mockReturnValue(`${WALLET_ORIGIN}/unlock`);
-      try {
-        const { flow } = await startDappFlow({ appName: 'Post-Unlock Dapp' });
-        const transport = await WalletPostMessageTransport.create({ dappWindow: fakeOpener, helloTimeoutMs: 2_000 });
-        walletTransports.push(transport);
-        expect(transport.dappOrigin).toBe(DAPP_ORIGIN);
-        const { delegateDidUri } = await approveRequest(transport);
-        expect((await flow)?.delegatePortableDid.uri).toBe(delegateDidUri);
-      } finally {
-        sameOriginSpy.mockRestore();
       }
     });
   });

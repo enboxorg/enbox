@@ -489,16 +489,7 @@ export function recordConnectChoice(
   writeSessionChoice(target, choice);
 }
 
-/** Resolves the default connect method for the current device and capabilities. */
-function resolveDefaultMethod(isMobile: boolean, iosStandalone: boolean, canRedirect: boolean): ConnectMethod {
-  if (!isMobile || iosStandalone) {
-    return 'phone';
-  }
-  return canRedirect ? 'redirect' : 'browser';
-}
-
-/** Computes initial wallet, saved route, and method selection for {@link runConnectModal}. */
-function resolveInitialModalConfig(options: ConnectModalOptions, deps: ConnectModalDeps): {
+interface InitialModalConfig {
   wallets: WalletOption[];
   rememberChoice: boolean;
   appName: string;
@@ -512,7 +503,10 @@ function resolveInitialModalConfig(options: ConnectModalOptions, deps: ConnectMo
   savedRouteEscapeLabel: string;
   walletUrl: string | undefined;
   method: ConnectMethod;
-} {
+}
+
+/** Computes initial wallet, saved route, and method selection for {@link runConnectModal}. */
+function resolveInitialModalConfig(options: ConnectModalOptions, deps: ConnectModalDeps): InitialModalConfig {
   const wallets = dedupeWalletsByUrl(options.wallets ?? []);
   const rememberChoice = options.rememberChoice ?? true;
   const appName = options.appName ?? window.location.host;
@@ -524,11 +518,7 @@ function resolveInitialModalConfig(options: ConnectModalOptions, deps: ConnectMo
 
   const lastChoice = rememberChoice ? readLastChoice(deps.storage) : undefined;
   const savedRoute = rememberChoice && refreshing
-    ? readSessionChoice(
-      deps.storage,
-      options.delegatePortableDid?.uri,
-      options.expectedProviderDid,
-    )
+    ? readSessionChoice(deps.storage, options.delegatePortableDid?.uri, options.expectedProviderDid)
     : undefined;
   const expectedProviderDid = options.expectedProviderDid ?? savedRoute?.providerDid;
   const relayWalletPath = options.relayWalletPath ?? '/connect/app';
@@ -536,22 +526,17 @@ function resolveInitialModalConfig(options: ConnectModalOptions, deps: ConnectMo
     ? 'Choose another wallet or method'
     : 'Choose another method';
 
-  const canReuseLastWallet = lastChoice !== undefined
-    && (refreshing || walletInCatalog(wallets, lastChoice.walletUrl));
-  const rememberedWalletUrl = canReuseLastWallet ? lastChoice.walletUrl : undefined;
-  const walletUrl = savedRoute?.walletUrl
-    ?? options.walletUrl
-    ?? rememberedWalletUrl
-    ?? wallets[0]?.url;
+  const rememberedWalletUrl = lastChoice !== undefined && (refreshing || walletInCatalog(wallets, lastChoice.walletUrl))
+    ? lastChoice.walletUrl
+    : undefined;
+  const walletUrl = savedRoute?.walletUrl ?? options.walletUrl ?? rememberedWalletUrl ?? wallets[0]?.url;
 
-  const defaultMethod = resolveDefaultMethod(isMobile, iosStandalone, canRedirect);
-  const requestedMethod: ConnectMethod = savedRoute?.method
-    ?? options.preferredMethod
-    ?? lastChoice?.method
-    ?? defaultMethod;
-  const method: ConnectMethod = requestedMethod === 'redirect' && !canRedirect
-    ? defaultMethod
-    : requestedMethod;
+  let defaultMethod: ConnectMethod = 'phone';
+  if (isMobile && !iosStandalone) {
+    defaultMethod = canRedirect ? 'redirect' : 'browser';
+  }
+  const requestedMethod = savedRoute?.method ?? options.preferredMethod ?? lastChoice?.method ?? defaultMethod;
+  const method = requestedMethod === 'redirect' && !canRedirect ? defaultMethod : requestedMethod;
 
   return {
     wallets,
@@ -571,19 +556,13 @@ function resolveInitialModalConfig(options: ConnectModalOptions, deps: ConnectMo
 }
 
 /** Builds the alternate-method link shown in the modal footer when unlocked. */
-function buildMethodSwitchLink({
-  method,
-  canRedirect,
-  isMobile,
-  onSwitchMethod,
-  onStartPopup,
-}: {
-  method: ConnectMethod;
-  canRedirect: boolean;
-  isMobile: boolean;
-  onSwitchMethod: (next: ConnectMethod) => void;
-  onStartPopup: () => void;
-}): HTMLButtonElement {
+function buildMethodSwitchLink(
+  method: ConnectMethod,
+  canRedirect: boolean,
+  isMobile: boolean,
+  onSwitchMethod: (next: ConnectMethod) => void,
+  onStartPopup: () => void,
+): HTMLButtonElement {
   const alt = document.createElement('button');
   alt.className = 'footer-link method-link';
 
@@ -707,7 +686,6 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     let settled = false;
     let relaySession: RelaySession | undefined;
     let redirectAbortController: AbortController | undefined;
-    let redirectGeneration = 0;
     let remintTimer: ReturnType<typeof setTimeout> | undefined;
     let remintAt: number | undefined;
     let popupBusy = false;
@@ -715,9 +693,16 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const discoveryCache = new Map<string, Promise<string | undefined>>();
 
     const cancelRedirect = (): void => {
-      redirectGeneration += 1;
       redirectAbortController?.abort();
       redirectAbortController = undefined;
+    };
+
+    const resetActiveSession = (): void => {
+      relaySession?.cancel();
+      relaySession = undefined;
+      cancelRedirect();
+      clearRemint();
+      verificationActive = false;
     };
 
     // Collapsed identity row: the selected wallet plus the next catalog
@@ -750,9 +735,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const cleanup = (): void => {
-      relaySession?.cancel();
-      cancelRedirect();
-      clearRemint();
+      resetActiveSession();
       document.removeEventListener('keydown', onKeydown);
       document.removeEventListener('visibilitychange', onVisibilityReturn);
       window.removeEventListener('pageshow', onPageShow);
@@ -965,10 +948,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         return;
       }
 
-      relaySession?.cancel();
-      relaySession = undefined;
-      cancelRedirect();
-      clearRemint();
+      resetActiveSession();
       removeSessionChoice(deps.storage, savedRoute.delegateDid, savedRoute.providerDid);
       savedRoute = undefined;
       if (options.walletUrl !== undefined) {
@@ -1111,10 +1091,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const startPhone = async (): Promise<void> => {
-      relaySession?.cancel();
-      cancelRedirect();
-      clearRemint();
-      verificationActive = false;
+      resetActiveSession();
 
       if (walletUrl === undefined) {
         renderError('No wallet is configured.');
@@ -1195,10 +1172,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
     const startPopup = async (): Promise<void> => {
       // Synchronous popup open inside the click's call stack.
-      relaySession?.cancel();
-      cancelRedirect();
-      clearRemint();
-      verificationActive = false;
+      resetActiveSession();
 
       if (walletUrl === undefined) {
         renderError('No wallet is configured.');
@@ -1256,9 +1230,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const startRedirect = async (): Promise<void> => {
-      relaySession?.cancel();
-      cancelRedirect();
-      clearRemint();
+      resetActiveSession();
 
       if (walletUrl === undefined) {
         renderError('No wallet is configured.');
@@ -1275,13 +1247,12 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       const walletName = walletByUrl(targetWalletUrl).name;
       renderBusy(`Opening ${walletName}…`);
 
-      const generation = redirectGeneration;
       const controller = new AbortController();
       redirectAbortController = controller;
 
       const origin = new URL(targetWalletUrl).origin;
       const connectServerUrl = await resolveConnectServerUrl(origin);
-      if (settled || generation !== redirectGeneration || controller.signal.aborted) { return; }
+      if (settled || controller.signal.aborted) { return; }
       if (connectServerUrl === undefined) {
         renderRelayUnavailable(true);
         return;
@@ -1304,28 +1275,24 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
           signal             : controller.signal,
         });
       } catch (error) {
-        if (settled || generation !== redirectGeneration || controller.signal.aborted) { return; }
+        if (settled || controller.signal.aborted) { return; }
         const failure = error instanceof Error ? error : new Error(String(error));
         renderError('Something went wrong while opening the wallet.', failure);
       }
     };
 
     const startMethod = async (): Promise<void> => {
-      if (method === 'browser') {
-        // window.open must stay inside a user gesture — prompt for the click.
-        relaySession?.cancel();
-        cancelRedirect();
-        clearRemint();
-        renderFooter();
-        renderPopupPrompt();
-      } else if (method === 'redirect') {
-        relaySession?.cancel();
-        cancelRedirect();
-        clearRemint();
-        renderFooter();
-        renderRedirectPrompt();
-      } else {
+      if (method === 'phone') {
         await startPhone();
+        return;
+      }
+      // Both popup (`window.open`) and same-tab redirect prompt for an explicit click.
+      resetActiveSession();
+      renderFooter();
+      if (method === 'browser') {
+        renderPopupPrompt();
+      } else {
+        renderRedirectPrompt();
       }
     };
 
@@ -1354,13 +1321,13 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
       const row = document.createElement('div');
       row.className = 'footer-row';
-      row.appendChild(buildMethodSwitchLink({
+      row.appendChild(buildMethodSwitchLink(
         method,
         canRedirect,
         isMobile,
-        onSwitchMethod : (next): void => { void switchMethod(next); },
-        onStartPopup   : (): void => { void startPopup(); },
-      }));
+        (next): void => { void switchMethod(next); },
+        (): void => { void startPopup(); },
+      ));
       footer.appendChild(row);
     };
 

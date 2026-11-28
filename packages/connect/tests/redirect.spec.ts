@@ -9,7 +9,6 @@ import { CryptoUtils, X25519 } from '@enbox/crypto';
 
 import { CONNECT_DENIED_TOKEN } from '../src/types.js';
 import { ConnectProvider } from '../src/provider.js';
-import { createOwnerAuthenticationProof } from '../src/owner-authentication.js';
 import { parseWalletConnectUri } from '../src/uri.js';
 import { randomToken } from '../src/client.js';
 import {
@@ -24,6 +23,7 @@ import {
   prepareRedirectConnectRequest,
 } from '../src/redirect.js';
 import { assertConnectRequest, assertValidRedirectUri, openResponse, sealResponse } from '../src/envelope.js';
+import { assertConnectRequestAuthentication, createOwnerAuthenticationProof } from '../src/owner-authentication.js';
 
 const CONNECT_SERVER_URL = 'https://relay.example/connect';
 const WALLET_URI = 'https://wallet.example/connect/app';
@@ -50,6 +50,42 @@ async function createBaseRedirectRequest(overrides: Partial<ConnectRequest> = {}
   };
 }
 
+interface FakeRedirectRelay {
+  fetchFn: sinon.SinonStub;
+  state: { requestJwe: string; responseJwe?: string; tokenGets: number; completePosts: number };
+  openStoredRequest: (walletUri: string) => Promise<ConnectRequest>;
+}
+
+function createFakeRedirectRelay(): FakeRedirectRelay {
+  const state = { requestJwe: '', responseJwe: undefined as string | undefined, tokenGets: 0, completePosts: 0 };
+  const fetchFn = sinon.stub().callsFake(async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    if (url === `${CONNECT_SERVER_URL}/par` && init?.method === 'POST') {
+      state.requestJwe = (JSON.parse(init.body as string) as { request: string }).request;
+      return new Response(JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }), { status: 201 });
+    }
+    if (url.startsWith(`${CONNECT_SERVER_URL}/token/`)) {
+      state.tokenGets += 1;
+      return state.responseJwe === undefined
+        ? new Response(null, { status: 204 })
+        : new Response(state.responseJwe, { status: 200 });
+    }
+    if (url === `${CONNECT_SERVER_URL}/complete` && init?.method === 'POST') {
+      state.completePosts += 1;
+      return new Response(JSON.stringify({ ok: true }), { status: 201 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  const openStoredRequest = async (walletUri: string): Promise<ConnectRequest> => {
+    const parsedUri = parseWalletConnectUri(walletUri)!;
+    return await ConnectProvider.openRequest({
+      jwe        : state.requestJwe,
+      decryption : { mode: 'dir', requestKey: parsedUri.encryptionKey },
+    });
+  };
+  return { fetchFn, state, openStoredRequest };
+}
+
 describe('Connect same-device hybrid redirect', () => {
   afterEach(() => {
     sinon.restore();
@@ -57,11 +93,15 @@ describe('Connect same-device hybrid redirect', () => {
 
   describe('assertValidRedirectUri and request validation', () => {
     it('accepts HTTPS and localhost HTTP redirect URIs with no query or fragment', () => {
-      expect(() => assertValidRedirectUri('https://app.example/callback')).not.toThrow();
-      expect(() => assertValidRedirectUri('https://app.example')).not.toThrow();
-      expect(() => assertValidRedirectUri('http://localhost:5173/callback')).not.toThrow();
-      expect(() => assertValidRedirectUri('http://127.0.0.1:8080/auth')).not.toThrow();
-      expect(() => assertValidRedirectUri('http://[::1]:3000/auth')).not.toThrow();
+      for (const valid of [
+        'https://app.example/callback',
+        'https://app.example',
+        'http://localhost:5173/callback',
+        'http://127.0.0.1:8080/auth',
+        'http://[::1]:3000/auth',
+      ]) {
+        expect(() => assertValidRedirectUri(valid)).not.toThrow();
+      }
     });
 
     it('rejects insecure schemes, query strings, fragments, credentials, whitespace, non-canonical URLs, and oversized URIs', () => {
@@ -92,7 +132,7 @@ describe('Connect same-device hybrid redirect', () => {
       }
     });
 
-    it('validates relay callbackUrl on redirect requests', async () => {
+    it('validates relay callbackUrl and pre-supplied delegateDid rules on redirect requests', async () => {
       for (const badCallback of [
         '',
         'http://relay.example/callback',
@@ -105,58 +145,32 @@ describe('Connect same-device hybrid redirect', () => {
         });
         expect(() => assertConnectRequest(invalid as unknown as Record<string, unknown>)).toThrow('reply.callbackUrl');
       }
-    });
 
-    it('rejects brand-new pre-supplied delegateDid on redirect requests while permitting refresh', async () => {
       const delegate = await DidJwk.create();
-
-      const invalidNew = await createBaseRedirectRequest({ delegateDid: delegate.uri });
-      expect(() => assertConnectRequest(invalidNew as unknown as Record<string, unknown>))
-        .toThrow('cannot be pre-supplied on a new "redirect" request');
-
-      const invalidConnectType = await createBaseRedirectRequest({
-        requestType : 'connect',
-        delegateDid : delegate.uri,
-      });
-      expect(() => assertConnectRequest(invalidConnectType as unknown as Record<string, unknown>))
-        .toThrow('cannot be pre-supplied on a new "redirect" request');
-
-      const validRefresh = await createBaseRedirectRequest({
-        requestType : 'refresh',
-        delegateDid : delegate.uri,
-      });
+      for (const requestType of [undefined, 'connect'] as const) {
+        const invalid = await createBaseRedirectRequest({ requestType, delegateDid: delegate.uri });
+        expect(() => assertConnectRequest(invalid as unknown as Record<string, unknown>))
+          .toThrow('cannot be pre-supplied on a new "redirect" request');
+      }
+      const validRefresh = await createBaseRedirectRequest({ requestType: 'refresh', delegateDid: delegate.uri });
       expect(() => assertConnectRequest(validRefresh as unknown as Record<string, unknown>)).not.toThrow();
     });
 
-    it('enforces redirect validation on authentication-bearing requests too', async () => {
+    it('enforces redirect validation directly inside assertConnectRequestAuthentication', async () => {
       const delegate = await DidJwk.create();
       const base = await createBaseRedirectRequest({
         authentication: { version: 1, audience: 'https://app.example', challenge: randomToken() },
       });
+      expect(() => assertConnectRequestAuthentication(base)).not.toThrow();
 
-      expect(() => assertConnectRequest(base as unknown as Record<string, unknown>)).not.toThrow();
-
-      const badQuery = {
-        ...base,
-        reply: { mode: 'redirect' as const, callbackUrl: `${CONNECT_SERVER_URL}/callback`, redirectUri: `${REDIRECT_URI}?next=evil` },
-      };
-      expect(() => assertConnectRequest(badQuery as unknown as Record<string, unknown>)).toThrow();
-
-      const preSupplied = { ...base, delegateDid: delegate.uri };
-      expect(() => assertConnectRequest(preSupplied as unknown as Record<string, unknown>)).toThrow();
-
-      // Authentication-bearing redirect requests must match the audience origin over HTTPS.
-      const crossOriginRedirect = {
-        ...base,
-        reply: { mode: 'redirect' as const, callbackUrl: `${CONNECT_SERVER_URL}/callback`, redirectUri: 'https://other.example/callback' },
-      };
-      expect(() => assertConnectRequest(crossOriginRedirect as unknown as Record<string, unknown>)).toThrow('invalid-request');
-
-      const localhostRedirect = {
-        ...base,
-        reply: { mode: 'redirect' as const, callbackUrl: `${CONNECT_SERVER_URL}/callback`, redirectUri: 'http://localhost:5173/callback' },
-      };
-      expect(() => assertConnectRequest(localhostRedirect as unknown as Record<string, unknown>)).toThrow('invalid-request');
+      for (const invalid of [
+        { ...base, reply: { mode: 'redirect' as const, callbackUrl: `${CONNECT_SERVER_URL}/callback`, redirectUri: `${REDIRECT_URI}?next=evil` } },
+        { ...base, delegateDid: delegate.uri },
+        { ...base, reply: { mode: 'redirect' as const, callbackUrl: `${CONNECT_SERVER_URL}/callback`, redirectUri: 'https://other.example/callback' } },
+        { ...base, reply: { mode: 'redirect' as const, callbackUrl: `${CONNECT_SERVER_URL}/callback`, redirectUri: 'http://localhost:5173/callback' } },
+      ]) {
+        expect(() => assertConnectRequestAuthentication(invalid)).toThrow('invalid-request');
+      }
     });
 
     it('rejects combining handshakeKey and responseSecret or omitting responseSecret on redirect seal', async () => {
@@ -209,7 +223,7 @@ describe('Connect same-device hybrid redirect', () => {
   });
 
   describe('buildRedirectReturnUri / parseRedirectReturnUri', () => {
-    it('round-trips enbox_state and 32-byte enbox_key strictly through the fragment', () => {
+    it('round-trips enbox_state, 32-byte enbox_key, and denial strictly through the fragment', () => {
       const secret = generateRedirectResponseSecret();
       const state = randomToken();
 
@@ -218,53 +232,42 @@ describe('Connect same-device hybrid redirect', () => {
       expect(url.search).toBe('');
       expect(url.hash).toContain('enbox_state=');
       expect(url.hash).toContain('enbox_key=');
+      expect(parseRedirectReturnUri(returnUrl)).toEqual({ state, responseSecret: secret });
 
-      const parsed = parseRedirectReturnUri(returnUrl);
-      expect(parsed).toEqual({ state, responseSecret: secret });
-    });
+      const deniedUrl = buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state, error: 'denied' });
+      expect(parseRedirectReturnUri(deniedUrl)).toEqual({ state, error: 'denied' });
 
-    it('round-trips denial via enbox_error=denied', () => {
-      const state = randomToken();
-      const returnUrl = buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state, error: 'denied' });
-      expect(parseRedirectReturnUri(returnUrl)).toEqual({ state, error: 'denied' });
-    });
-
-    it('returns undefined when no Enbox fragment parameters are present and ignores query params', () => {
       expect(parseRedirectReturnUri('https://app.example/callback')).toBeUndefined();
       expect(parseRedirectReturnUri('https://app.example/callback#section=1')).toBeUndefined();
       expect(parseRedirectReturnUri('https://app.example/callback?enbox_state=abc&enbox_key=xyz')).toBeUndefined();
       expect(parseRedirectReturnUri('not-a-url')).toBeUndefined();
     });
 
-    it('rejects malformed return URIs and wrong-length secrets', () => {
+    it('rejects malformed return URIs, duplicate params, non-canonical base64url, and all-zero secrets', () => {
       const shortSecret = CryptoUtils.randomBytes(16);
+      const validEncodedKey = Convert.uint8Array(generateRedirectResponseSecret()).toBase64Url();
+
       expect(() => buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: '', responseSecret: generateRedirectResponseSecret() }))
         .toThrow('non-empty string');
       expect(() => buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: 'abc', responseSecret: shortSecret }))
         .toThrow('must be 32 bytes');
-
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_key=${Convert.uint8Array(generateRedirectResponseSecret()).toBase64Url()}`))
-        .toThrow('missing `enbox_state`');
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc`))
-        .toThrow('missing `enbox_key`');
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc&enbox_key=xyz&enbox_error=denied`))
-        .toThrow('cannot carry both');
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc&enbox_error=unknown`))
-        .toThrow('unsupported redirect return error');
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc&enbox_key=${Convert.uint8Array(shortSecret).toBase64Url()}`))
-        .toThrow('must decode to 32 bytes');
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc&enbox_key=***not-b64***`))
-        .toThrow('not valid base64url');
-      // Duplicate fragment params
-      const validEncodedKey = Convert.uint8Array(generateRedirectResponseSecret()).toBase64Url();
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=a&enbox_state=b&enbox_key=${validEncodedKey}`))
-        .toThrow('duplicate Enbox parameters');
-      // Non-canonical trailing bits in 43-char base64url
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc&enbox_key=${validEncodedKey.slice(0, 42)}9`))
-        .toThrow('not valid base64url');
-      // All-zero 32-byte key
-      expect(() => parseRedirectReturnUri(`${REDIRECT_URI}#enbox_state=abc&enbox_key=${Convert.uint8Array(new Uint8Array(32)).toBase64Url()}`))
+      expect(() => buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: 'abc', responseSecret: new Uint8Array(32) }))
         .toThrow('must not be all zeros');
+
+      const badCases: [string, string][] = [
+        [`${REDIRECT_URI}#enbox_key=${validEncodedKey}`, 'missing `enbox_state`'],
+        [`${REDIRECT_URI}#enbox_state=abc`, 'missing `enbox_key`'],
+        [`${REDIRECT_URI}#enbox_state=abc&enbox_key=xyz&enbox_error=denied`, 'cannot carry both'],
+        [`${REDIRECT_URI}#enbox_state=abc&enbox_error=unknown`, 'unsupported redirect return error'],
+        [`${REDIRECT_URI}#enbox_state=abc&enbox_key=${Convert.uint8Array(shortSecret).toBase64Url()}`, 'canonical 32-byte base64url'],
+        [`${REDIRECT_URI}#enbox_state=abc&enbox_key=***not-b64***`, 'canonical 32-byte base64url'],
+        [`${REDIRECT_URI}#enbox_state=a&enbox_state=b&enbox_key=${validEncodedKey}`, 'duplicate Enbox parameters'],
+        [`${REDIRECT_URI}#enbox_state=abc&enbox_key=${validEncodedKey.slice(0, 42)}9`, 'canonical 32-byte base64url'],
+        [`${REDIRECT_URI}#enbox_state=abc&enbox_key=${Convert.uint8Array(new Uint8Array(32)).toBase64Url()}`, 'must not be all zeros'],
+      ];
+      for (const [uri, expectedMessage] of badCases) {
+        expect(() => parseRedirectReturnUri(uri)).toThrow(expectedMessage);
+      }
     });
   });
 
@@ -296,24 +299,23 @@ describe('Connect same-device hybrid redirect', () => {
       expect(isRedirectUriVerifiedInManifest('https://app.example/connect/callback', undefined)).toBe(false);
     });
 
-    it('returns undefined when manifest is missing, redirected, invalid, oversized, non-local http, or origin is malformed', async () => {
+    it('returns undefined when manifest is missing, redirected, invalid, oversized, non-local http, or malformed origin', async () => {
       expect(await fetchConnectAppManifest('not-a-url')).toBeUndefined();
       expect(await fetchConnectAppManifest('https://app.example/with-path')).toBeUndefined();
-      // Cleartext HTTP is rejected for remote origins (allowed only on loopback).
       const remoteHttpFetch = sinon.stub();
       expect(await fetchConnectAppManifest('http://app.example', { fetchFn: remoteHttpFetch })).toBeUndefined();
       expect(remoteHttpFetch.called).toBe(false);
 
-      const notFound = sinon.stub().resolves(new Response('Not Found', { status: 404 }));
-      expect(await fetchConnectAppManifest('https://app.example', { fetchFn: notFound })).toBeUndefined();
+      expect(await fetchConnectAppManifest('https://app.example', {
+        fetchFn: sinon.stub().resolves(new Response('Not Found', { status: 404 })),
+      })).toBeUndefined();
+      expect(await fetchConnectAppManifest('https://app.example', {
+        fetchFn: sinon.stub().rejects(new TypeError('redirect blocked')),
+      })).toBeUndefined();
+      expect(await fetchConnectAppManifest('https://app.example', {
+        fetchFn: sinon.stub().resolves(new Response(JSON.stringify({ redirectUris: 'not-array' }), { status: 200 })),
+      })).toBeUndefined();
 
-      const redirected = sinon.stub().rejects(new TypeError('redirect blocked'));
-      expect(await fetchConnectAppManifest('https://app.example', { fetchFn: redirected })).toBeUndefined();
-
-      const badShape = sinon.stub().resolves(new Response(JSON.stringify({ redirectUris: 'not-array' }), { status: 200 }));
-      expect(await fetchConnectAppManifest('https://app.example', { fetchFn: badShape })).toBeUndefined();
-
-      // Oversized streaming body is aborted without buffering unbounded bytes.
       let chunksPulled = 0;
       const hugeStream = new ReadableStream<Uint8Array>({
         pull(controller): void {
@@ -321,58 +323,31 @@ describe('Connect same-device hybrid redirect', () => {
           controller.enqueue(new Uint8Array(32_768));
         },
       });
-      const hugeFetch = sinon.stub().resolves(new Response(hugeStream, { status: 200 }));
-      expect(await fetchConnectAppManifest('https://app.example', { fetchFn: hugeFetch })).toBeUndefined();
+      expect(await fetchConnectAppManifest('https://app.example', {
+        fetchFn: sinon.stub().resolves(new Response(hugeStream, { status: 200 })),
+      })).toBeUndefined();
       expect(chunksPulled).toBeLessThanOrEqual(4);
     });
   });
 
   describe('prepareRedirectConnectRequest + completeRedirectConnect / completeRedirectAuthentication', () => {
     it('runs a full delegation redirect handshake without polling while away', async () => {
-      let storedRequestJwe = '';
-      const relayBox: { responseJwe?: string } = {};
-      let tokenGets = 0;
-      let completePosts = 0;
-
-      const fetchFn = sinon.stub().callsFake(async (input: string | URL, init?: RequestInit): Promise<Response> => {
-        const url = String(input);
-        if (url === `${CONNECT_SERVER_URL}/par` && init?.method === 'POST') {
-          storedRequestJwe = (JSON.parse(init.body as string) as { request: string }).request;
-          return new Response(JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }), { status: 201 });
-        }
-        if (url.startsWith(`${CONNECT_SERVER_URL}/token/`)) {
-          tokenGets += 1;
-          return relayBox.responseJwe === undefined
-            ? new Response(null, { status: 204 })
-            : new Response(relayBox.responseJwe, { status: 200 });
-        }
-        if (url === `${CONNECT_SERVER_URL}/complete` && init?.method === 'POST') {
-          completePosts += 1;
-          return new Response(JSON.stringify({ ok: true }), { status: 201 });
-        }
-        throw new Error(`Unexpected fetch: ${url}`);
-      });
-
+      const relay = createFakeRedirectRelay();
       const prepared = await prepareRedirectConnectRequest({
         connectServerUrl   : CONNECT_SERVER_URL,
         walletUri          : WALLET_URI,
         redirectUri        : REDIRECT_URI,
         appName            : 'Mobile App',
         permissionRequests : [],
-        fetchFn,
+        fetchFn            : relay.fetchFn,
       });
 
       // Phase 1 MUST NOT poll /token while away.
-      expect(tokenGets).toBe(0);
+      expect(relay.state.tokenGets).toBe(0);
       expect(prepared.requestUri).toBe(REQUEST_URI);
       expect(prepared.pendingSession.redirectUri).toBe(REDIRECT_URI);
 
-      // Wallet opens the request and seals with a fresh 256-bit responseSecret.
-      const parsedUri = parseWalletConnectUri(prepared.walletUri)!;
-      const request = await ConnectProvider.openRequest({
-        jwe        : storedRequestJwe,
-        decryption : { mode: 'dir', requestKey: parsedUri.encryptionKey },
-      });
+      const request = await relay.openStoredRequest(prepared.walletUri);
       expect(request.reply).toEqual({
         mode        : 'redirect',
         callbackUrl : `${CONNECT_SERVER_URL}/callback`,
@@ -382,7 +357,7 @@ describe('Connect same-device hybrid redirect', () => {
       const owner = await DidJwk.create();
       const delegate = await DidJwk.create();
       const responseSecret = generateRedirectResponseSecret();
-      relayBox.responseJwe = await ConnectProvider.sealApprovedResponse({
+      relay.state.responseJwe = await ConnectProvider.sealApprovedResponse({
         request,
         providerDid : owner.uri,
         signer      : delegate,
@@ -395,13 +370,7 @@ describe('Connect same-device hybrid redirect', () => {
         },
       });
 
-      const returnUrl = buildRedirectReturnUri({
-        redirectUri : REDIRECT_URI,
-        state       : request.state,
-        responseSecret,
-      });
-
-      // Wrong fragment secret must fail closed!
+      const returnUrl = buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: request.state, responseSecret });
       const wrongSecretUrl = buildRedirectReturnUri({
         redirectUri    : REDIRECT_URI,
         state          : request.state,
@@ -410,43 +379,35 @@ describe('Connect same-device hybrid redirect', () => {
       await expect(completeRedirectConnect({
         pendingSession : prepared.pendingSession,
         returnUrl      : wrongSecretUrl,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       })).rejects.toThrow();
 
-      // Correct return URL decrypts and completes!
       const result = await completeRedirectConnect({
-        pendingSession: prepared.pendingSession,
+        pendingSession : prepared.pendingSession,
         returnUrl,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       });
       expect(result?.connectedDid).toBe(owner.uri);
       expect(result?.delegatePortableDid.uri).toBe(delegate.uri);
-      expect(completePosts).toBe(1);
+      expect(relay.state.completePosts).toBe(1);
     });
 
     it('returns undefined on redirect denial and rejects state mismatch', async () => {
-      const fetchFn = sinon.stub().resolves(
-        new Response(JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }), { status: 201 }),
-      );
-
+      const relay = createFakeRedirectRelay();
       const prepared = await prepareRedirectConnectRequest({
         connectServerUrl   : CONNECT_SERVER_URL,
         walletUri          : WALLET_URI,
         redirectUri        : REDIRECT_URI,
         appName            : 'Mobile App',
         permissionRequests : [],
-        fetchFn,
+        fetchFn            : relay.fetchFn,
       });
 
-      const deniedUrl = buildRedirectReturnUri({
-        redirectUri : REDIRECT_URI,
-        state       : prepared.pendingSession.state,
-        error       : 'denied',
-      });
+      const deniedUrl = buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: prepared.pendingSession.state, error: 'denied' });
       await expect(completeRedirectConnect({
         pendingSession : prepared.pendingSession,
         returnUrl      : deniedUrl,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       })).resolves.toBeUndefined();
 
       const wrongStateUrl = buildRedirectReturnUri({
@@ -457,26 +418,12 @@ describe('Connect same-device hybrid redirect', () => {
       await expect(completeRedirectConnect({
         pendingSession : prepared.pendingSession,
         returnUrl      : wrongStateUrl,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       })).rejects.toThrow('enbox_state');
     });
 
-    it('completes an authentication-only redirect flow end-to-end', async () => {
-      let storedRequestJwe = '';
-      const relayBox: { responseJwe?: string } = {};
-
-      const fetchFn = sinon.stub().callsFake(async (input: string | URL, init?: RequestInit): Promise<Response> => {
-        const url = String(input);
-        if (url === `${CONNECT_SERVER_URL}/par`) {
-          storedRequestJwe = (JSON.parse(init!.body as string) as { request: string }).request;
-          return new Response(JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }), { status: 201 });
-        }
-        if (url.startsWith(`${CONNECT_SERVER_URL}/token/`)) {
-          return new Response(relayBox.responseJwe ?? CONNECT_DENIED_TOKEN, { status: 200 });
-        }
-        return new Response(JSON.stringify({ ok: true }), { status: 201 });
-      });
-
+    it('completes an authentication-only redirect flow and enforces expectedProviderDid', async () => {
+      const relay = createFakeRedirectRelay();
       const owner = await DidJwk.create();
       const challenge = randomToken();
       const prepared = await prepareRedirectConnectRequest({
@@ -488,42 +435,37 @@ describe('Connect same-device hybrid redirect', () => {
         expectedProviderDid : owner.uri,
         permissionRequests  : [],
         authentication      : { version: 1, audience: 'https://app.example', challenge },
-        fetchFn,
+        fetchFn             : relay.fetchFn,
       });
 
-      const parsedUri = parseWalletConnectUri(prepared.walletUri)!;
-      const request = await ConnectProvider.openRequest({
-        jwe        : storedRequestJwe,
-        decryption : { mode: 'dir', requestKey: parsedUri.encryptionKey },
-      });
-
+      const request = await relay.openStoredRequest(prepared.walletUri);
       const responseSecret = generateRedirectResponseSecret();
-      relayBox.responseJwe = await ConnectProvider.sealAuthenticationResponse({
+      relay.state.responseJwe = await ConnectProvider.sealAuthenticationResponse({
         request,
         providerDid : owner.uri,
         signer      : await DidJwk.create(),
         responseSecret,
-        approval    : {
-          authenticationProof: await createOwnerAuthenticationProof({ request, owner }),
-        },
+        approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) },
       });
 
-      const returnUrl = buildRedirectReturnUri({
-        redirectUri : REDIRECT_URI,
-        state       : request.state,
-        responseSecret,
-      });
-
+      const returnUrl = buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: request.state, responseSecret });
       await expect(completeRedirectConnect({
-        pendingSession: prepared.pendingSession,
+        pendingSession : prepared.pendingSession,
         returnUrl,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       })).rejects.toThrow('completeRedirectAuthentication');
 
-      const authResult = await completeRedirectAuthentication({
-        pendingSession: prepared.pendingSession,
+      await expect(completeRedirectAuthentication({
+        pendingSession      : prepared.pendingSession,
         returnUrl,
-        fetchFn,
+        expectedProviderDid : 'did:dht:other-provider',
+        fetchFn             : relay.fetchFn,
+      })).rejects.toThrow('expectedProviderDid');
+
+      const authResult = await completeRedirectAuthentication({
+        pendingSession : prepared.pendingSession,
+        returnUrl,
+        fetchFn        : relay.fetchFn,
       });
       expect(authResult?.connectedDid).toBe(owner.uri);
       expect(authResult?.authentication.subject).toBe(owner.uri);
@@ -531,20 +473,7 @@ describe('Connect same-device hybrid redirect', () => {
     });
 
     it('keeps delegate private keys out of pendingSession on refresh and re-supplies localDelegatePortableDid on return', async () => {
-      let storedRequestJwe = '';
-      const relayBox: { responseJwe?: string } = {};
-      const fetchFn = sinon.stub().callsFake(async (input: string | URL, init?: RequestInit): Promise<Response> => {
-        const url = String(input);
-        if (url === `${CONNECT_SERVER_URL}/par`) {
-          storedRequestJwe = (JSON.parse(init!.body as string) as { request: string }).request;
-          return new Response(JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }), { status: 201 });
-        }
-        if (url.startsWith(`${CONNECT_SERVER_URL}/token/`)) {
-          return new Response(relayBox.responseJwe ?? CONNECT_DENIED_TOKEN, { status: 200 });
-        }
-        return new Response(JSON.stringify({ ok: true }), { status: 201 });
-      });
-
+      const relay = createFakeRedirectRelay();
       const owner = await DidJwk.create();
       const delegate = await DidJwk.create();
       const localDelegatePortableDid = await delegate.export();
@@ -558,61 +487,47 @@ describe('Connect same-device hybrid redirect', () => {
         delegateDid         : delegate.uri,
         expectedProviderDid : owner.uri,
         permissionRequests  : [],
-        fetchFn,
+        fetchFn             : relay.fetchFn,
       });
-
-      // Serialized pendingSession must never carry long-lived delegate private keys.
       expect(JSON.stringify(prepared.pendingSession)).not.toContain('privateKeys');
 
-      const parsedUri = parseWalletConnectUri(prepared.walletUri)!;
-      const request = await ConnectProvider.openRequest({
-        jwe        : storedRequestJwe,
-        decryption : { mode: 'dir', requestKey: parsedUri.encryptionKey },
-      });
+      const request = await relay.openStoredRequest(prepared.walletUri);
       const responseSecret = generateRedirectResponseSecret();
-      relayBox.responseJwe = await ConnectProvider.sealApprovedResponse({
+      relay.state.responseJwe = await ConnectProvider.sealApprovedResponse({
         request,
         providerDid : owner.uri,
         signer      : delegate,
         responseSecret,
-        approval    : {
-          delegateDid        : delegate.uri,
-          delegateGrants     : [],
-          sessionRevocations : [],
-        },
+        approval    : { delegateDid: delegate.uri, delegateGrants: [], sessionRevocations: [] },
       });
       const returnUrl = buildRedirectReturnUri({ redirectUri: REDIRECT_URI, state: request.state, responseSecret });
 
-      // Missing localDelegatePortableDid fails before consuming the relay token.
       await expect(completeRedirectConnect({
-        pendingSession: prepared.pendingSession,
+        pendingSession : prepared.pendingSession,
         returnUrl,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       })).rejects.toThrow('localDelegatePortableDid');
 
       const result = await completeRedirectConnect({
-        pendingSession: prepared.pendingSession,
+        pendingSession : prepared.pendingSession,
         returnUrl,
         localDelegatePortableDid,
-        fetchFn,
+        fetchFn        : relay.fetchFn,
       });
       expect(result?.connectedDid).toBe(owner.uri);
       expect(result?.delegatePortableDid).toEqual(localDelegatePortableDid);
     });
 
-    it('enforces session expiry, exact returnUrl match, transient token retries, and fast-fail 4xx', async () => {
+    it('enforces session expiry and exact returnUrl match (including bare trailing ?)', async () => {
       const baseNow = 1_700_000_000_000;
-      const fetchFn = sinon.stub().resolves(
-        new Response(JSON.stringify({ request_uri: REQUEST_URI, expires_in: 600 }), { status: 201 }),
-      );
-
+      const relay = createFakeRedirectRelay();
       const prepared = await prepareRedirectConnectRequest({
         connectServerUrl   : CONNECT_SERVER_URL,
         walletUri          : WALLET_URI,
         redirectUri        : REDIRECT_URI,
         appName            : 'Hardened Redirect App',
         permissionRequests : [],
-        fetchFn,
+        fetchFn            : relay.fetchFn,
         now                : (): number => baseNow,
       });
 
@@ -621,30 +536,48 @@ describe('Connect same-device hybrid redirect', () => {
         state          : prepared.pendingSession.state,
         responseSecret : generateRedirectResponseSecret(),
       });
+      const fragment = new URL(validReturnUrl).hash;
 
-      // Expired pendingSession is rejected inside @enbox/connect itself.
       await expect(completeRedirectConnect({
         pendingSession  : prepared.pendingSession,
         returnUrl       : validReturnUrl,
-        fetchFn,
+        fetchFn         : relay.fetchFn,
         maxSessionAgeMs : 60_000,
         now             : (): number => baseNow + 60_001,
       })).rejects.toThrow('expired');
 
-      // Mismatched returnUrl path or injected query string is rejected.
-      const wrongPathUrl = buildRedirectReturnUri({
-        redirectUri    : 'https://app.example/other/path',
+      for (const badReturnUrl of [
+        `https://app.example/other/path${fragment}`,
+        `${REDIRECT_URI}?${fragment}`,
+        `${REDIRECT_URI}?injected=1${fragment}`,
+      ]) {
+        await expect(completeRedirectConnect({
+          pendingSession : prepared.pendingSession,
+          returnUrl      : badReturnUrl,
+          fetchFn        : relay.fetchFn,
+          now            : (): number => baseNow + 1_000,
+        })).rejects.toThrow('does not match the requested `redirectUri`');
+      }
+    });
+
+    it('retries transient token errors, fast-fails 4xx, and honors prepare abort signals', async () => {
+      const baseNow = 1_700_000_000_000;
+      const relay = createFakeRedirectRelay();
+      const prepared = await prepareRedirectConnectRequest({
+        connectServerUrl   : CONNECT_SERVER_URL,
+        walletUri          : WALLET_URI,
+        redirectUri        : REDIRECT_URI,
+        appName            : 'Retry Redirect App',
+        permissionRequests : [],
+        fetchFn            : relay.fetchFn,
+        now                : (): number => baseNow,
+      });
+      const validReturnUrl = buildRedirectReturnUri({
+        redirectUri    : REDIRECT_URI,
         state          : prepared.pendingSession.state,
         responseSecret : generateRedirectResponseSecret(),
       });
-      await expect(completeRedirectConnect({
-        pendingSession : prepared.pendingSession,
-        returnUrl      : wrongPathUrl,
-        fetchFn,
-        now            : (): number => baseNow + 1_000,
-      })).rejects.toThrow('does not match the requested `redirectUri`');
 
-      // Non-retryable 403 fast-fails with exact status without retrying.
       const forbiddenFetch = sinon.stub().resolves(new Response('Forbidden', { status: 403 }));
       await expect(completeRedirectConnect({
         pendingSession : prepared.pendingSession,
@@ -655,7 +588,6 @@ describe('Connect same-device hybrid redirect', () => {
       })).rejects.toThrow('HTTP 403');
       expect(forbiddenFetch.callCount).toBe(1);
 
-      // Transient network error + 503 retries and succeeds on 3rd attempt (DENIED).
       const flakyFetch = sinon.stub();
       flakyFetch.onCall(0).rejects(new TypeError('Failed to fetch'));
       flakyFetch.onCall(1).resolves(new Response('Service Unavailable', { status: 503 }));
@@ -669,7 +601,6 @@ describe('Connect same-device hybrid redirect', () => {
       })).resolves.toBeUndefined();
       expect(flakyFetch.callCount).toBe(3);
 
-      // Aborted signal aborts prepareRedirectConnectRequest before calling fetch.
       const controller = new AbortController();
       controller.abort(new DOMException('Cancelled', 'AbortError'));
       const unusedFetch = sinon.stub();
