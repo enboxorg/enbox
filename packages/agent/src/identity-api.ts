@@ -257,12 +257,16 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
   public async getRetainedDwnEndpointStatus({ didUri }: {
     didUri: string;
   }): Promise<DwnEndpointResolution | undefined> {
-    const retained = await this.agent.did.getRetainedResolution(didUri);
+    const parsedDid = Did.parse(didUri);
+    if (parsedDid === null) {
+      return undefined;
+    }
+    const retained = await this.agent.did.getRetainedResolution(parsedDid.uri);
     if (retained === undefined) {
       return undefined;
     }
-    return resolveDwnEndpointStatus(didUri, {
-      resolve: async (): Promise<DidResolutionResult> => retained,
+    return resolveDwnEndpointStatus(parsedDid.uri, {
+      resolve: (): Promise<DidResolutionResult> => Promise.resolve(retained),
     });
   }
 

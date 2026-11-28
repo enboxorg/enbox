@@ -767,12 +767,13 @@ describe('AgentDidApi', () => {
       });
 
       describe('getRetainedResolution()', () => {
-        it('returns undefined when no cached resolution exists', async () => {
-          const retained = await testHarness.agent.did.getRetainedResolution('did:dht:notcached123');
-          expect(retained).toBeUndefined();
+        it('returns undefined when no cached resolution exists or the DID URI is invalid', async () => {
+          expect(await testHarness.agent.did.getRetainedResolution('did:dht:notcached123')).toBeUndefined();
+          expect(await testHarness.agent.did.getRetainedResolution('')).toBeUndefined();
+          expect(await testHarness.agent.did.getRetainedResolution('not-a-did')).toBeUndefined();
         });
 
-        it('returns a stale retained resolution without triggering network resolution', async () => {
+        it('returns a stale retained resolution without triggering network resolution, including for DID URLs', async () => {
           const did = await testHarness.agent.did.create({
             method  : 'jwk',
             options : {
@@ -788,6 +789,8 @@ describe('AgentDidApi', () => {
           try {
             const retained = await testHarness.agent.did.getRetainedResolution(did.uri);
             expect(retained?.didDocument?.id).toBe(did.uri);
+            const fromFragment = await testHarness.agent.did.getRetainedResolution(`${did.uri}#0`);
+            expect(fromFragment?.didDocument?.id).toBe(did.uri);
             expect(resolveSpy.called).toBe(false);
             expect(refreshSpy.called).toBe(false);
           } finally {

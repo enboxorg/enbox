@@ -203,7 +203,11 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
     if (this.cache.getRetained === undefined) {
       return undefined;
     }
-    return (await this.cache.getRetained(didUri)) ?? undefined;
+    const parsedDid = Did.parse(didUri);
+    if (parsedDid === null) {
+      return undefined;
+    }
+    return (await this.cache.getRetained(parsedDid.uri)) ?? undefined;
   }
 
   public async create({

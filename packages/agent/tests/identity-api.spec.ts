@@ -709,11 +709,13 @@ describe('AgentIdentityApi', () => {
       });
 
       describe('getRetainedDwnEndpointStatus()', () => {
-        it('returns undefined when no retained DID resolution exists', async () => {
-          const status = await testHarness.agent.identity.getRetainedDwnEndpointStatus({
+        it('returns undefined when no retained DID resolution exists or the DID URI is invalid', async () => {
+          expect(await testHarness.agent.identity.getRetainedDwnEndpointStatus({
             didUri: 'did:dht:unseen123',
-          });
-          expect(status).toBeUndefined();
+          })).toBeUndefined();
+          expect(await testHarness.agent.identity.getRetainedDwnEndpointStatus({
+            didUri: '',
+          })).toBeUndefined();
         });
 
         it('returns retained DWN endpoints even after the cache TTL expires without resolving over the network', async () => {
@@ -738,6 +740,14 @@ describe('AgentIdentityApi', () => {
           try {
             const status = await testHarness.agent.identity.getRetainedDwnEndpointStatus({ didUri });
             expect(status).toEqual({
+              didUri,
+              status    : 'ready',
+              endpoints : ['https://dwn-a.example', 'https://dwn-b.example'],
+            });
+            const fromFragment = await testHarness.agent.identity.getRetainedDwnEndpointStatus({
+              didUri: `${didUri}#dwn`,
+            });
+            expect(fromFragment).toEqual({
               didUri,
               status    : 'ready',
               endpoints : ['https://dwn-a.example', 'https://dwn-b.example'],
