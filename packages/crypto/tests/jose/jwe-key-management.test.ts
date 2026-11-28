@@ -142,6 +142,52 @@ describe('JweKeyManagement', () => {
         expect((decryptCek as Jwk).k).toBe((encryptCek as Jwk).k);
       });
 
+      it('should derive matching CEKs with a 32-byte secret and different CEKs with a wrong secret', async () => {
+        const joseHeader = { alg: 'ECDH-ES', enc: 'XC20P' } as const;
+        const secretA = new Uint8Array(32).fill(0x11);
+        const secretB = new Uint8Array(32).fill(0x22);
+
+        const { cek: encryptCek, headerParams } = await JweKeyManagement.encrypt({
+          key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey, secret: secretA },
+          joseHeader,
+        });
+
+        const matchingCek = await JweKeyManagement.decrypt({
+          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, secret: secretA },
+          joseHeader : { ...joseHeader, ...headerParams },
+        });
+        expect((matchingCek as Jwk).k).toBe((encryptCek as Jwk).k);
+
+        const wrongSecretCek = await JweKeyManagement.decrypt({
+          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, secret: secretB },
+          joseHeader : { ...joseHeader, ...headerParams },
+        });
+        expect((wrongSecretCek as Jwk).k).not.toBe((encryptCek as Jwk).k);
+
+        const omittedSecretCek = await JweKeyManagement.decrypt({
+          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey },
+          joseHeader : { ...joseHeader, ...headerParams },
+        });
+        expect((omittedSecretCek as Jwk).k).not.toBe((encryptCek as Jwk).k);
+      });
+
+      it('should reject an ECDH-ES secret that is not 32 bytes', async () => {
+        const joseHeader = { alg: 'ECDH-ES', enc: 'XC20P' } as const;
+        await expect(JweKeyManagement.encrypt({
+          key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey, secret: new Uint8Array(16) },
+          joseHeader,
+        })).rejects.toThrow('32-byte Uint8Array');
+
+        const { headerParams } = await JweKeyManagement.encrypt({
+          key: { mode: 'ecdh-es', peerPublicKey: recipientPublicKey },
+          joseHeader,
+        });
+        await expect(JweKeyManagement.decrypt({
+          key        : { mode: 'ecdh-es', privateKey: recipientPrivateKey, secret: new Uint8Array(31) },
+          joseHeader : { ...joseHeader, ...headerParams },
+        })).rejects.toThrow('32-byte Uint8Array');
+      });
+
       it('should bind apu and apv into the derived CEK', async () => {
         const apu = Convert.string('alice').toBase64Url();
         const apv = Convert.string('bob').toBase64Url();

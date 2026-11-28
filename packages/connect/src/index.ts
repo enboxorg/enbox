@@ -6,12 +6,14 @@ export {
   assertConnectRequest,
   assertConnectResponse,
   assertConnectAuthenticationResponse,
+  assertValidRedirectUri,
   assertX25519PublicJwk,
   CONNECT_REQUEST_JWE_TYP,
   CONNECT_RESPONSE_JWE_TYP,
   openResponse,
   openAuthenticationResponse,
   REQUEST_KEY_BYTE_LENGTH,
+  RESPONSE_SECRET_BYTE_LENGTH,
   sealRequest,
   sealResponse,
   sealAuthenticationResponse,
@@ -20,6 +22,7 @@ export type { OpenConnectResponseOptions } from './envelope.js';
 export * from './owner-authentication.js';
 export * from './jwt.js';
 export * from './provider.js';
+export * from './redirect.js';
 export * from './relay-transport.js';
 export * from './sas.js';
 export * from './types.js';

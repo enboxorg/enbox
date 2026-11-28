@@ -57,10 +57,11 @@ import {
 } from '../dweb-connect-client.js';
 import { encodeQr, qrToSvg } from './qr.js';
 import { fetchWalletWellKnown, probeWalletWellKnown } from './wallet-well-known.js';
+import { isIosStandalonePwa, startRedirectConnect } from '../redirect-connect.js';
 import { RelayConnectCancelledError, runRelayConnect } from '../relay-connect-runner.js';
 
 /** How the user carries out the approval. */
-export type ConnectMethod = 'phone' | 'browser';
+export type ConnectMethod = 'phone' | 'browser' | 'redirect';
 
 /** localStorage key remembering the last successful method + wallet. */
 const LAST_CHOICE_STORAGE_KEY = 'enbox:connect:lastChoice';
@@ -212,6 +213,12 @@ export interface ConnectModalOptions {
    */
   relayWalletPath?: string;
 
+  /**
+   * Exact return URL (HTTPS or localhost, no query string or fragment) that
+   * enables the same-device mobile redirect connect path (`reply.mode = 'redirect'`).
+   */
+  redirectUri?: string;
+
   /** Timeout in milliseconds for either method's handshake. */
   timeout?: number;
 
@@ -237,14 +244,20 @@ export interface ConnectModalDeps {
   /** Runs one popup handshake (browser path); must open the popup synchronously. */
   runPopup: typeof runPopupConnect;
 
+  /** Starts one same-tab mobile redirect connect flow. */
+  startRedirect: typeof startRedirectConnect;
+
   /** Resolves a wallet origin to its relay `connectServerUrl` (or undefined). */
   discoverConnectServerUrl: (walletOrigin: string) => Promise<string | undefined>;
 
   /** Validates a pasted custom wallet URL. */
   validateWalletUrl: (origin: string) => Promise<boolean>;
 
-  /** Whether to present the deep-link (same-device) variant of the phone path. */
+  /** Whether to present the mobile variant of the connect flow. */
   isMobile: () => boolean;
+
+  /** Whether the page is running inside an iOS standalone Home Screen PWA. */
+  isIosStandalonePwa: () => boolean;
 
   /** Persistence for the remembered choice. */
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | undefined;
@@ -303,9 +316,11 @@ function defaultDeps(): ConnectModalDeps {
   return {
     runRelay                 : runRelayConnect,
     runPopup                 : runPopupConnect,
+    startRedirect            : startRedirectConnect,
     discoverConnectServerUrl : discoverWalletConnectServerUrl,
     validateWalletUrl        : probeWalletWellKnown,
     isMobile                 : defaultIsMobile,
+    isIosStandalonePwa       : (): boolean => isIosStandalonePwa(),
     storage                  : typeof localStorage === 'undefined' ? undefined : localStorage,
   };
 }
@@ -322,6 +337,10 @@ interface SessionChoice extends LastChoice {
   providerDid: string;
 }
 
+function isConnectMethod(value: unknown): value is ConnectMethod {
+  return value === 'phone' || value === 'browser' || value === 'redirect';
+}
+
 function readLastChoice(storage: ConnectModalDeps['storage']): LastChoice | undefined {
   try {
     const raw = storage?.getItem(LAST_CHOICE_STORAGE_KEY);
@@ -329,7 +348,7 @@ function readLastChoice(storage: ConnectModalDeps['storage']): LastChoice | unde
       return undefined;
     }
     const parsed = JSON.parse(raw) as Partial<LastChoice>;
-    if ((parsed.method === 'phone' || parsed.method === 'browser') && isValidRememberedWalletUrl(parsed.walletUrl)) {
+    if (isConnectMethod(parsed.method) && isValidRememberedWalletUrl(parsed.walletUrl)) {
       return { method: parsed.method, walletUrl: parsed.walletUrl };
     }
   } catch { /* unreadable storage — behave as first visit */ }
@@ -347,7 +366,7 @@ function isSessionChoice(value: unknown): value is SessionChoice {
     return false;
   }
   const choice = value as Partial<SessionChoice>;
-  return (choice.method === 'phone' || choice.method === 'browser')
+  return isConnectMethod(choice.method)
     && isValidRememberedWalletUrl(choice.walletUrl)
     && typeof choice.delegateDid === 'string'
     && choice.delegateDid.length > 0
@@ -474,6 +493,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
   const appName = options.appName ?? window.location.host;
   const applicationId = options.applicationId ?? window.location.origin;
   const isMobile = deps.isMobile();
+  const iosStandalone = deps.isIosStandalonePwa();
+  const canRedirect = options.redirectUri !== undefined && !iosStandalone;
   const refreshing = options.mode === 'refresh';
 
   const lastChoice = rememberChoice ? readLastChoice(deps.storage) : undefined;
@@ -501,8 +522,16 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     ?? rememberedWalletUrl
     ?? wallets[0]?.url;
 
-  // An exact refresh route wins over generic handler and global preferences.
-  let method: ConnectMethod = savedRoute?.method ?? options.preferredMethod ?? lastChoice?.method ?? 'phone';
+  // On desktop, default to the cross-device phone path (QR + SAS).
+  // On mobile browsers (excluding iOS standalone PWAs), prefer same-tab
+  // redirect when configured, otherwise the in-browser popup channel.
+  // iOS standalone PWAs stay on the cross-context phone path to avoid being
+  // trapped in an isolated SFSafariViewController.
+  const defaultMethod: ConnectMethod = isMobile && !iosStandalone
+    ? (canRedirect ? 'redirect' : 'browser')
+    : 'phone';
+  const requestedMethod: ConnectMethod = savedRoute?.method ?? options.preferredMethod ?? lastChoice?.method ?? defaultMethod;
+  let method: ConnectMethod = requestedMethod === 'redirect' && !canRedirect ? defaultMethod : requestedMethod;
 
   return new Promise<ConnectResult | undefined>((resolve, reject) => {
     // ── Host + shadow root ─────────────────────────────────────
@@ -1087,6 +1116,67 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       }
     };
 
+    const renderRedirectPrompt = (): void => {
+      const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
+      const exactReconnect = savedRoute !== undefined;
+      setStage(
+        el('p', 'stage-caption', exactReconnect
+          ? `Reconnect with ${walletName}`
+          : `Continue in ${walletName}`),
+        el('p', 'stage-subline', exactReconnect
+          ? `Opens the same ${walletName} profile and returns right back here.`
+          : `Opens ${walletName} in this browser to approve and returns right back here.`),
+        stageButton(`Continue in ${walletName}`, () => { void startRedirect(); }),
+      );
+    };
+
+    const startRedirect = async (): Promise<void> => {
+      relaySession?.cancel();
+      clearRemint();
+
+      if (walletUrl === undefined) {
+        renderError('No wallet is configured.');
+        return;
+      }
+      if (options.redirectUri === undefined || iosStandalone) {
+        await switchMethod('phone');
+        return;
+      }
+
+      method = 'redirect';
+      renderFooter();
+      const walletName = walletByUrl(walletUrl).name;
+      renderBusy(`Opening ${walletName}…`);
+
+      const origin = new URL(walletUrl).origin;
+      const connectServerUrl = await resolveConnectServerUrl(origin);
+      if (settled) { return; }
+      if (connectServerUrl === undefined) {
+        renderPhoneUnavailable();
+        return;
+      }
+
+      try {
+        await deps.startRedirect({
+          connectServerUrl,
+          walletUri           : new URL(relayWalletPath, origin).toString(),
+          redirectUri         : options.redirectUri,
+          appName,
+          appIcon             : options.appIcon,
+          applicationId,
+          permissionRequests  : options.permissionRequests,
+          delegatePortableDid : options.delegatePortableDid,
+          requestType         : options.mode,
+          expectedProviderDid,
+          timeoutMs           : options.timeout,
+        });
+      } catch (error) {
+        if (settled) { return; }
+        const failure = error instanceof Error ? error : new Error(String(error));
+        renderError('Something went wrong while opening the wallet.', failure);
+      }
+    };
+
     const startMethod = async (): Promise<void> => {
       if (method === 'browser') {
         // window.open must stay inside a user gesture — prompt for the click.
@@ -1094,6 +1184,11 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         clearRemint();
         renderFooter();
         renderPopupPrompt();
+      } else if (method === 'redirect') {
+        relaySession?.cancel();
+        clearRemint();
+        renderFooter();
+        renderRedirectPrompt();
       } else {
         await startPhone();
       }
@@ -1124,13 +1219,18 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       if (method === 'phone' && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
-        // On a phone both methods open the wallet on this device — what the
-        // popup channel actually buys the visitor is skipping manual verification.
-        alt.textContent = isMobile ? 'Or connect directly in this browser →' : 'No phone? Use this browser →';
-        // startPopup runs synchronously in this click handler.
-        alt.addEventListener('click', () => { void startPopup(); });
+        if (canRedirect && isMobile) {
+          alt.textContent = 'Or connect directly in this browser →';
+          alt.addEventListener('click', () => { void switchMethod('redirect'); });
+        } else {
+          // On a phone both methods open the wallet on this device — what the
+          // popup channel actually buys the visitor is skipping manual verification.
+          alt.textContent = isMobile ? 'Or connect directly in this browser →' : 'No phone? Use this browser →';
+          // startPopup runs synchronously in this click handler.
+          alt.addEventListener('click', () => { void startPopup(); });
+        }
         row.appendChild(alt);
-      } else if (method === 'browser' && savedRoute === undefined) {
+      } else if ((method === 'browser' || method === 'redirect') && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         alt.textContent = isMobile ? 'Use another device instead →' : 'Use your phone instead →';

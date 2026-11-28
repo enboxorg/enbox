@@ -145,6 +145,18 @@ export interface BrowserConnectHandlerOptions {
   relayWalletPath?: string;
 
   /**
+   * Optional exact return URL (HTTPS or localhost, no query string or fragment)
+   * enabling the same-device mobile redirect flow (`reply.mode = 'redirect'`).
+   *
+   * When set on a mobile browser (excluding iOS standalone PWAs), the connect
+   * modal defaults to a one-tap same-tab redirect to the wallet and returns to
+   * this URL with `#enbox_state=...&enbox_key=...`. Call
+   * {@link completeRedirectConnectFromWindow} on load at this URL to finish
+   * connecting.
+   */
+  redirectUri?: string;
+
+  /**
    * Color scheme for the connect modal. By default it follows the
    * visitor's system light/dark appearance; apps can force an appearance
    * and/or override palette tokens (accent, surfaces, text) per scheme to
@@ -156,11 +168,13 @@ export interface BrowserConnectHandlerOptions {
 /**
  * Create a browser-native connect handler over the connect modal.
  *
- * The modal owns the whole session on one surface: the phone path (a QR /
- * deep link over the relay, with pre-approval SAS symbol verification) is the
- * default, the in-browser wallet popup is the alternate, and the wallet catalog
- * plus custom-URL entry live in a disclosure. It resolves with the delegate
- * credentials on success and `undefined` when the user denies.
+ * The modal owns the whole session on one surface: on desktop the phone path
+ * (QR / deep link over the relay with pre-approval SAS symbol verification) is
+ * the default; on mobile browsers (outside iOS standalone PWAs) the modal
+ * defaults to same-tab redirect when `redirectUri` is configured, or the
+ * in-browser popup path otherwise. The wallet catalog plus custom-URL entry
+ * live in a disclosure. It resolves with the delegate credentials on success
+ * and `undefined` when the user denies.
  *
  * @example
  * ```ts
@@ -192,6 +206,7 @@ export function BrowserConnectHandler(
     rememberChoice,
     connectServerUrl,
     relayWalletPath,
+    redirectUri,
     theme,
   } = options;
 
@@ -213,6 +228,7 @@ export function BrowserConnectHandler(
         applicationId,
         connectServerUrl,
         relayWalletPath,
+        redirectUri,
         timeout,
         theme,
         mode                : params.requestType,

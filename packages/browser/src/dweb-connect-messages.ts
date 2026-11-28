@@ -27,6 +27,14 @@ import type { Jwk } from '@enbox/crypto';
 /** Path of the wallet's DWeb Connect page, opened as a popup by the dapp. */
 export const DWEB_CONNECT_PATH = '/dweb-connect';
 
+/**
+ * Message type of the dapp's `hello` handshake ping (dapp → wallet).
+ * Allows the wallet popup to pin the browser-verified `event.origin` of
+ * `window.opener` even when the dapp sets `Referrer-Policy: no-referrer`
+ * (so `document.referrer` is empty) without ever using `'*'`.
+ */
+export const DWEB_CONNECT_HELLO_MESSAGE_TYPE = 'enbox-connect-hello';
+
 /** Message type of the wallet's `loaded` beacon (wallet → dapp). */
 export const DWEB_CONNECT_LOADED_MESSAGE_TYPE = 'enbox-connect-loaded';
 
@@ -38,6 +46,15 @@ export const DWEB_CONNECT_RESPONSE_MESSAGE_TYPE = 'enbox-connect-response';
 
 /** Message type of the dapp's completion acknowledgement (dapp → wallet). */
 export const DWEB_CONNECT_ACK_MESSAGE_TYPE = 'enbox-connect-ack';
+
+/**
+ * The dapp's readiness ping sent to the wallet popup with `targetOrigin` pinned
+ * to the configured wallet origin. Lets the wallet discover the browser-verified
+ * opener origin via `event.origin` when `document.referrer` is stripped.
+ */
+export type DWebConnectHelloMessage = {
+  type: typeof DWEB_CONNECT_HELLO_MESSAGE_TYPE;
+};
 
 /**
  * The wallet's readiness beacon. Emitted to `window.opener` once the wallet's

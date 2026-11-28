@@ -276,12 +276,33 @@ export function assertConnectRequestAuthentication(request: ConnectRequest): voi
       new Set(request.supportedDidMethods).size !== request.supportedDidMethods.length ||
       request.supportedDidMethods.some(method => typeof method !== 'string' || !/^did:[a-z0-9]+$/u.test(method)) ||
       !isOkpPublicJwk(request.responseKey) || request.responseKey.crv !== 'X25519' ||
-      !request.reply || !['post_message', 'direct_post'].includes(request.reply.mode)) {
+      !request.reply || !['post_message', 'direct_post', 'redirect'].includes(request.reply.mode)) {
     throw new ConnectAuthenticationError('invalid-request');
   }
-  if (request.reply.mode === 'direct_post' && (typeof request.reply.callbackUrl !== 'string' ||
+  if ((request.reply.mode === 'direct_post' || request.reply.mode === 'redirect') && (typeof request.reply.callbackUrl !== 'string' ||
       request.reply.callbackUrl.length === 0 || request.reply.callbackUrl.length > 2_048)) {
     throw new ConnectAuthenticationError('invalid-request');
+  }
+  if (request.reply.mode === 'redirect') {
+    if (typeof request.reply.redirectUri !== 'string' || request.reply.redirectUri.length === 0 ||
+        request.reply.redirectUri.length > 2_048 || /\s/.test(request.reply.redirectUri)) {
+      throw new ConnectAuthenticationError('invalid-request');
+    }
+    try {
+      const parsedRedirect = new URL(request.reply.redirectUri);
+      const isLocalHttp = parsedRedirect.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsedRedirect.hostname);
+      if ((parsedRedirect.protocol !== 'https:' && !isLocalHttp) ||
+          parsedRedirect.username !== '' || parsedRedirect.password !== '' ||
+          parsedRedirect.search !== '' || request.reply.redirectUri.includes('?') ||
+          parsedRedirect.hash !== '' || request.reply.redirectUri.includes('#')) {
+        throw new ConnectAuthenticationError('invalid-request');
+      }
+    } catch {
+      throw new ConnectAuthenticationError('invalid-request');
+    }
+    if (request.delegateDid !== undefined && request.requestType !== 'refresh') {
+      throw new ConnectAuthenticationError('invalid-request');
+    }
   }
   if (request.requestType !== undefined && !['connect', 'refresh', 'authenticate'].includes(request.requestType)) {
     throw new ConnectAuthenticationError('invalid-request');
