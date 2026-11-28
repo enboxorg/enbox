@@ -2071,6 +2071,96 @@ describe('connect approval ceremony', () => {
         expect(abortedSecondarySends).toBeGreaterThanOrEqual(2);
         expect(elapsed).toBeLessThan(7_000);
       }, 20_000);
+
+      it('should not starve healthy endpoints when >= 8 grantKeys and revocations fan out with a hanging primary endpoint', async () => {
+        const encryptedModule: DwnModuleDefinition = {
+          module    : 'http://quorum-tail-starvation.xyz',
+          published : true,
+          types     : {
+            note: {
+              schema             : 'http://quorum-tail-starvation.xyz/note',
+              dataFormats        : ['text/plain'],
+              encryptionRequired : true,
+            },
+          },
+          structure: { note: {} },
+        };
+        const itemCount = 10;
+        const readScopes: RecordsPermissionScope[] = Array.from({ length: itemCount }, (_, i) => ({
+          interface  : 'Records' as any,
+          method     : 'Read' as any,
+          module     : encryptedModule.module,
+          modulePath : `note-${i}`,
+        }));
+        const grantKeyRecords = Array.from({ length: itemCount }, (_, i) => ({
+          recordId   : `grant-key-starvation-${i}`,
+          descriptor : {
+            interface  : 'Records',
+            method     : 'Write',
+            recipient  : delegateBearerDid.uri,
+            module     : EncryptionModule.uri,
+            modulePath : EncryptionModule.wrappedGrantKeyPath,
+            dataFormat : 'application/json',
+            tags       : { module: encryptedModule.module },
+          },
+          encodedData: Convert.uint8Array(new Uint8Array([i])).toBase64Url(),
+        }));
+
+        const hangingUrl = 'https://dwn-hanging-first.example/';
+        const healthyUrl = 'https://dwn-healthy-second.example/';
+        let healthyGrantKeyDeliveries = 0;
+        let healthyRevocationDeliveries = 0;
+        let abortedHangingSends = 0;
+
+        stubApprovalCeremony({
+          permissionGrants: Array.from({ length: itemCount }, (_, i) => ({
+            recordId   : `perm-grant-starvation-${i}`,
+            descriptor : { interface: 'Records', method: 'Write' },
+          })),
+        });
+        sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves(grantKeyRecords as any);
+        await stubMissingModulePreparation([encryptedModule], {
+          endpoints  : [hangingUrl, healthyUrl],
+          otherReply : (req: any): Promise<{ status: { code: number; detail: string } }> | { status: { code: number; detail: string } } => {
+            if (req.dwnUrl === hangingUrl) {
+              return new Promise((_resolve, reject) => {
+                const signal = req.signal as AbortSignal;
+                const onAbort = (): void => {
+                  abortedHangingSends++;
+                  reject(signal.reason);
+                };
+                if (signal.aborted) {
+                  onAbort();
+                } else {
+                  signal.addEventListener('abort', onAbort, { once: true });
+                }
+              });
+            }
+            if (req.message?.descriptor?.module === EncryptionModule.uri) {
+              healthyGrantKeyDeliveries++;
+            } else {
+              healthyRevocationDeliveries++;
+            }
+            return { status: { code: 202, detail: 'Accepted' } };
+          },
+        });
+
+        const start = Date.now();
+        await executeConnectApproval({
+          agent       : testHarness.agent,
+          providerDid : providerIdentity.did.uri,
+          transport   : 'relay',
+          request     : approvalRequest({
+            permissionRequests: [{ moduleDefinition: encryptedModule, permissionScopes: readScopes }],
+          }),
+        });
+        const elapsed = Date.now() - start;
+
+        expect(healthyGrantKeyDeliveries).toBe(itemCount);
+        expect(healthyRevocationDeliveries).toBe(itemCount);
+        expect(abortedHangingSends).toBeGreaterThanOrEqual(2);
+        expect(elapsed).toBeLessThan(7_000);
+      }, 20_000);
     });
   });
 });

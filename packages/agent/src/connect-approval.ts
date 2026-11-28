@@ -534,69 +534,14 @@ export async function createPermissionGrants(
     outcomesByEndpoint = await mapConcurrent(
       dwnEndpointUrls,
       CONNECT_FANOUT_CONCURRENCY,
-      async (dwnUrl): Promise<PermissionGrantSendOutcome[]> => {
-        const outcomes: PermissionGrantSendOutcome[] = [];
-
-        // SQL-backed DWNs serialize same-tenant writes to assign replication
-        // positions. Keep one active write per endpoint so requests do not
-        // consume their timeout while queued behind sibling grants.
-        for (let grantIndex = 0; grantIndex < permissionGrants.length; grantIndex++) {
-          if (batchSignal.aborted) {
-            appendSkippedGrantOutcomes(outcomes, grantIndex, permissionGrants.length, dwnUrl, 'the grant batch timed out');
-            break;
-          }
-          if (quorumTail.signal.aborted) {
-            appendSkippedGrantOutcomes(
-              outcomes,
-              grantIndex,
-              permissionGrants.length,
-              dwnUrl,
-              `quorum was reached and the ${CONNECT_QUORUM_TAIL_GRACE_MS}ms secondary tail grace elapsed`,
-            );
-            break;
-          }
-
-          const { encodedData, ...rawMessage } = permissionGrants[grantIndex].message;
-          const data = Convert.base64Url(encodedData).toUint8Array();
-          const requestSignal = AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS);
-          try {
-            const reply = await agent.rpc.sendDwnRequest({
-              dwnUrl,
-              targetDid : selectedDid,
-              message   : rawMessage,
-              data      : new Blob([data as BlobPart]),
-              signal    : AbortSignal.any([batchSignal, requestSignal, quorumTail.signal]),
-            });
-            const accepted = reply.status.code === 202 || reply.status.code === 409;
-            if (accepted) {
-              quorumTail.markAccepted(grantIndex);
-            }
-            outcomes.push({
-              accepted,
-              detail: `returned ${reply.status.code}: ${reply.status.detail}`,
-              dwnUrl,
-              grantIndex,
-            });
-          } catch (reason) {
-            const requestTimeoutDetail = requestSignal.aborted
-              ? `permission grant request timed out after ${CONNECT_REQUEST_TIMEOUT_MS}ms`
-              : errorDetail(reason);
-            const detail = batchSignal.aborted
-              ? `permission grant batch timed out after ${CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS}ms`
-              : quorumTail.signal.aborted
-                ? `secondary endpoint skipped after ${CONNECT_QUORUM_TAIL_GRACE_MS}ms quorum tail grace`
-                : requestTimeoutDetail;
-            outcomes.push({
-              accepted : false,
-              detail   : `failed: ${detail}`,
-              dwnUrl,
-              grantIndex,
-            });
-          }
-        }
-
-        return outcomes;
-      },
+      (dwnUrl): Promise<PermissionGrantSendOutcome[]> => sendPermissionGrantsToEndpoint({
+        agent,
+        selectedDid,
+        dwnUrl,
+        permissionGrants,
+        batchSignal,
+        quorumTail,
+      }),
     );
   } finally {
     quorumTail.dispose();
@@ -611,7 +556,11 @@ export async function createPermissionGrants(
       successPerGrant[outcome.grantIndex] = true;
       continue;
     }
-    logger.error(`Grant send to ${outcome.dwnUrl} ${outcome.detail}`);
+    if (outcome.quorumSkipped) {
+      logger.log(`Grant send to ${outcome.dwnUrl} ${outcome.detail}`);
+    } else {
+      logger.error(`Grant send to ${outcome.dwnUrl} ${outcome.detail}`);
+    }
   }
 
   for (let g = 0; g < permissionGrants.length; g++) {
@@ -639,14 +588,14 @@ type PermissionGrantSendOutcome = {
   detail : string;
   dwnUrl : string;
   grantIndex : number;
+  quorumSkipped?: boolean;
 };
 
-/** A single revocation-grant delivery to one owner DWN endpoint. */
-type RevocationSendTask = {
+/** A pre-decoded revocation grant payload ready for per-endpoint fan-out. */
+type PreparedRevocationSend = {
   revIndex : number;
   revRawMessage : Omit<DwnDataEncodedRecordsWriteMessage, 'encodedData'>;
   revData : Uint8Array;
-  dwnUrl : string;
 };
 
 type QuorumTailController = {
@@ -654,6 +603,106 @@ type QuorumTailController = {
   markAccepted(itemIndex: number): void;
   dispose(): void;
 };
+
+function classifyGrantSendFailure(
+  reason: unknown,
+  batchSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  quorumTail: QuorumTailController,
+): { detail: string; quorumSkipped: boolean } {
+  if (batchSignal.aborted) {
+    return {
+      detail        : `permission grant batch timed out after ${CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS}ms`,
+      quorumSkipped : false,
+    };
+  }
+  if (quorumTail.signal.aborted && reason === quorumTail.signal.reason) {
+    return {
+      detail        : `secondary endpoint skipped after ${CONNECT_QUORUM_TAIL_GRACE_MS}ms quorum tail grace`,
+      quorumSkipped : true,
+    };
+  }
+  if (requestSignal.aborted) {
+    return {
+      detail        : `permission grant request timed out after ${CONNECT_REQUEST_TIMEOUT_MS}ms`,
+      quorumSkipped : false,
+    };
+  }
+  return { detail: errorDetail(reason), quorumSkipped: false };
+}
+
+async function sendPermissionGrantsToEndpoint({
+  agent,
+  selectedDid,
+  dwnUrl,
+  permissionGrants,
+  batchSignal,
+  quorumTail,
+}: {
+  agent: EnboxPlatformAgent;
+  selectedDid: string;
+  dwnUrl: string;
+  permissionGrants: { message: DwnDataEncodedRecordsWriteMessage }[];
+  batchSignal: AbortSignal;
+  quorumTail: QuorumTailController;
+}): Promise<PermissionGrantSendOutcome[]> {
+  const outcomes: PermissionGrantSendOutcome[] = [];
+
+  // SQL-backed DWNs serialize same-tenant writes to assign replication
+  // positions. Keep one active write per endpoint so requests do not
+  // consume their timeout while queued behind sibling grants.
+  for (let grantIndex = 0; grantIndex < permissionGrants.length; grantIndex++) {
+    if (batchSignal.aborted) {
+      appendSkippedGrantOutcomes(outcomes, grantIndex, permissionGrants.length, dwnUrl, 'the grant batch timed out', false);
+      break;
+    }
+    if (quorumTail.signal.aborted) {
+      appendSkippedGrantOutcomes(
+        outcomes,
+        grantIndex,
+        permissionGrants.length,
+        dwnUrl,
+        `quorum was reached and the ${CONNECT_QUORUM_TAIL_GRACE_MS}ms secondary tail grace elapsed`,
+        true,
+      );
+      break;
+    }
+
+    const { encodedData, ...rawMessage } = permissionGrants[grantIndex].message;
+    const data = Convert.base64Url(encodedData).toUint8Array();
+    const requestSignal = AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS);
+    try {
+      const reply = await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : selectedDid,
+        message   : rawMessage,
+        data      : new Blob([data as BlobPart]),
+        signal    : AbortSignal.any([batchSignal, requestSignal, quorumTail.signal]),
+      });
+      const accepted = reply.status.code === 202 || reply.status.code === 409;
+      if (accepted) {
+        quorumTail.markAccepted(grantIndex);
+      }
+      outcomes.push({
+        accepted,
+        detail: `returned ${reply.status.code}: ${reply.status.detail}`,
+        dwnUrl,
+        grantIndex,
+      });
+    } catch (reason) {
+      const failure = classifyGrantSendFailure(reason, batchSignal, requestSignal, quorumTail);
+      outcomes.push({
+        accepted      : false,
+        detail        : `failed: ${failure.detail}`,
+        dwnUrl,
+        grantIndex,
+        quorumSkipped : failure.quorumSkipped,
+      });
+    }
+  }
+
+  return outcomes;
+}
 
 /**
  * Coordinates a bounded grace period once every required item in a
@@ -667,25 +716,34 @@ function createQuorumTailController(
   const controller = new AbortController();
   const accepted = new Array<boolean>(itemCount).fill(false);
   let acceptedCount = 0;
+  let disposed = false;
   let tailTimer: ReturnType<typeof setTimeout> | undefined;
 
   return {
     signal: controller.signal,
     markAccepted(itemIndex: number): void {
-      if (endpointCount <= 1 || accepted[itemIndex]) {
+      if (
+        disposed
+        || endpointCount <= 1
+        || itemIndex < 0
+        || itemIndex >= itemCount
+        || accepted[itemIndex]
+      ) {
         return;
       }
       accepted[itemIndex] = true;
       acceptedCount++;
       if (acceptedCount === itemCount && tailTimer === undefined) {
+        const boundedGraceMs = Math.max(0, graceMs);
         tailTimer = setTimeout((): void => {
           controller.abort(
-            new DOMException(`Secondary endpoint fan-out exceeded ${graceMs}ms tail grace after quorum`, 'TimeoutError'),
+            new DOMException(`Secondary endpoint fan-out exceeded ${boundedGraceMs}ms tail grace after quorum`, 'TimeoutError'),
           );
-        }, graceMs);
+        }, boundedGraceMs);
       }
     },
     dispose(): void {
+      disposed = true;
       if (tailTimer !== undefined) {
         clearTimeout(tailTimer);
         tailTimer = undefined;
@@ -700,6 +758,7 @@ function appendSkippedGrantOutcomes(
   grantCount: number,
   dwnUrl: string,
   reason: string,
+  quorumSkipped: boolean,
 ): void {
   for (let grantIndex = startIndex; grantIndex < grantCount; grantIndex++) {
     outcomes.push({
@@ -707,6 +766,7 @@ function appendSkippedGrantOutcomes(
       detail   : `was not attempted because ${reason}`,
       dwnUrl,
       grantIndex,
+      quorumSkipped,
     });
   }
 }
@@ -725,6 +785,111 @@ function errorDetail(reason: unknown): string {
   return reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
 }
 
+type PreparedDataEncodedRecord = {
+  recordIndex: number;
+  rawMessage: Omit<DwnDataEncodedRecordsWriteMessage, 'encodedData'>;
+  data: Uint8Array;
+};
+
+async function sendPreparedRecordsToEndpoint({
+  agent,
+  ownerDid,
+  dwnUrl,
+  preparedRecords,
+  batchSignal,
+  quorumTail,
+  successPerRecord,
+}: {
+  agent: EnboxPlatformAgent;
+  ownerDid: string;
+  dwnUrl: string;
+  preparedRecords: readonly PreparedDataEncodedRecord[];
+  batchSignal: AbortSignal;
+  quorumTail: ReturnType<typeof createQuorumTailController>;
+  successPerRecord: boolean[];
+}): Promise<void> {
+  const sendAt = async (index: number): Promise<void> => {
+    if (index >= preparedRecords.length || batchSignal.aborted || quorumTail.signal.aborted) {
+      return;
+    }
+    const { recordIndex, rawMessage, data } = preparedRecords[index];
+    try {
+      const reply = await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : ownerDid,
+        message   : rawMessage,
+        data      : new Blob([data as BlobPart]),
+        signal    : AbortSignal.any([
+          batchSignal,
+          AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
+          quorumTail.signal,
+        ]),
+      });
+      if (reply.status.code === 202 || reply.status.code === 409) {
+        successPerRecord[recordIndex] = true;
+        quorumTail.markAccepted(recordIndex);
+      } else {
+        logger.error(`Record send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
+      }
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (quorumTail.signal.aborted && reason === quorumTail.signal.reason) {
+        logger.log(`Record send to ${dwnUrl} skipped after quorum tail grace: ${message}`);
+      } else {
+        logger.error(`Record send to ${dwnUrl} failed: ${message}`);
+      }
+    }
+    await sendAt(index + 1);
+  };
+  await sendAt(0);
+}
+
+type PreparedRevocationGrant = {
+  revIndex: number;
+  revRawMessage: Omit<DwnDataEncodedRecordsWriteMessage, 'encodedData'>;
+  revData: Uint8Array;
+};
+
+async function sendPreparedRevocationsToEndpoint({
+  agent,
+  providerDid,
+  dwnUrl,
+  preparedRevocations,
+  revocationSignal,
+  revocationQuorumTail,
+}: {
+  agent: EnboxPlatformAgent;
+  providerDid: string;
+  dwnUrl: string;
+  preparedRevocations: readonly PreparedRevocationGrant[];
+  revocationSignal: AbortSignal;
+  revocationQuorumTail: ReturnType<typeof createQuorumTailController>;
+}): Promise<void> {
+  const sendAt = async (index: number): Promise<void> => {
+    if (index >= preparedRevocations.length || revocationSignal.aborted) {
+      return;
+    }
+    const { revIndex, revRawMessage, revData } = preparedRevocations[index];
+    try {
+      const reply = await agent.rpc.sendDwnRequest({
+        dwnUrl,
+        targetDid : providerDid,
+        message   : revRawMessage,
+        data      : new Blob([revData as BlobPart]),
+        signal    : revocationSignal,
+      });
+      if (reply.status.code === 202 || reply.status.code === 409) {
+        revocationQuorumTail.markAccepted(revIndex);
+      }
+    } catch {
+      // Revocation fan-out is best-effort; continue with remaining
+      // grants unless the batch or quorum-tail signal fired.
+    }
+    await sendAt(index + 1);
+  };
+  await sendAt(0);
+}
+
 async function fanOutDataEncodedRecords(
   ownerDid: string,
   agent: EnboxPlatformAgent,
@@ -735,57 +900,38 @@ async function fanOutDataEncodedRecords(
     return;
   }
 
-  const sendTasks = records.flatMap((record, recordIndex) => {
+  const preparedRecords: PreparedDataEncodedRecord[] = records.map((record, recordIndex) => {
     const { encodedData, ...rawMessage } = record;
-    const data = Convert.base64Url(encodedData).toUint8Array();
-    return dwnEndpointUrls.map((dwnUrl) => ({ recordIndex, dwnUrl, rawMessage, data }));
+    return {
+      recordIndex,
+      rawMessage,
+      data: Convert.base64Url(encodedData).toUint8Array(),
+    };
   });
 
-  const quorumTail = createQuorumTailController(records.length, dwnEndpointUrls.length);
-  let settled: PromiseSettledResult<{ recordIndex: number; dwnUrl: string; reply: { status: { code: number; detail: string } } } | undefined>[];
+  const batchSignal = AbortSignal.timeout(CONNECT_PERMISSION_GRANT_BATCH_TIMEOUT_MS);
+  const quorumTail = createQuorumTailController(preparedRecords.length, dwnEndpointUrls.length);
+  const successPerRecord = new Array<boolean>(preparedRecords.length).fill(false);
+
+  // Send sequentially per endpoint (bounded in parallel across endpoints) so
+  // one hanging secondary endpoint can hold at most one worker slot and never
+  // starve healthy endpoints when `records.length >= CONNECT_FANOUT_CONCURRENCY`.
   try {
-    settled = await mapConcurrentSettled(
-      sendTasks,
+    await mapConcurrent(
+      dwnEndpointUrls,
       CONNECT_FANOUT_CONCURRENCY,
-      async ({ recordIndex, dwnUrl, rawMessage, data }) => {
-        if (quorumTail.signal.aborted) {
-          return undefined;
-        }
-        const reply = await agent.rpc.sendDwnRequest({
-          dwnUrl,
-          targetDid : ownerDid,
-          message   : rawMessage,
-          data      : new Blob([data as BlobPart]),
-          signal    : AbortSignal.any([AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS), quorumTail.signal]),
-        });
-        if (reply.status.code === 202 || reply.status.code === 409) {
-          quorumTail.markAccepted(recordIndex);
-        }
-        return { recordIndex, dwnUrl, reply };
-      },
+      (dwnUrl): Promise<void> => sendPreparedRecordsToEndpoint({
+        agent,
+        ownerDid,
+        dwnUrl,
+        preparedRecords,
+        batchSignal,
+        quorumTail,
+        successPerRecord,
+      }),
     );
   } finally {
     quorumTail.dispose();
-  }
-
-  const successPerRecord = new Array<boolean>(records.length).fill(false);
-  for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
-    if (result.status === 'rejected') {
-      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      logger.error(`Record send to ${sendTasks[i].dwnUrl} failed: ${reason}`);
-      continue;
-    }
-    if (result.value === undefined) {
-      continue;
-    }
-
-    const { recordIndex, dwnUrl, reply } = result.value;
-    if (reply.status.code === 202 || reply.status.code === 409) {
-      successPerRecord[recordIndex] = true;
-    } else {
-      logger.error(`Record send to ${dwnUrl} returned ${reply.status.code}: ${reply.status.detail}`);
-    }
   }
 
   for (const success of successPerRecord) {
@@ -1068,10 +1214,9 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
       ),
     );
 
-    // Build the revocation mappings and the per-endpoint send tasks in one
-    // pass. Each revocation grant fans out to every owner DWN endpoint.
+    // Build the revocation mappings and pre-decoded payloads in one pass.
     const sessionRevocations: SessionRevocation[] = [];
-    const revSendTasks: RevocationSendTask[] = [];
+    const preparedRevocations: PreparedRevocationSend[] = [];
     for (const [revIndex, { grantMessage, revGrant }] of revGrantResults.entries()) {
       sessionRevocations.push({
         grantId           : grantMessage.recordId,
@@ -1080,44 +1225,33 @@ export async function executeConnectApproval(input: ExecuteConnectApprovalParams
 
       const { encodedData: revEncoded, ...revRawMessage } = revGrant.message;
       const revData = Uint8Array.from(Convert.base64Url(revEncoded).toUint8Array());
-      for (const dwnUrl of dwnEndpointUrls) {
-        revSendTasks.push({ revIndex, revRawMessage, revData, dwnUrl });
-      }
+      preparedRevocations.push({ revIndex, revRawMessage, revData });
     }
 
-    // Fan out every revocation grant to every owner DWN endpoint with a single
-    // global concurrency cap so that (grants × endpoints) cannot blow up. This
-    // is best-effort (sync delivers eventually) so individual failures are
-    // tolerated by `mapConcurrentSettled`, bounded by both a batch deadline and
-    // a short quorum tail grace once every revocation grant lands on one DWN.
-    if (revSendTasks.length > 0) {
+    // Fan out revocation grants sequentially per endpoint (bounded across
+    // endpoints) so a hung secondary endpoint holds at most one worker slot and
+    // never starves healthy endpoints when `preparedRevocations.length >= 8`.
+    // Best-effort (sync delivers eventually), bounded by both the 5s batch
+    // deadline and a short quorum tail grace once every grant lands on one DWN.
+    if (preparedRevocations.length > 0 && dwnEndpointUrls.length > 0) {
+      const totalSends = preparedRevocations.length * dwnEndpointUrls.length;
       const revocationBatchSignal = AbortSignal.timeout(CONNECT_REVOCATION_FANOUT_TIMEOUT_MS);
-      const revocationQuorumTail = createQuorumTailController(revGrantResults.length, dwnEndpointUrls.length);
+      const revocationQuorumTail = createQuorumTailController(preparedRevocations.length, dwnEndpointUrls.length);
+      const revocationSignal = AbortSignal.any([revocationBatchSignal, revocationQuorumTail.signal]);
       try {
         await timed(
-          `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${revSendTasks.length}, endpoints=${dwnEndpointUrls.length})`,
+          `${CONNECT_PERF_LOG_PREFIX} revocationGrants.fanout (sends=${totalSends}, endpoints=${dwnEndpointUrls.length})`,
           () => mapConcurrentSettled(
-            revSendTasks,
+            dwnEndpointUrls,
             CONNECT_FANOUT_CONCURRENCY,
-            async ({ revIndex, revRawMessage, revData, dwnUrl }): Promise<void> => {
-              if (revocationBatchSignal.aborted || revocationQuorumTail.signal.aborted) {
-                return;
-              }
-              const reply = await agent.rpc.sendDwnRequest({
-                dwnUrl,
-                targetDid : providerDid,
-                message   : revRawMessage,
-                data      : new Blob([revData as BlobPart]),
-                signal    : AbortSignal.any([
-                  revocationBatchSignal,
-                  AbortSignal.timeout(CONNECT_REQUEST_TIMEOUT_MS),
-                  revocationQuorumTail.signal,
-                ]),
-              });
-              if (reply.status.code === 202 || reply.status.code === 409) {
-                revocationQuorumTail.markAccepted(revIndex);
-              }
-            },
+            (dwnUrl): Promise<void> => sendPreparedRevocationsToEndpoint({
+              agent,
+              providerDid,
+              dwnUrl,
+              preparedRevocations,
+              revocationSignal,
+              revocationQuorumTail,
+            }),
           ),
         );
       } finally {
