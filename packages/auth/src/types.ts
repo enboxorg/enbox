@@ -210,7 +210,7 @@ export type RegistrationOptions = {
  *
  * Different environments provide different implementations:
  * - **Browser**: popup + postMessage (`BrowserConnectHandler` from `@enbox/browser`)
- * - **Relay**: QR/PIN relay flow (`WalletConnect.initClient` from `@enbox/auth`)
+ * - **Relay**: QR/SAS relay flow (`WalletConnect.initClient` from `@enbox/auth`)
  * - **CLI**: terminal QR/URL + polling (custom handler)
  * - **Desktop**: native window management (custom handler)
  *
@@ -649,7 +649,7 @@ export interface WalletConnectOptions {
    * Called once the wallet publishes its ephemeral handshake key and the 3
    * pre-approval SAS verification symbols are ready to display.
    */
-  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
+  onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
 
   /**
    * Milliseconds to wait for wallet approval.

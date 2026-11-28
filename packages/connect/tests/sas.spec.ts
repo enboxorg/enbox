@@ -61,7 +61,7 @@ describe('Connect SAS verification', () => {
   });
 
   describe('CONNECT_VERIFICATION_SYMBOLS palette', () => {
-    it('contains 64 symbols with sequential IDs, unique emojis, and unique labels', () => {
+    it('contains 64 Emoji_Presentation symbols with sequential IDs, unique emojis, and unique labels', () => {
       expect(CONNECT_VERIFICATION_SYMBOLS).toHaveLength(64);
       const emojis = new Set<string>();
       const labels = new Set<string>();
@@ -69,6 +69,7 @@ describe('Connect SAS verification', () => {
         const entry = CONNECT_VERIFICATION_SYMBOLS[i];
         expect(entry.id).toBe(i);
         expect(entry.emoji.length).toBeGreaterThan(0);
+        expect(/\p{Emoji_Presentation}/u.test(entry.emoji)).toBe(true);
         expect(entry.label.length).toBeGreaterThan(0);
         emojis.add(entry.emoji);
         labels.add(entry.label);
@@ -142,14 +143,64 @@ describe('Connect SAS verification', () => {
         await deriveConnectVerificationSymbols({ ...baseParams, state: 'different-state-token' }),
         await deriveConnectVerificationSymbols({ ...baseParams, nonce: 'different-nonce-token' }),
         await deriveConnectVerificationSymbols({ ...baseParams, peerPublicKey: otherPublicKey, walletEpk: otherPublicKey }),
-        await deriveConnectVerificationSymbols({ ...baseParams, responseKey: otherPublicKey }),
+        await deriveConnectVerificationSymbols({ ...baseParams, privateKey: otherKey, responseKey: otherPublicKey }),
       ];
 
-      // At least 4 of 5 independent transcript mutations must produce distinct 3-symbol tuples
-      // (collision probability for any pair is 1 / (64*63*62) ≈ 4e-6).
       for (const variant of variants) {
         expect(variant).not.toEqual(base);
       }
+    });
+
+    it('separates transcript fields unambiguously even when inputs contain NUL bytes', async () => {
+      const {
+        appPrivateKey,
+        appPublicKey,
+        walletPublicKey,
+        requestJwe,
+      } = await createSampleTranscript();
+
+      const first = await deriveConnectVerificationSymbols({
+        privateKey    : appPrivateKey,
+        peerPublicKey : walletPublicKey,
+        requestJwe,
+        state         : 'a\u0000b',
+        nonce         : 'c',
+        responseKey   : appPublicKey,
+        walletEpk     : walletPublicKey,
+      });
+      const second = await deriveConnectVerificationSymbols({
+        privateKey    : appPrivateKey,
+        peerPublicKey : walletPublicKey,
+        requestJwe,
+        state         : 'a',
+        nonce         : 'b\u0000c',
+        responseKey   : appPublicKey,
+        walletEpk     : walletPublicKey,
+      });
+
+      expect(first).not.toEqual(second);
+    });
+
+    it('rejects mismatched private/peer keys against transcript responseKey/walletEpk', async () => {
+      const {
+        appPrivateKey,
+        walletPublicKey,
+        request,
+        requestJwe,
+      } = await createSampleTranscript();
+
+      const otherKey = await X25519.generateKey();
+      const otherPublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: otherKey.x };
+
+      await expect(deriveConnectVerificationSymbols({
+        privateKey    : appPrivateKey,
+        peerPublicKey : walletPublicKey,
+        requestJwe,
+        state         : request.state,
+        nonce         : request.nonce,
+        responseKey   : otherPublicKey,
+        walletEpk     : walletPublicKey,
+      })).rejects.toThrow('does not match');
     });
 
     it('rejects an all-zero X25519 shared secret per RFC 7748', async () => {
@@ -201,6 +252,12 @@ describe('Connect SAS verification', () => {
       await expect(deriveConnectVerificationSymbols({
         ...baseParams,
         privateKey: { kty: 'OKP', crv: 'Ed25519', d: 'abc', x: 'def' },
+      })).rejects.toThrow('X25519 OKP JWK');
+
+      // Non-canonical X25519 coordinate on private key
+      await expect(deriveConnectVerificationSymbols({
+        ...baseParams,
+        privateKey: { kty: 'OKP', crv: 'X25519', d: 'abc', x: appPublicKey.x },
       })).rejects.toThrow('X25519 OKP JWK');
 
       // Private key passed as peerPublicKey
@@ -255,17 +312,24 @@ describe('Connect SAS verification', () => {
       expect(verifyVerificationSelection([18, 45, 2], targets)).toBe(true);
     });
 
-    it('rejects wrong counts, duplicates, or non-matching selections', () => {
+    it('rejects wrong counts, duplicates, out-of-range IDs, or malformed targets', () => {
       expect(verifyVerificationSelection([2, 18], targets)).toBe(false);
       expect(verifyVerificationSelection([2, 18, 45, 0], targets)).toBe(false);
       expect(verifyVerificationSelection([2, 2, 18], targets)).toBe(false);
       expect(verifyVerificationSelection([2, 18, 44], targets)).toBe(false);
       expect(verifyVerificationSelection([2, 18, 45], targets.slice(0, 2))).toBe(false);
+      expect(verifyVerificationSelection([2, 18, Number.NaN], targets)).toBe(false);
+      expect(verifyVerificationSelection([2, 18, 99], targets)).toBe(false);
+      expect(verifyVerificationSelection([2, 2, 18], [
+        CONNECT_VERIFICATION_SYMBOLS[2],
+        CONNECT_VERIFICATION_SYMBOLS[2],
+        CONNECT_VERIFICATION_SYMBOLS[18],
+      ])).toBe(false);
     });
   });
 
   describe('createConnectVerificationHandshake & formatting', () => {
-    it('creates a public-only walletEpk, matching symbols with app side, 3x3 grid, and working verifier', async () => {
+    it('creates a public-only walletEpk, matching symbols with app side, 3x3 grid, and single-attempt verifier', async () => {
       const { appPrivateKey, appPublicKey, request, requestJwe } = await createSampleTranscript();
 
       const handshake = await createConnectVerificationHandshake({ request, requestJwe });
@@ -288,8 +352,20 @@ describe('Connect SAS verification', () => {
 
       expect(appSymbols).toEqual(handshake.symbols);
       expect(handshake.verifySelection([appSymbols[2].id, appSymbols[0].id, appSymbols[1].id])).toBe(true);
-      const decoy = handshake.grid.find((item): boolean => !appSymbols.some((s): boolean => s.id === item.id))!;
-      expect(handshake.verifySelection([appSymbols[0].id, appSymbols[1].id, decoy.id])).toBe(false);
+      // Single-attempt lockout: subsequent calls always return false.
+      expect(handshake.verifySelection([appSymbols[0].id, appSymbols[1].id, appSymbols[2].id])).toBe(false);
+
+      // A wrong first attempt also locks out the handshake even if retried with the right IDs.
+      const secondHandshake = await createConnectVerificationHandshake({ request, requestJwe });
+      const decoy = secondHandshake.grid.find(
+        (item): boolean => !secondHandshake.symbols.some((s): boolean => s.id === item.id),
+      )!;
+      expect(secondHandshake.verifySelection([secondHandshake.symbols[0].id, secondHandshake.symbols[1].id, decoy.id])).toBe(false);
+      expect(secondHandshake.verifySelection([
+        secondHandshake.symbols[0].id,
+        secondHandshake.symbols[1].id,
+        secondHandshake.symbols[2].id,
+      ])).toBe(false);
 
       const expectedFormatted = [
         `${appSymbols[0].emoji} ${appSymbols[0].label}`,

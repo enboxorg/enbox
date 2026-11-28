@@ -2,10 +2,10 @@
  * Connect modal — the single surface that owns a whole connect session.
  *
  * One Shadow-DOM dialog whose stage morphs in place through the session:
- * QR / deep-link handoff (phone path) → pairing code → connected, with the
- * in-browser popup path and the wallet catalog folded in as in-place
- * alternates. The modal never chains into a second modal and stays mounted
- * until the session resolves (connected / denied / cancelled).
+ * QR / deep-link handoff (phone path) → pre-approval SAS symbol verification →
+ * connected, with the in-browser popup path and the wallet catalog folded in
+ * as in-place alternates. The modal never chains into a second modal and stays
+ * mounted until the session resolves (connected / denied / cancelled).
  *
  * Layout: three zones —
  *
@@ -752,10 +752,10 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const renderAway = (walletName: string): void => {
       setStage(
         el('div', 'spinner'),
-        el('p', 'stage-caption', `Finish in ${walletName}`),
+        el('p', 'stage-caption', `Open ${walletName}`),
         el('p', 'stage-subline', isMobile
-          ? `Approve the connection in the ${walletName} tab, then return here.`
-          : 'Approve the connection in the tab that just opened.'),
+          ? `Once ${walletName} loads in the other tab, return here to see your 3 verification symbols.`
+          : `Once ${walletName} loads in the other tab, match the 3 verification symbols shown here before approving.`),
         stageLinkButton('Start over', () => { void startPhone(); }),
       );
     };
@@ -768,6 +768,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         pulse,
         el('p', 'stage-caption', `Request received — unlock ${walletName}`),
         el('p', 'stage-subline', 'Verification symbols will appear here as soon as your wallet is ready.'),
+        stageLinkButton('Start over', () => { void startPhone(); }),
       );
     };
 
@@ -775,12 +776,15 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
       const row = document.createElement('div');
       row.className = 'verify-row';
+      row.setAttribute('role', 'group');
       row.setAttribute('aria-label', `Verification symbols: ${symbols.map((s) => s.label).join(', ')}`);
 
       for (const symbol of symbols) {
         const card = document.createElement('div');
         card.className = 'verify-card';
-        card.appendChild(el('span', 'verify-emoji', symbol.emoji));
+        const emojiEl = el('span', 'verify-emoji', symbol.emoji);
+        emojiEl.setAttribute('aria-hidden', 'true');
+        card.appendChild(emojiEl);
         card.appendChild(el('span', 'verify-label', symbol.label));
         row.appendChild(card);
       }
@@ -789,6 +793,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         el('p', 'stage-caption', `Confirm in ${walletName}`),
         row,
         el('p', 'stage-subline', `Tap these 3 symbols in ${walletName} to finish connecting.`),
+        stageLinkButton('Start over', () => { void startPhone(); }),
       );
     };
 
@@ -1039,6 +1044,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       // Synchronous popup open inside the click's call stack.
       relaySession?.cancel();
       clearRemint();
+      verificationActive = false;
 
       if (walletUrl === undefined) {
         renderError('No wallet is configured.');

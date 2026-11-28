@@ -120,12 +120,21 @@ export class ConnectServer {
     state: string,
     walletEpk: Record<string, unknown>,
   ): Promise<'created' | 'unchanged' | 'conflict'> {
-    const existing = await this.cache.get(`handshake:${state}`) as Record<string, unknown> | undefined;
-    if (existing !== undefined) {
-      return existing.x === walletEpk.x ? 'unchanged' : 'conflict';
+    const key = `handshake:${state}`;
+    const inserted = await this.cache.insertIfAbsent(key, walletEpk, ConnectServer.ttlInSeconds);
+    if (inserted) {
+      return 'created';
     }
-    await this.cache.insert(`handshake:${state}`, walletEpk, ConnectServer.ttlInSeconds);
-    return 'created';
+    const existing = await this.cache.get(key) as Record<string, unknown> | undefined;
+    if (existing === undefined) {
+      const retried = await this.cache.insertIfAbsent(key, walletEpk, ConnectServer.ttlInSeconds);
+      if (retried) {
+        return 'created';
+      }
+      const winner = await this.cache.get(key) as Record<string, unknown> | undefined;
+      return winner?.x === walletEpk.x ? 'unchanged' : 'conflict';
+    }
+    return existing.x === walletEpk.x ? 'unchanged' : 'conflict';
   }
 
   /**
@@ -155,6 +164,7 @@ export class ConnectServer {
    */
   public async setConnectComplete(state: string): Promise<void> {
     await this.cache.insert(`complete:${state}`, { completedAt: Date.now() }, ConnectServer.ttlInSeconds);
+    await this.cache.delete(`handshake:${state}`);
   }
 
   /**

@@ -75,8 +75,8 @@ handler routing; owner applications should continue to use `connectVault()`.
 `WalletConnect.initAuthentication()` performs a relay-mediated owner login and
 returns `{ connectedDid, authentication }`, or `undefined` when denied. Its
 options contain a service-issued `authentication` request (`version`, HTTPS
-`audience`, and unpredictable `challenge`) and the usual relay, wallet URI and
-PIN callbacks. It returns no delegate keys or `AgentSession` and requests no
+`audience`, and unpredictable `challenge`) and the usual relay, wallet URI, and
+SAS verification callbacks. It returns no delegate keys or `AgentSession` and requests no
 DWN permissions. Authentication-enabled wallets must trust the request origin;
 an arbitrary public relay does not establish that trust.
 
@@ -98,7 +98,7 @@ Server verification additionally requires `expected: { audience, challenge }`
 from service configuration and the issued transaction. A replay store must
 reject challenges the service never issued, not merely duplicates. The proof
 expires 300 seconds after signing even though its encrypted response envelope
-lasts 600 seconds after sealing; delayed relay PIN entry can therefore fail
+lasts 600 seconds after sealing; delayed delivery can therefore fail
 authentication after approval. Reconcile existing grants before retrying a
 combined operation. Owner authentication requires HTTPS during local
 development too; an HTTP delegation origin does not enable HTTP sign-in.

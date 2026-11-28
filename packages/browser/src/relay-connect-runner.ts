@@ -80,7 +80,7 @@ export interface RelayConnectOptions {
    * 3 pre-approval SAS verification symbols are derived — display them so the
    * user can tap the matching 3 tiles in their wallet.
    */
-  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => void;
+  onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => void;
 
   /**
    * Cancellation signal: when it settles, polling stops and the handshake

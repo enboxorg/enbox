@@ -106,8 +106,9 @@ authentication remain distinct even when approved together.
 
 An owner proof expires 300 seconds after signing. The response envelope has a
 separate 600-second lifetime after sealing; the earlier deadline governs a
-successful authentication. Relay PIN entry happens before decryption, so a
-slow PIN entry can reveal a still-valid envelope containing an expired proof.
+successful authentication. Pre-approval SAS symbol verification runs before the
+wallet signs the proof, so approval completes immediately once confirmed, but
+delayed delivery can still yield an envelope whose proof has expired.
 Login must fail in that case. Start a fresh authentication transaction and
 reconcile any already-approved grants before retrying combined mode; never
 extend the proof's lifetime because the envelope remains valid.

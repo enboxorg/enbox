@@ -161,6 +161,9 @@ export class ConnectClient {
   private readonly _onAuthenticationRequest?: (request: Readonly<ConnectRequest>) => Promise<void> | void;
 
   constructor(options: ConnectClientOptions) {
+    if (options.transport.requiresHandshake === true && options.onVerificationReady === undefined) {
+      throw new Error('Connect: relay transport requires an `onVerificationReady` callback.');
+    }
     this._transport = options.transport;
     this._onWalletUriReady = options.onWalletUriReady;
     this._onVerificationReady = options.onVerificationReady;
@@ -280,17 +283,24 @@ export class ConnectClient {
     const responseCiphertext = await this._transport.awaitResponse({
       onHandshake: async (walletEpk: Jwk): Promise<void> => {
         assertX25519PublicJwk(walletEpk);
-        verifiedWalletEpk = walletEpk;
+        const candidate: Jwk = { kty: 'OKP', crv: 'X25519', x: walletEpk.x };
+        if (verifiedWalletEpk !== undefined) {
+          if (verifiedWalletEpk.x !== candidate.x) {
+            throw new Error('Connect: conflicting wallet handshake key received.');
+          }
+          return;
+        }
         const symbols = await deriveConnectVerificationSymbols({
           privateKey    : responsePrivateKey,
-          peerPublicKey : walletEpk,
+          peerPublicKey : candidate,
           requestJwe,
           state,
           nonce,
           responseKey   : responsePublicKey,
-          walletEpk,
+          walletEpk     : candidate,
         });
         await this._onVerificationReady?.(symbols);
+        verifiedWalletEpk = candidate;
       },
     });
     if (responseCiphertext === CONNECT_DENIED_TOKEN) {

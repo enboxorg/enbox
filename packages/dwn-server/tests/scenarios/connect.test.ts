@@ -304,6 +304,77 @@ describe('Connect scenarios', () => {
     getResult = await fetch(handshakeGetUrl, { method: 'GET' });
     expect(getResult.status).toBe(200);
     expect(await getResult.json()).toEqual({ ready: true, walletEpk: walletEpkA });
+
+    // 7. Invalid state / non-canonical coordinate / oversized body / malformed percent-encoding.
+    const badCoordRes = await fetch(handshakePostUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state: `badcoord-${randomUUID()}`, walletEpk: { kty: 'OKP', crv: 'X25519', x: 'short' } }),
+    });
+    expect(badCoordRes.status).toBe(400);
+
+    const badStateRes = await fetch(handshakePostUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state: 'bad/state with spaces', walletEpk: walletEpkA }),
+    });
+    expect(badStateRes.status).toBe(400);
+
+    const oversizedRes = await fetch(handshakePostUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state, walletEpk: walletEpkA, pad: 'x'.repeat(5_000) }),
+    });
+    expect(oversizedRes.status).toBe(413);
+
+    const malformedUriRes = await fetch(`${connectBaseUrl}/connect/handshake/%ZZ`, { method: 'GET' });
+    expect(malformedUriRes.status).toBe(400);
+
+    const malformedCompleteUriRes = await fetch(`${connectBaseUrl}/connect/complete/%ZZ`, { method: 'GET' });
+    expect(malformedCompleteUriRes.status).toBe(400);
+
+    // 8. Concurrent identical or conflicting POSTs never fail with 500.
+    const raceIdenticalState = `race-same-${randomUUID()}`;
+    const [r1, r2] = await Promise.all([
+      fetch(handshakePostUrl, {
+        method  : 'POST',
+        headers : { 'Content-Type': 'application/json' },
+        body    : JSON.stringify({ state: raceIdenticalState, walletEpk: walletEpkA }),
+      }),
+      fetch(handshakePostUrl, {
+        method  : 'POST',
+        headers : { 'Content-Type': 'application/json' },
+        body    : JSON.stringify({ state: raceIdenticalState, walletEpk: walletEpkA }),
+      }),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 201]);
+
+    const raceConflictState = `race-diff-${randomUUID()}`;
+    const [c1, c2] = await Promise.all([
+      fetch(handshakePostUrl, {
+        method  : 'POST',
+        headers : { 'Content-Type': 'application/json' },
+        body    : JSON.stringify({ state: raceConflictState, walletEpk: walletEpkA }),
+      }),
+      fetch(handshakePostUrl, {
+        method  : 'POST',
+        headers : { 'Content-Type': 'application/json' },
+        body    : JSON.stringify({ state: raceConflictState, walletEpk: walletEpkB }),
+      }),
+    ]);
+    expect([c1.status, c2.status].sort()).toEqual([201, 409]);
+
+    // 9. Completing the connect session cleans up the handshake entry.
+    const completeRes = await fetch(`${connectBaseUrl}/connect/complete`, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state }),
+    });
+    expect(completeRes.status).toBe(201);
+
+    const afterComplete = await fetch(handshakeGetUrl, { method: 'GET' });
+    expect(afterComplete.status).toBe(200);
+    expect(await afterComplete.json()).toEqual({ ready: false });
   });
 
   it('should clean up objects that are expired', async () => {

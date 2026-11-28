@@ -140,12 +140,13 @@ function baseOptions(transport: LoopbackTransport): {
   return {
     handoffs,
     options: {
-      connectServerUrl   : 'https://relay.example.com/connect',
-      walletUri          : 'https://wallet.example.com/connect/app',
-      appName            : 'Test Dapp',
-      permissionRequests : PERMISSIONS,
-      createTransport    : () => transport,
-      onWalletUriReady   : (handoff: WalletUriHandoff): void => { handoffs.push(handoff); },
+      connectServerUrl    : 'https://relay.example.com/connect',
+      walletUri           : 'https://wallet.example.com/connect/app',
+      appName             : 'Test Dapp',
+      permissionRequests  : PERMISSIONS,
+      createTransport     : () => transport,
+      onWalletUriReady    : (handoff: WalletUriHandoff): void => { handoffs.push(handoff); },
+      onVerificationReady : (): void => {},
     },
   };
 }

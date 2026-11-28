@@ -214,7 +214,7 @@ export class RelayClientTransport implements ConnectTransport {
     }
 
     const encodedState = encodeURIComponent(this._state);
-    const tokenUrl = concatenateUrl(this._connectServerUrl, `token/${this._state}.jwt`);
+    const tokenUrl = concatenateUrl(this._connectServerUrl, `token/${encodedState}.jwt`);
     const handshakeUrl = concatenateUrl(this._connectServerUrl, `handshake/${encodedState}`);
     const deadline = this._now() + this._timeoutMs;
     const statusUrl = this.resolveClaimedStatusUrl();
@@ -263,9 +263,29 @@ export class RelayClientTransport implements ConnectTransport {
    * or `undefined` while not ready yet.
    */
   private async pollHandshake(handshakeUrl: string): Promise<Jwk | undefined> {
-    const response = await this._fetch(handshakeUrl, { signal: this.requestSignal() });
+    let response: Response;
+    try {
+      response = await this._fetch(handshakeUrl, { signal: this.requestSignal() });
+    } catch (error) {
+      if (this._signal?.aborted) {
+        throw error;
+      }
+      // Retry transient network hiccups (e.g. backgrounded mobile tab) until deadline.
+      return undefined;
+    }
+
+    if (response.status === 404) {
+      await response.body?.cancel().catch((): void => {});
+      throw new Error('Connect: relay server does not support the pre-approval SAS handshake route.');
+    }
+
     if (response.ok) {
-      const payload = await response.json() as { ready?: unknown; walletEpk?: unknown };
+      let payload: { ready?: unknown; walletEpk?: unknown };
+      try {
+        payload = await response.json() as { ready?: unknown; walletEpk?: unknown };
+      } catch {
+        return undefined;
+      }
       if (payload.ready === true && payload.walletEpk !== undefined) {
         assertX25519PublicJwk(payload.walletEpk);
         return payload.walletEpk;
@@ -304,7 +324,16 @@ export class RelayClientTransport implements ConnectTransport {
    * the wait; an empty 2xx (204) falls through to the next poll.
    */
   private async pollToken(tokenUrl: string): Promise<string | undefined> {
-    const response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
+    let response: Response;
+    try {
+      response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
+    } catch (error) {
+      if (this._signal?.aborted) {
+        throw error;
+      }
+      return undefined;
+    }
+
     if (response.ok) {
       const body = await response.text();
       if (body.length > 0) {
@@ -466,6 +495,7 @@ export async function postRelayHandshake({ callbackUrl, state, walletEpk, fetchF
   });
 
   if (!response.ok) {
+    await response.body?.cancel().catch((): void => {});
     throw new Error(`Connect: handshake POST failed with HTTP ${response.status}.`);
   }
 }

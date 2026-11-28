@@ -238,6 +238,7 @@ describe('WalletConnect', () => {
       const result = await WalletConnect.initAuthentication({
         displayName             : 'OAuth sign-in', walletUri, connectServerUrl, authentication,
         expectedProviderDid     : owner.uri, onWalletUriReady        : relay.onWalletUriReady,
+        onVerificationReady     : (): void => {},
         pollIntervalMs          : 1,
         onAuthenticationRequest : async (request): Promise<void> => {
           expect(relay.parRequests).toHaveLength(0);
@@ -261,6 +262,7 @@ describe('WalletConnect', () => {
         displayName             : 'OAuth sign-in', walletUri, connectServerUrl,
         authentication          : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
         onWalletUriReady        : relay.onWalletUriReady,
+        onVerificationReady     : (): void => {},
         onAuthenticationRequest : async (): Promise<void> => { throw new Error('Registration unavailable'); },
       })).rejects.toThrow('Registration unavailable');
       expect(relay.parRequests).toHaveLength(0);
@@ -283,9 +285,11 @@ describe('WalletConnect', () => {
         return { idToken, handshakeKey: handshake.walletEpk, symbols: handshake.symbols };
       });
       const result = await WalletConnect.initClient({
-        displayName        : 'OAuth and data', walletUri, connectServerUrl, authentication,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady, pollIntervalMs     : 1,
+        displayName         : 'OAuth and data', walletUri, connectServerUrl, authentication,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       });
       expect(result?.authentication?.subject).toBe(owner.uri);
       expect(result?.authentication?.proof.split('.')).toHaveLength(3);
@@ -296,19 +300,23 @@ describe('WalletConnect', () => {
       const legacy = approveWithWalletMintedDelegate();
       const relay = stubRelay(async (request, requestJwe) => legacy.wallet({ ...request, authentication: undefined }, requestJwe));
       await expect(WalletConnect.initClient({
-        displayName        : 'OAuth and data', walletUri, connectServerUrl,
-        authentication     : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady, pollIntervalMs     : 1,
+        displayName         : 'OAuth and data', walletUri, connectServerUrl,
+        authentication      : { version: 1, audience: 'https://login.example/', challenge: randomToken() },
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       })).rejects.toThrow();
     });
 
     it('handles wallet denial and rejects identity-only requests through the data adapter', async () => {
       const relay = stubRelay(async () => ({ idToken: CONNECT_DENIED_TOKEN }));
       const common = {
-        displayName      : 'OAuth sign-in', walletUri, connectServerUrl,
-        authentication   : { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() },
-        onWalletUriReady : relay.onWalletUriReady, pollIntervalMs   : 1,
+        displayName         : 'OAuth sign-in', walletUri, connectServerUrl,
+        authentication      : { version: 1 as const, audience: 'https://login.example/', challenge: randomToken() },
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       };
       expect(await WalletConnect.initAuthentication(common)).toBeUndefined();
       const before = relay.parRequests.length;
@@ -375,6 +383,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
+        onVerificationReady  : (): void => {},
         preSupplyDelegateDid : true,
         pollIntervalMs       : 1,
       });
@@ -394,6 +403,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : (): void => {},
+        onVerificationReady  : (): void => {},
         preSupplyDelegateDid : true,
         requestType          : 'refresh',
       })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
@@ -423,6 +433,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
         delegatePortableDid,
         requestType         : 'refresh',
         expectedProviderDid : providerDid,
@@ -442,6 +453,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady    : (): void => {},
+        onVerificationReady : (): void => {},
         delegatePortableDid : {
           uri         : 'did:jwk:local-delegate',
           document    : {},
@@ -460,6 +472,7 @@ describe('WalletConnect', () => {
         connectServerUrl,
         permissionRequests   : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
         onWalletUriReady     : relay.onWalletUriReady,
+        onVerificationReady  : (): void => {},
         preSupplyDelegateDid : true,
         pollIntervalMs       : 1,
       })).rejects.toThrow('wallet returned delegate DID \'did:jwk:other-delegate\'');
@@ -470,12 +483,13 @@ describe('WalletConnect', () => {
       const relay = stubRelay(sealRawResponse(() => ({})));
 
       await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        pollIntervalMs     : 1,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       })).rejects.toThrow('Connect: wallet response omitted `delegatePortableDid`.');
     });
 
@@ -487,12 +501,13 @@ describe('WalletConnect', () => {
       const relay = stubRelay(minted.wallet);
 
       await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        pollIntervalMs     : 1,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       })).rejects.toThrow('"apv"');
     });
 
@@ -523,12 +538,13 @@ describe('WalletConnect', () => {
       });
 
       const result = await WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : relay.onWalletUriReady,
-        pollIntervalMs     : 1,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : relay.onWalletUriReady,
+        onVerificationReady : (): void => {},
+        pollIntervalMs      : 1,
       });
 
       // The wallet behavior (running inside `onWalletUriReady`) finished
@@ -545,16 +561,22 @@ describe('WalletConnect', () => {
           headers : { 'Content-Type': 'application/json' },
         })
       );
-      fetchStub.callsFake(async (): Promise<Response> => new Response('Not Found', { status: 404 }));
+      fetchStub.callsFake(async (input: any): Promise<Response> => {
+        if (String(input).includes('/handshake/')) {
+          return new Response(JSON.stringify({ ready: false }), { status: 200 });
+        }
+        return new Response('Not Found', { status: 404 });
+      });
 
       await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : (): void => {},
-        timeoutMs          : 5,
-        pollIntervalMs     : 1,
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : (): void => {},
+        onVerificationReady : (): void => {},
+        timeoutMs           : 5,
+        pollIntervalMs      : 1,
       })).rejects.toThrow('timed out');
       expect(fetchStub.callCount).toBeGreaterThan(1);
     });
@@ -565,11 +587,12 @@ describe('WalletConnect', () => {
       );
 
       await expect(WalletConnect.initClient({
-        displayName        : 'Sample App',
+        displayName         : 'Sample App',
         walletUri,
         connectServerUrl,
-        permissionRequests : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
-        onWalletUriReady   : (): void => {},
+        permissionRequests  : [{ moduleDefinition: TestModuleDefinition, permissionScopes: [] }],
+        onWalletUriReady    : (): void => {},
+        onVerificationReady : (): void => {},
       })).rejects.toThrow('Connect: pushed authorization request failed with HTTP 400.');
     });
   });

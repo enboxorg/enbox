@@ -120,9 +120,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Returns whether `value` is a public (no `d`) X25519 OKP JWK. */
+/** Canonical 32-byte X25519 base64url coordinate (43 chars, zero unused low 2 bits). */
+const CANONICAL_X25519_B64U = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+
+/** Returns whether `value` is a canonical 32-byte base64url-encoded X25519 coordinate. */
+export function isCanonicalX25519Coordinate(value: unknown): value is string {
+  return typeof value === 'string' && CANONICAL_X25519_B64U.test(value);
+}
+
+/** Returns whether `value` is a public (no `d`) X25519 OKP JWK with a canonical 32-byte `x`. */
 function isX25519PublicJwk(value: unknown): value is Jwk {
-  return isOkpPublicJwk(value) && value.crv === 'X25519';
+  return isPlainObject(value)
+    && isOkpPublicJwk(value)
+    && value.crv === 'X25519'
+    && isCanonicalX25519Coordinate(value.x);
 }
 
 /**
@@ -436,9 +447,7 @@ async function sealResponseEnvelope({ response: inputResponse, signer, responseK
   if (handshakeKey !== undefined) {
     assertX25519PublicJwk(handshakeKey);
   }
-  const apv = handshakeKey === undefined
-    ? undefined
-    : Convert.string(handshakeKey.x as string).toBase64Url();
+  const apv = handshakeKey === undefined ? undefined : handshakeKey.x as string;
   const jwt = await signJwt({ did: signer, data: response });
 
   return await CompactJwe.encrypt({
@@ -501,10 +510,11 @@ async function openResponseEnvelope({ jwe, recipientPrivateKey, expected }: Open
 
   if (expected.handshakeKey !== undefined) {
     assertX25519PublicJwk(expected.handshakeKey);
-    const expectedApv = Convert.string(expected.handshakeKey.x as string).toBase64Url();
-    if (protectedHeader.apv !== expectedApv) {
+    if (protectedHeader.apv !== expected.handshakeKey.x) {
       throw new Error('Connect: response JWE "apv" header does not match the verified handshake key.');
     }
+  } else if (protectedHeader.apv !== undefined) {
+    throw new Error('Connect: response JWE unexpectedly carried an "apv" header.');
   }
 
   const jwt = Convert.uint8Array(plaintext).toString();

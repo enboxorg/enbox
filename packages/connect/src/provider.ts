@@ -92,6 +92,7 @@ export class ConnectProvider {
     handshakeKey?: Jwk;
   }): Promise<string> {
     assertExpectedProviderDid(request, providerDid);
+    assertChannelHandshakeKey(request, handshakeKey);
     if (request.requestType === 'authenticate') { throw new ConnectAuthenticationError('invalid-request'); }
     if ((request.authentication === undefined) !== (approval.authenticationProof === undefined)) {
       throw new ConnectAuthenticationError('invalid-proof');
@@ -135,6 +136,7 @@ export class ConnectProvider {
   }): Promise<string> {
     assertConnectAuthenticationRequest(request);
     assertExpectedProviderDid(request, providerDid);
+    assertChannelHandshakeKey(request, handshakeKey);
     if (typeof approval.authenticationProof !== 'string' || approval.authenticationProof.length === 0 ||
         ['delegateDid', 'delegatePortableDid', 'delegateGrants', 'sessionRevocations'].some(key => Object.hasOwn(approval, key))) {
       throw new ConnectAuthenticationError('invalid-proof');
@@ -154,5 +156,15 @@ export class ConnectProvider {
    */
   public static denyToken(): string {
     return CONNECT_DENIED_TOKEN;
+  }
+}
+
+/** Enforces that `direct_post` responses bind `handshakeKey` and `post_message` responses do not. */
+function assertChannelHandshakeKey(request: ConnectRequest, handshakeKey: Jwk | undefined): void {
+  if (request.reply.mode === 'direct_post' && handshakeKey === undefined) {
+    throw new Error('Connect: `handshakeKey` is required when sealing a `direct_post` relay response.');
+  }
+  if (request.reply.mode === 'post_message' && handshakeKey !== undefined) {
+    throw new Error('Connect: `handshakeKey` must not be supplied for `post_message` responses.');
   }
 }

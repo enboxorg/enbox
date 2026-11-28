@@ -185,15 +185,22 @@ describe('connect envelope', () => {
   });
 
   describe('assertX25519PublicJwk', () => {
-    it('should accept a public X25519 JWK', () => {
-      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc' })).not.toThrow();
+    const validX = 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8';
+
+    it('should accept a canonical public X25519 JWK', () => {
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: validX })).not.toThrow();
     });
 
-    it('should reject non-objects, non-X25519 keys, and private key material', () => {
+    it('should reject non-objects, non-X25519 keys, non-canonical coordinates, and private key material', () => {
       expect(() => assertX25519PublicJwk('not-a-jwk')).toThrow('X25519 public JWK');
-      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'Ed25519', x: 'abc' })).toThrow('X25519 public JWK');
-      expect(() => assertX25519PublicJwk({ kty: 'EC', crv: 'X25519', x: 'abc' })).toThrow('X25519 public JWK');
-      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc', d: 'secret' })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk(null)).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk([])).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'Ed25519', x: validX })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'EC', crv: 'X25519', x: validX })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: 'abc' })).toThrow('X25519 public JWK');
+      // Non-canonical trailing bits (last base64url char '9' is not in [AEIMQUYcgkosw048]).
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: `${validX.slice(0, 42)}9` })).toThrow('X25519 public JWK');
+      expect(() => assertX25519PublicJwk({ kty: 'OKP', crv: 'X25519', x: validX, d: validX })).toThrow('X25519 public JWK');
     });
   });
 
@@ -606,7 +613,7 @@ describe('connect envelope', () => {
       });
 
       const header = Convert.base64Url(jwe.split('.')[0]).toObject() as Record<string, unknown>;
-      expect(header.apv).toBe(Convert.string(handshakeKey.x!).toBase64Url());
+      expect(header.apv).toBe(handshakeKey.x);
 
       const opened = await openResponse({
         jwe,
@@ -614,6 +621,26 @@ describe('connect envelope', () => {
         expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state, handshakeKey },
       });
       expect(opened).toEqual(response);
+    });
+
+    it('should fail closed when apv is present on a response where no handshake key was expected', async () => {
+      const { clientDid, request, responsePrivateKey } = await createTestRequest();
+      const walletSigner = await DidJwk.create();
+      const walletHandshake = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: walletHandshake.x };
+
+      const jwe = await sealResponse({
+        response    : buildTestResponse(request),
+        signer      : walletSigner,
+        responseKey : request.responseKey,
+        handshakeKey,
+      });
+
+      await expect(openResponse({
+        jwe,
+        recipientPrivateKey : responsePrivateKey,
+        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
+      })).rejects.toThrow('"apv"');
     });
 
     it('should fail closed when the handshake key in apv does not match', async () => {

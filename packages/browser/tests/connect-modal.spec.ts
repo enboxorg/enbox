@@ -376,12 +376,19 @@ describe('runConnectModal', () => {
 
     // Wallet published its handshake key — the modal displays the 3 SAS symbols.
     relay.calls[0].onVerificationReady?.(sampleSymbols);
+    const verifyRow = shadowRoot().querySelector<HTMLElement>('.verify-row');
+    expect(verifyRow?.getAttribute('role')).toBe('group');
+    expect(verifyRow?.getAttribute('aria-label')).toContain('Fox, Rocket, Guitar');
     const cards = Array.from(shadowRoot().querySelectorAll<HTMLElement>('.verify-card'));
     expect(cards).toHaveLength(3);
     expect(cards.map((card) => card.querySelector('.verify-label')?.textContent)).toEqual(['Fox', 'Rocket', 'Guitar']);
     expect(cards.map((card) => card.querySelector('.verify-emoji')?.textContent)).toEqual(['🦊', '🚀', '🎸']);
+    expect(cards.every((card) => card.querySelector('.verify-emoji')?.getAttribute('aria-hidden') === 'true')).toBe(true);
     expect(stageText()).toContain('Confirm in Enbox');
     expect(stageText()).toContain('Tap these 3 symbols in Enbox');
+    const verifyStartOver = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage .footer-link'))
+      .find((button) => button.textContent === 'Start over');
+    expect(verifyStartOver).toBeDefined();
 
     relay.calls[0].resolve(RESULT);
     await flush();
@@ -504,7 +511,7 @@ describe('runConnectModal', () => {
     relay.calls[0].onWalletUriReady(HANDOFF);
 
     // The primary action opens the wallet in a NEW tab: the modal — and the
-    // relay session under it — stays alive for the pairing-code entry.
+    // relay session under it — stays alive for the SAS verification step.
     const link = shadowRoot().querySelector<HTMLAnchorElement>('.deep-link');
     expect(link).not.toBeNull();
     expect(link?.href).toBe(HANDOFF.walletUri);
@@ -541,8 +548,8 @@ describe('runConnectModal', () => {
     qr.click();
     await flush();
 
-    expect(stageText()).toContain('Finish in Enbox');
-    expect(stageText()).toContain('Approve the connection in the tab that just opened.');
+    expect(stageText()).toContain('Open Enbox');
+    expect(stageText()).toContain('match the 3 verification symbols shown here before approving.');
 
     // Start over mints a fresh pointer — the one the wallet tab carried away
     // is single-use.
@@ -1073,6 +1080,9 @@ describe('runConnectModal', () => {
 
     expect(stageText()).toContain('Request received — unlock Enbox');
     expect(stageText()).toContain('Verification symbols will appear here');
+    const claimedStartOver = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage .footer-link'))
+      .find((button) => button.textContent === 'Start over');
+    expect(claimedStartOver).toBeDefined();
 
     // The approval still lands normally after the progress beat.
     relay.calls[0].resolve(RESULT);

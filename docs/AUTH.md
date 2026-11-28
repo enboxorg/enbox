@@ -151,8 +151,9 @@ const session = await auth.restoreFromPhrase({
 ### `walletConnect()`
 
 `walletConnect()` connects to an external wallet through the Enbox Connect
-relay. It generates a URI for display, validates the PIN, imports the delegated
-DID, and processes permission grants.
+relay. It generates a URI for display, surfaces the 3 ECDH SAS verification
+symbols for confirmation in the wallet, imports the delegated DID, and
+processes permission grants.
 
 ```ts
 const session = await auth.walletConnect({
@@ -161,8 +162,8 @@ const session = await auth.walletConnect({
   permissionRequests: [
     { moduleDefinition: NotesModule.definition },
   ],
-  onWalletUriReady: renderQrCode,
-  validatePin     : promptForPin,
+  onWalletUriReady   : renderQrCode,
+  onVerificationReady: renderVerificationSymbols,
 });
 ```
 

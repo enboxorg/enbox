@@ -157,9 +157,9 @@ export interface BrowserConnectHandlerOptions {
  * Create a browser-native connect handler over the connect modal.
  *
  * The modal owns the whole session on one surface: the phone path (a QR /
- * deep link over the relay, with pairing-code entry) is the default, the
- * in-browser wallet popup is the alternate, and the wallet catalog plus
- * custom-URL entry live in a disclosure. It resolves with the delegate
+ * deep link over the relay, with pre-approval SAS symbol verification) is the
+ * default, the in-browser wallet popup is the alternate, and the wallet catalog
+ * plus custom-URL entry live in a disclosure. It resolves with the delegate
  * credentials on success and `undefined` when the user denies.
  *
  * @example

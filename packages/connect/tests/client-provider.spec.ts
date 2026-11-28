@@ -167,7 +167,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         });
         return { response, handshakeKey: handshake.walletEpk };
       });
-      const client = new ConnectClient({ transport });
+      const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
       const options = {
         appName        : 'Snapshot application',
         requestType,
@@ -309,7 +309,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return { response, handshakeKey: handshake.walletEpk };
     });
 
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
     const result = await client.connect({
       appName             : 'Pre-supplied App',
       permissionRequests  : [],
@@ -325,13 +325,55 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
 
   it('should reject a refresh request without a pre-supplied delegate', async () => {
     const transport = createRelayLoopback(async (): Promise<LoopbackWalletResult> => ({ response: ConnectProvider.denyToken() }));
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({
       appName            : 'Invalid Refresh App',
       permissionRequests : [],
       requestType        : 'refresh',
     })).rejects.toThrow('refresh requests require an existing `delegatePortableDid`');
+  });
+
+  it('should require onVerificationReady when the transport requires a SAS handshake', () => {
+    const transport = createRelayLoopback(async (): Promise<LoopbackWalletResult> => ({ response: ConnectProvider.denyToken() }));
+    expect(() => new ConnectClient({ transport })).toThrow('onVerificationReady');
+  });
+
+  it('should reject a conflicting second handshake key from the transport (write-once)', async () => {
+    const provider = await DidJwk.create();
+    const rogueKey = await X25519.generateKey();
+    const roguePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: rogueKey.x };
+    let requestKey: Uint8Array;
+    let deliveredJwe: string | undefined;
+
+    const transport: ConnectTransport = {
+      requiresHandshake : true,
+      requestProfile    : async (state: string): Promise<ConnectRequestProfile> => {
+        requestKey = CryptoUtils.randomBytes(32);
+        return {
+          state,
+          encryption : { mode: 'dir', requestKey },
+          reply      : { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' },
+        };
+      },
+      deliverRequest: async (jwe: string): Promise<void> => {
+        deliveredJwe = jwe;
+      },
+      awaitResponse: async (options): Promise<string> => {
+        const approved = await approveWithMintedDelegate({
+          jwe         : deliveredJwe!,
+          requestKey,
+          providerDid : provider.uri,
+        });
+        await options?.onHandshake?.(approved.handshakeKey);
+        await options?.onHandshake?.(roguePublicKey);
+        return approved.responseJwe;
+      },
+    };
+
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
+    await expect(client.connect({ appName: 'Conflicting Handshake App', permissionRequests: [] }))
+      .rejects.toThrow('conflicting wallet handshake key');
   });
 
   it('should resolve undefined when the wallet denies the request without a handshake', async () => {
@@ -364,7 +406,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return { response: approved.responseJwe, handshakeKey: approved.handshakeKey };
     });
 
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({ appName: 'Split-View Attack App', permissionRequests: [] })).rejects.toThrow('"apv"');
     expect(transport.confirmCompleteCalls).toBe(0);
@@ -377,7 +419,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return { response: approved.responseJwe };
     });
 
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({ appName: 'Missing Handshake App', permissionRequests: [] }))
       .rejects.toThrow('without a verified wallet handshake');
@@ -405,7 +447,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return { response, handshakeKey: handshake.walletEpk };
     });
 
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({
       appName             : 'Delegate Mismatch App',
@@ -433,7 +475,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       return { response, handshakeKey: handshake.walletEpk };
     });
 
-    const client = new ConnectClient({ transport });
+    const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
 
     await expect(client.connect({ appName: 'Missing Portable App', permissionRequests: [] }))
       .rejects.toThrow('omitted `delegatePortableDid`');
@@ -519,10 +561,82 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       })).rejects.toThrow('Connect expected wallet profile');
     });
 
+    it('should enforce handshakeKey rules for direct_post and post_message channels', async () => {
+      const provider = await DidJwk.create();
+      const delegate = await DidJwk.create();
+      const responsePrivateKey = await X25519.generateKey();
+      const handshakePrivateKey = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakePrivateKey.x };
+      const portableDid = await delegate.export();
+
+      const relayRequest: ConnectRequest = {
+        clientDid           : provider.uri,
+        appName             : 'Channel Guard App',
+        permissionRequests  : [],
+        supportedDidMethods : ['did:jwk'],
+        nonce               : randomToken(),
+        state               : randomToken(),
+        responseKey         : { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x },
+        reply               : { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' },
+      };
+      const popupRequest: ConnectRequest = {
+        ...relayRequest,
+        reply: { mode: 'post_message' },
+      };
+      const approval: ConnectApproval = {
+        delegateDid         : delegate.uri,
+        delegatePortableDid : portableDid,
+        delegateGrants      : [],
+        sessionRevocations  : [],
+      };
+
+      await expect(ConnectProvider.sealApprovedResponse({
+        request     : relayRequest,
+        providerDid : provider.uri,
+        approval,
+        signer      : delegate,
+      })).rejects.toThrow('`handshakeKey` is required');
+
+      await expect(ConnectProvider.sealApprovedResponse({
+        request     : popupRequest,
+        providerDid : provider.uri,
+        approval,
+        signer      : delegate,
+        handshakeKey,
+      })).rejects.toThrow('`handshakeKey` must not be supplied');
+
+      const authRelayRequest: ConnectRequest = {
+        ...relayRequest,
+        requestType    : 'authenticate',
+        authentication : { version: 1, audience: 'https://identity.example', challenge: randomToken() },
+      };
+      const authPopupRequest: ConnectRequest = {
+        ...authRelayRequest,
+        reply: { mode: 'post_message' },
+      };
+
+      await expect(ConnectProvider.sealAuthenticationResponse({
+        request     : authRelayRequest,
+        providerDid : provider.uri,
+        approval    : { authenticationProof: 'proof' },
+        signer      : delegate,
+      })).rejects.toThrow('`handshakeKey` is required');
+
+      await expect(ConnectProvider.sealAuthenticationResponse({
+        request     : authPopupRequest,
+        providerDid : provider.uri,
+        approval    : { authenticationProof: 'proof' },
+        signer      : delegate,
+        handshakeKey,
+      })).rejects.toThrow('`handshakeKey` must not be supplied');
+    });
+
     it('should reject approval output that contradicts a request-supplied delegate', async () => {
       const provider = await DidJwk.create();
       const localDelegate = await DidJwk.create();
       const responsePrivateKey = await X25519.generateKey();
+      const handshakePrivateKey = await X25519.generateKey();
+      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakePrivateKey.x };
 
       const request: ConnectRequest = {
         clientDid           : provider.uri,
@@ -543,6 +657,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         providerDid : provider.uri,
         approval    : { delegateDid: otherDelegate.uri, delegateGrants: [], sessionRevocations: [] },
         signer      : otherDelegate,
+        handshakeKey,
       })).rejects.toThrow('does not match the request-supplied');
 
       await expect(ConnectProvider.sealApprovedResponse({
@@ -555,6 +670,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
           sessionRevocations  : [],
         },
         signer: otherDelegate,
+        handshakeKey,
       })).rejects.toThrow('must not return delegate key material');
 
       await expect(ConnectProvider.sealApprovedResponse({
@@ -562,6 +678,7 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         providerDid : provider.uri,
         approval    : { delegateDid: otherDelegate.uri, delegateGrants: [], sessionRevocations: [] },
         signer      : otherDelegate,
+        handshakeKey,
       })).rejects.toThrow('must include `delegatePortableDid`');
     });
   });

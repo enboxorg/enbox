@@ -2407,10 +2407,11 @@ describe('AuthManager', () => {
 
       try {
         await expect(manager.walletConnect({
-          displayName        : 'Test',
-          connectServerUrl   : 'https://relay.example.com',
-          permissionRequests : [],
-          onWalletUriReady   : () => {},
+          displayName         : 'Test',
+          connectServerUrl    : 'https://relay.example.com',
+          permissionRequests  : [],
+          onWalletUriReady    : () => {},
+          onVerificationReady : () => {},
         })).rejects.toThrow('relay deliberately stopped');
         expect(initClient).toHaveBeenCalledTimes(1);
       } finally {

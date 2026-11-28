@@ -119,7 +119,7 @@ export type WalletConnectClientOptions = {
    * pre-approval SAS verification symbols are derived. Display these symbols
    * so the user can tap the matching 3 tiles in their wallet before approving.
    */
-  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
+  onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
 
   /**
    * Milliseconds to poll the relay for a wallet response.

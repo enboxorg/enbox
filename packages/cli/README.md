@@ -51,7 +51,7 @@ The handler uses the existing encrypted relay flow:
 
 1. The CLI pushes an encrypted request to the connect relay.
 2. The CLI prints a QR code and link for the wallet approval page.
-3. The user approves in the wallet and enters the wallet-displayed PIN in the terminal.
+3. Once the wallet opens the request, the CLI displays 3 verification symbols and the user confirms the matching symbols in the wallet before approving.
 4. The handler returns the delegated DID and grants to the connection store.
 
 The relay URL resolves from `connectServerUrl`, then `connectServerUrlProvider`,

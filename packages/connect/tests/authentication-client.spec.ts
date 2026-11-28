@@ -49,7 +49,14 @@ async function loopback(mode: 'relay' | 'popup', action: WalletAction,
     },
     confirmComplete: async (): Promise<void> => { observed.completions++; },
   };
-  return { client: new ConnectClient({ transport, onAuthenticationRequest }), observed };
+  return {
+    client: new ConnectClient({
+      transport,
+      onAuthenticationRequest,
+      ...(mode === 'relay' ? { onVerificationReady: (): void => {} } : {}),
+    }),
+    observed,
+  };
 }
 
 describe('ConnectClient owner authentication', () => {

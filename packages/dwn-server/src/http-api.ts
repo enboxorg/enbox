@@ -293,7 +293,13 @@ export class HttpApi {
           .replace(/[:.]/g, '')
           .replaceAll('/', '_');
         responseHistogram.labels(routeLabel, String(response.status)).observe(elapsed);
-        log.info(method, decodeURI(path), response.status);
+        let decodedPath = path;
+        try {
+          decodedPath = decodeURI(path);
+        } catch {
+          // Preserve raw path in access logs when percent-encoding is malformed.
+        }
+        log.info(method, decodedPath, response.status);
 
         return response;
       },
@@ -1324,22 +1330,82 @@ export class HttpApi {
     return Response.json({ claimed }, { status: 200 });
   }
 
+  static readonly #MAX_CONNECT_HANDSHAKE_BODY_BYTES = 4096;
+  static readonly #CONNECT_STATE_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+  static readonly #CANONICAL_X25519_B64U = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+
+  async #readBoundedJsonBody(req: Request, maxBytes: number): Promise<
+    { status: 'ok'; value: unknown } | { status: 'too-large' } | { status: 'invalid' }
+  > {
+    const contentLength = Number(req.headers.get('content-length'));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      return { status: 'too-large' };
+    }
+    if (req.body === null) {
+      return { status: 'invalid' };
+    }
+
+    const reader = req.body.getReader();
+    const decoder = new TextDecoder();
+    let totalBytes = 0;
+    let text = '';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) {
+          await reader.cancel().catch((): void => {});
+          return { status: 'too-large' };
+        }
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    } catch {
+      return { status: 'invalid' };
+    }
+
+    try {
+      return { status: 'ok', value: JSON.parse(text) };
+    } catch {
+      return { status: 'invalid' };
+    }
+  }
+
+  #decodeStateParam(rawState: string): string | undefined {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(rawState);
+    } catch {
+      return undefined;
+    }
+    return HttpApi.#CONNECT_STATE_PATTERN.test(decoded) ? decoded : undefined;
+  }
+
   async #handleConnectHandshake(req: Request, path: string, method: string): Promise<Response | null> {
     if (!(method === 'POST' && path === '/connect/handshake')) {
       return null;
     }
 
-    const body = await req.json().catch((): undefined => undefined) as {
-      state?: unknown;
-      walletEpk?: unknown;
-    } | undefined;
+    const parsedBody = await this.#readBoundedJsonBody(req, HttpApi.#MAX_CONNECT_HANDSHAKE_BODY_BYTES);
+    if (parsedBody.status === 'too-large') {
+      return Response.json({
+        ok     : false,
+        status : { code: 413, message: 'Payload Too Large: Connect handshake body exceeds maximum size' },
+      }, { status: 413 });
+    }
+    const body = parsedBody.status === 'ok' && typeof parsedBody.value === 'object' && parsedBody.value !== null
+      ? parsedBody.value as { state?: unknown; walletEpk?: unknown }
+      : undefined;
     const state = body?.state;
     const walletEpk = body?.walletEpk;
 
-    if (typeof state !== 'string' || state === '') {
+    if (typeof state !== 'string' || !HttpApi.#CONNECT_STATE_PATTERN.test(state)) {
       return Response.json({
         ok     : false,
-        status : { code: 400, message: 'Bad Request: Missing \'state\' parameter' },
+        status : { code: 400, message: 'Bad Request: Invalid or missing \'state\' parameter' },
       }, { status: 400 });
     }
 
@@ -1350,7 +1416,7 @@ export class HttpApi {
       || (walletEpk as Record<string, unknown>).kty !== 'OKP'
       || (walletEpk as Record<string, unknown>).crv !== 'X25519'
       || typeof (walletEpk as Record<string, unknown>).x !== 'string'
-      || ((walletEpk as Record<string, unknown>).x as string).length === 0
+      || !HttpApi.#CANONICAL_X25519_B64U.test((walletEpk as Record<string, unknown>).x as string)
       || (walletEpk as Record<string, unknown>).d !== undefined
     ) {
       return Response.json({
@@ -1379,7 +1445,13 @@ export class HttpApi {
   }
 
   async #handleConnectHandshakeState(rawState: string): Promise<Response> {
-    const state = decodeURIComponent(rawState);
+    const state = this.#decodeStateParam(rawState);
+    if (state === undefined) {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: Invalid \'state\' parameter' },
+      }, { status: 400 });
+    }
     const walletEpk = await this.connectServer.getConnectHandshake(state);
     if (walletEpk === undefined) {
       return Response.json({ ready: false }, { status: 200 });
@@ -1392,12 +1464,21 @@ export class HttpApi {
       return null;
     }
 
-    const body = await req.json().catch((): undefined => undefined) as { state?: unknown } | undefined;
-    const state = body?.state;
-    if (typeof state !== 'string' || state === '') {
+    const parsedBody = await this.#readBoundedJsonBody(req, HttpApi.#MAX_CONNECT_HANDSHAKE_BODY_BYTES);
+    if (parsedBody.status === 'too-large') {
       return Response.json({
         ok     : false,
-        status : { code: 400, message: 'Bad Request: Missing \'state\' parameter' },
+        status : { code: 413, message: 'Payload Too Large: Connect completion body exceeds maximum size' },
+      }, { status: 413 });
+    }
+    const body = parsedBody.status === 'ok' && typeof parsedBody.value === 'object' && parsedBody.value !== null
+      ? parsedBody.value as { state?: unknown }
+      : undefined;
+    const state = body?.state;
+    if (typeof state !== 'string' || !HttpApi.#CONNECT_STATE_PATTERN.test(state)) {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: Invalid or missing \'state\' parameter' },
       }, { status: 400 });
     }
 
@@ -1409,7 +1490,13 @@ export class HttpApi {
   }
 
   async #handleConnectCompleteState(rawState: string): Promise<Response> {
-    const state = decodeURIComponent(rawState);
+    const state = this.#decodeStateParam(rawState);
+    if (state === undefined) {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: Invalid \'state\' parameter' },
+      }, { status: 400 });
+    }
     const completed = await this.connectServer.isConnectComplete(state);
     return Response.json({ completed }, { status: 200 });
   }

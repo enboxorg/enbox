@@ -24,7 +24,7 @@ import type { Jwk } from '@enbox/crypto';
 import { Convert } from '@enbox/common';
 import { CryptoUtils, Hkdf, Sha256, X25519 } from '@enbox/crypto';
 
-import { assertX25519PublicJwk } from './envelope.js';
+import { assertX25519PublicJwk, isCanonicalX25519Coordinate } from './envelope.js';
 
 /** A single verification symbol: visually distinct emoji paired with a 1-word label. */
 export type ConnectVerificationSymbol = Readonly<{
@@ -85,12 +85,12 @@ export const CONNECT_VERIFICATION_SYMBOLS: readonly ConnectVerificationSymbol[] 
   Object.freeze({ id: 31, emoji: '⚡', label: 'Bolt' }),
   Object.freeze({ id: 32, emoji: '🔥', label: 'Fire' }),
   Object.freeze({ id: 33, emoji: '🌈', label: 'Rainbow' }),
-  Object.freeze({ id: 34, emoji: '❄', label: 'Snow' }),
+  Object.freeze({ id: 34, emoji: '⛄', label: 'Snowman' }),
   Object.freeze({ id: 35, emoji: '🌊', label: 'Wave' }),
   Object.freeze({ id: 36, emoji: '🚀', label: 'Rocket' }),
   Object.freeze({ id: 37, emoji: '⛵', label: 'Boat' }),
   Object.freeze({ id: 38, emoji: '🚲', label: 'Bike' }),
-  Object.freeze({ id: 39, emoji: '✈', label: 'Plane' }),
+  Object.freeze({ id: 39, emoji: '🚁', label: 'Helicopter' }),
   Object.freeze({ id: 40, emoji: '🚂', label: 'Train' }),
   Object.freeze({ id: 41, emoji: '⚓', label: 'Anchor' }),
   Object.freeze({ id: 42, emoji: '🧭', label: 'Compass' }),
@@ -104,13 +104,13 @@ export const CONNECT_VERIFICATION_SYMBOLS: readonly ConnectVerificationSymbol[] 
   Object.freeze({ id: 50, emoji: '💎', label: 'Gem' }),
   Object.freeze({ id: 51, emoji: '👑', label: 'Crown' }),
   Object.freeze({ id: 52, emoji: '🎩', label: 'Hat' }),
-  Object.freeze({ id: 53, emoji: '🕶', label: 'Glasses' }),
-  Object.freeze({ id: 54, emoji: '☂', label: 'Umbrella' }),
+  Object.freeze({ id: 53, emoji: '👓', label: 'Glasses' }),
+  Object.freeze({ id: 54, emoji: '☔', label: 'Umbrella' }),
   Object.freeze({ id: 55, emoji: '⏰', label: 'Clock' }),
   Object.freeze({ id: 56, emoji: '💡', label: 'Bulb' }),
   Object.freeze({ id: 57, emoji: '📚', label: 'Books' }),
-  Object.freeze({ id: 58, emoji: '✏', label: 'Pencil' }),
-  Object.freeze({ id: 59, emoji: '✂', label: 'Scissors' }),
+  Object.freeze({ id: 58, emoji: '🎨', label: 'Palette' }),
+  Object.freeze({ id: 59, emoji: '🧩', label: 'Puzzle' }),
   Object.freeze({ id: 60, emoji: '🔨', label: 'Hammer' }),
   Object.freeze({ id: 61, emoji: '🧲', label: 'Magnet' }),
   Object.freeze({ id: 62, emoji: '🏆', label: 'Trophy' }),
@@ -147,18 +147,95 @@ export type ConnectVerificationHandshake = Readonly<{
   verifySelection: (selectedIds: readonly number[]) => boolean;
 }>;
 
-/** Asserts that `value` is a private X25519 OKP JWK. */
-function assertX25519PrivateJwk(value: Jwk): void {
+/** Maximum HKDF derivation rounds before aborting (probability of >1 round is < 2^-180). */
+const MAX_SAS_DERIVATION_ROUNDS = 16;
+
+/** Asserts that `value` is a private X25519 OKP JWK with canonical 32-byte `d` and `x`. */
+function assertX25519PrivateJwk(value: unknown): asserts value is Jwk {
   if (
-    value.kty !== 'OKP'
-    || value.crv !== 'X25519'
-    || typeof value.d !== 'string'
-    || value.d.length === 0
-    || typeof value.x !== 'string'
-    || value.x.length === 0
+    typeof value !== 'object'
+    || value === null
+    || Array.isArray(value)
+    || (value as Jwk).kty !== 'OKP'
+    || (value as Jwk).crv !== 'X25519'
+    || !isCanonicalX25519Coordinate((value as Jwk).d)
+    || !isCanonicalX25519Coordinate((value as Jwk).x)
   ) {
     throw new Error('Connect: private key must be an X25519 OKP JWK.');
   }
+}
+
+/**
+ * Encodes SAS transcript fields with unambiguous uint32be length prefixes
+ * followed by a fixed uint32be counter so variable-length strings can never
+ * collide across field boundaries.
+ */
+function encodeSasTranscriptInfo(fields: readonly string[], counter: number): Uint8Array {
+  const encodedFields = fields.map((field): Uint8Array => Convert.string(field).toUint8Array());
+  let totalLength = 4; // trailing uint32be counter
+  for (const bytes of encodedFields) {
+    totalLength += 4 + bytes.byteLength;
+  }
+
+  const buffer = new Uint8Array(totalLength);
+  const view = new DataView(buffer.buffer);
+  let offset = 0;
+  for (const bytes of encodedFields) {
+    view.setUint32(offset, bytes.byteLength, false);
+    offset += 4;
+    buffer.set(bytes, offset);
+    offset += bytes.byteLength;
+  }
+  view.setUint32(offset, counter, false);
+  return buffer;
+}
+
+/** Checks that a byte array is not all zeros in constant time. */
+function isAllZeroBytes(bytes: Uint8Array): boolean {
+  let nonZeroAccumulator = 0;
+  for (const byte of bytes) {
+    nonZeroAccumulator |= byte;
+  }
+  return nonZeroAccumulator === 0;
+}
+
+/** Appends unique 6-bit indices from `derived` into `chosen` until `targetCount` is reached. */
+function collectUniqueIndicesFromBytes(derived: Uint8Array, chosen: number[], targetCount: number): void {
+  for (const byte of derived) {
+    const index = byte & 0x3f; // 0..63, unbiased because 256 is a multiple of 64.
+    if (!chosen.includes(index)) {
+      chosen.push(index);
+      if (chosen.length === targetCount) {
+        return;
+      }
+    }
+  }
+}
+
+/** Recursively derives HKDF-SHA256 blocks until `CONNECT_VERIFICATION_SYMBOL_COUNT` distinct indices are collected. */
+async function collectDistinctSymbolIndices(
+  sharedSecret: Uint8Array,
+  salt: Uint8Array,
+  transcriptFields: readonly string[],
+  chosen: number[] = [],
+  counter = 0,
+): Promise<readonly number[]> {
+  if (chosen.length >= CONNECT_VERIFICATION_SYMBOL_COUNT) {
+    return chosen;
+  }
+  if (counter >= MAX_SAS_DERIVATION_ROUNDS) {
+    throw new Error('Connect: failed to derive distinct SAS verification symbols.');
+  }
+  const info = encodeSasTranscriptInfo(transcriptFields, counter);
+  const derived = await Hkdf.deriveKeyBytes({
+    baseKeyBytes : sharedSecret,
+    hash         : 'SHA-256',
+    salt,
+    info,
+    length       : 256,
+  });
+  collectUniqueIndicesFromBytes(derived, chosen, CONNECT_VERIFICATION_SYMBOL_COUNT);
+  return collectDistinctSymbolIndices(sharedSecret, salt, transcriptFields, chosen, counter + 1);
 }
 
 /**
@@ -186,41 +263,31 @@ export async function deriveConnectVerificationSymbols({
   assertX25519PublicJwk(responseKey);
   assertX25519PublicJwk(walletEpk);
 
+  const isAppSide = privateKey.x === responseKey.x && peerPublicKey.x === walletEpk.x;
+  const isWalletSide = privateKey.x === walletEpk.x && peerPublicKey.x === responseKey.x;
+  if (!isAppSide && !isWalletSide) {
+    throw new Error('Connect: SAS key pair does not match `responseKey` and `walletEpk`.');
+  }
+
   const sharedSecret = await X25519.sharedSecret({
     privateKeyA : privateKey,
     publicKeyB  : peerPublicKey,
   });
 
-  if (sharedSecret.every((byte): boolean => byte === 0)) {
+  if (isAllZeroBytes(sharedSecret)) {
     throw new Error('Connect: SAS ECDH shared secret must not be all zeros.');
   }
 
   const salt = await Sha256.digest({ data: Convert.string(requestJwe).toUint8Array() });
-  const baseInfo = `${CONNECT_SAS_KDF_INFO_PREFIX}\0${state}\0${nonce}\0${responseKey.x}\0${walletEpk.x}`;
+  const transcriptFields = [
+    CONNECT_SAS_KDF_INFO_PREFIX,
+    state,
+    nonce,
+    responseKey.x as string,
+    walletEpk.x as string,
+  ];
 
-  const chosen: number[] = [];
-  let counter = 0;
-
-  while (chosen.length < CONNECT_VERIFICATION_SYMBOL_COUNT) {
-    const info = Convert.string(`${baseInfo}\0${counter}`).toUint8Array();
-    const derived = await Hkdf.deriveKeyBytes({
-      baseKeyBytes : sharedSecret,
-      hash         : 'SHA-256',
-      salt,
-      info,
-      length       : 256,
-    });
-    for (const byte of derived) {
-      const index = byte & 0x3f; // 0..63, unbiased because 256 is a multiple of 64.
-      if (!chosen.includes(index)) {
-        chosen.push(index);
-        if (chosen.length === CONNECT_VERIFICATION_SYMBOL_COUNT) {
-          break;
-        }
-      }
-    }
-    counter += 1;
-  }
+  const chosen = await collectDistinctSymbolIndices(sharedSecret, salt, transcriptFields);
 
   return Object.freeze([
     CONNECT_VERIFICATION_SYMBOLS[chosen[0]],
@@ -265,7 +332,9 @@ export function buildVerificationGrid(
   }
 
   const decoys = CONNECT_VERIFICATION_SYMBOLS.filter((symbol): boolean => !targetIds.has(symbol.id));
-  const picked: ConnectVerificationSymbol[] = [...targets];
+  const picked: ConnectVerificationSymbol[] = targets.map((target): ConnectVerificationSymbol =>
+    CONNECT_VERIFICATION_SYMBOLS[target.id],
+  );
 
   const decoyNeeded = CONNECT_VERIFICATION_GRID_SIZE - CONNECT_VERIFICATION_SYMBOL_COUNT;
   for (let i = 0; i < decoyNeeded; i++) {
@@ -300,12 +369,34 @@ export function verifyVerificationSelection(
     return false;
   }
 
-  const selectedSet = new Set<number>(selectedIds);
+  const targetSet = new Set<number>();
+  for (const target of targets) {
+    if (!Number.isInteger(target.id) || target.id < 0 || target.id >= CONNECT_VERIFICATION_SYMBOLS.length) {
+      return false;
+    }
+    targetSet.add(target.id);
+  }
+  if (targetSet.size !== CONNECT_VERIFICATION_SYMBOL_COUNT) {
+    return false;
+  }
+
+  const selectedSet = new Set<number>();
+  for (const id of selectedIds) {
+    if (!Number.isInteger(id) || id < 0 || id >= CONNECT_VERIFICATION_SYMBOLS.length) {
+      return false;
+    }
+    selectedSet.add(id);
+  }
   if (selectedSet.size !== CONNECT_VERIFICATION_SYMBOL_COUNT) {
     return false;
   }
 
-  return targets.every((target): boolean => selectedSet.has(target.id));
+  for (const targetId of targetSet) {
+    if (!selectedSet.has(targetId)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -313,6 +404,10 @@ export function verifyVerificationSelection(
  * derives the 3 verification symbols for `request` + `requestJwe`, builds the
  * shuffled 3x3 selection grid, and discards the ephemeral private key once the
  * symbols are computed.
+ *
+ * `verifySelection` is strictly single-use: once invoked, subsequent calls
+ * always return `false` so brute-forcing tiles against one handshake is
+ * impossible.
  */
 export async function createConnectVerificationHandshake({ request, requestJwe }: {
   request: ConnectRequest;
@@ -332,12 +427,19 @@ export async function createConnectVerificationHandshake({ request, requestJwe }
   });
 
   const grid = Object.freeze(buildVerificationGrid(symbols));
+  let attemptConsumed = false;
 
   return Object.freeze({
     walletEpk,
     symbols,
     grid,
-    verifySelection: (selectedIds: readonly number[]): boolean => verifyVerificationSelection(selectedIds, symbols),
+    verifySelection: (selectedIds: readonly number[]): boolean => {
+      if (attemptConsumed) {
+        return false;
+      }
+      attemptConsumed = true;
+      return verifyVerificationSelection(selectedIds, symbols);
+    },
   });
 }
 

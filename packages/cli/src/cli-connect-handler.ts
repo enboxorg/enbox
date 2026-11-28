@@ -106,7 +106,8 @@ export interface CliConnectHandlerOptions {
 }
 
 /**
- * Create a CLI connect handler backed by the encrypted relay/PIN flow.
+ * Create a CLI connect handler backed by the encrypted relay flow with
+ * pre-approval SAS symbol verification.
  *
  * Pass the handler to `createConnectionStore({ application, connectHandler })`, then call
  * the store's delegated `connect()` action.
