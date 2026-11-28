@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import type { BearerDid, PortableDid } from '@enbox/dids';
+import type { BearerDid, DidResolverCache, PortableDid } from '@enbox/dids';
 import { DidDht, DidJwk } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
@@ -44,6 +44,24 @@ describe('AgentDidApi', () => {
       expect(() =>
         didApi.agent
       ).toThrow('Unable to determine agent execution context');
+    });
+  });
+
+  describe('getRetainedResolution() with custom cache', () => {
+    it('returns undefined when the resolver cache does not implement getRetained', async () => {
+      const cacheWithoutRetained: DidResolverCache = {
+        clear  : async (): Promise<void> => {},
+        close  : async (): Promise<void> => {},
+        delete : async (): Promise<void> => {},
+        get    : async (): Promise<undefined> => undefined,
+        set    : async (): Promise<void> => {},
+      };
+      const didApi = new AgentDidApi({
+        didMethods    : [DidJwk],
+        resolverCache : cacheWithoutRetained,
+      });
+
+      expect(await didApi.getRetainedResolution('did:dht:unretained')).toBeUndefined();
     });
   });
 
@@ -762,6 +780,39 @@ describe('AgentDidApi', () => {
             throw new Error('Expected an error to be thrown');
           } catch (error: any) {
             expect(error.message).toContain('AgentDidApi: No changes detected, update aborted');
+          }
+        });
+      });
+
+      describe('getRetainedResolution()', () => {
+        it('returns undefined when no cached resolution exists or the DID URI is invalid', async () => {
+          expect(await testHarness.agent.did.getRetainedResolution('did:dht:notcached123')).toBeUndefined();
+          expect(await testHarness.agent.did.getRetainedResolution('')).toBeUndefined();
+          expect(await testHarness.agent.did.getRetainedResolution('not-a-did')).toBeUndefined();
+        });
+
+        it('returns a stale retained resolution without triggering network resolution, including for DID URLs', async () => {
+          const did = await testHarness.agent.did.create({
+            method  : 'jwk',
+            options : {
+              verificationMethods: [{ algorithm: 'Ed25519' }],
+            },
+          });
+          const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
+          const refreshSpy = sinon.spy(testHarness.agent.did, 'refreshResolution');
+
+          // Advance wall clock beyond the 15-minute freshness TTL to ensure the
+          // retained entry is returned even when stale, with zero network I/O.
+          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000, toFake: ['Date'] });
+          try {
+            const retained = await testHarness.agent.did.getRetainedResolution(did.uri);
+            expect(retained?.didDocument?.id).toBe(did.uri);
+            const fromFragment = await testHarness.agent.did.getRetainedResolution(`${did.uri}#0`);
+            expect(fromFragment?.didDocument?.id).toBe(did.uri);
+            expect(resolveSpy.called).toBe(false);
+            expect(refreshSpy.called).toBe(false);
+          } finally {
+            clock.restore();
           }
         });
       });

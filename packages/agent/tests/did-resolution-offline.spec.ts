@@ -64,7 +64,12 @@ describe('local DWN reads during a DID resolution outage', () => {
     const signature = await agent.keyManager.sign({ keyUri, data: new Uint8Array([1, 2, 3]) });
     expect(signature.length).toBeGreaterThan(0);
     expect(fetch.called).toBe(true);
-    expect((await agent.did.cache.getRetained?.(agentDid.uri))?.didDocument).toEqual(agentDid.document);
+    const fetchCallsBeforeRetained = fetch.callCount;
+    expect((await agent.did.getRetainedResolution(agentDid.uri))?.didDocument).toEqual(agentDid.document);
+    const retainedStatus = await agent.identity.getRetainedDwnEndpointStatus({ didUri: agentDid.uri });
+    expect(retainedStatus?.didUri).toBe(agentDid.uri);
+    expect(retainedStatus?.status).toBe('service-missing');
+    expect(fetch.callCount).toBe(fetchCallsBeforeRetained);
   });
 
   it('preserves a missing-DID dependency failure through cold key and grant reads, then recovers', async () => {
@@ -84,6 +89,8 @@ describe('local DWN reads during a DID resolution outage', () => {
 
     sinon.stub(globalThis, 'fetch').rejects(new TypeError('gateway unreachable'));
     agent = await EnboxUserAgent.create({ agentDid, dataPath });
+    expect(await agent.did.getRetainedResolution(agentDid.uri)).toBeUndefined();
+    expect(await agent.identity.getRetainedDwnEndpointStatus({ didUri: agentDid.uri })).toBeUndefined();
     const keyFailure = await agent.keyManager.getPublicKey({ keyUri }).catch((error: unknown) => error);
     const grantFailure = await agent.permissions.fetchGrants({
       author : agentDid.uri,

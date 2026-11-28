@@ -250,6 +250,27 @@ export class AgentIdentityApi<TKeyManager extends AgentKeyManager = AgentKeyMana
   }
 
   /**
+   * Return the DID-advertised DWN endpoint state from the locally retained
+   * resolution cache without triggering network I/O, or `undefined` when no
+   * retained cache entry exists.
+   */
+  public async getRetainedDwnEndpointStatus({ didUri }: {
+    didUri: string;
+  }): Promise<DwnEndpointResolution | undefined> {
+    const parsedDid = Did.parse(didUri);
+    if (parsedDid === null) {
+      return undefined;
+    }
+    const retained = await this.agent.did.getRetainedResolution(parsedDid.uri);
+    if (retained === undefined) {
+      return undefined;
+    }
+    return resolveDwnEndpointStatus(parsedDid.uri, {
+      resolve: (): Promise<DidResolutionResult> => Promise.resolve(retained),
+    });
+  }
+
+  /**
    * Sets the DWN endpoints for the given DID.
    *
    * @param didUri - The DID URI to set the DWN endpoints for.
