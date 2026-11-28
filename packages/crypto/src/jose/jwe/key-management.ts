@@ -602,11 +602,16 @@ export class JweKeyManagement {
       throw new CryptoError(CryptoErrorCode.InvalidJwe, 'ECDH-ES shared secret must not be all zeros.');
     }
 
-    if (secret !== undefined && (!(secret instanceof Uint8Array) || secret.byteLength !== ECDH_ES_SECRET_BYTE_LENGTH)) {
-      throw new CryptoError(
-        CryptoErrorCode.InvalidJwe,
-        `ECDH-ES "secret" must be a ${ECDH_ES_SECRET_BYTE_LENGTH}-byte Uint8Array.`,
-      );
+    if (secret !== undefined) {
+      if (!(secret instanceof Uint8Array) || secret.byteLength !== ECDH_ES_SECRET_BYTE_LENGTH) {
+        throw new CryptoError(
+          CryptoErrorCode.InvalidJwe,
+          `ECDH-ES "secret" must be a ${ECDH_ES_SECRET_BYTE_LENGTH}-byte Uint8Array.`,
+        );
+      }
+      if (CryptoUtils.isAllZeroBytes(secret)) {
+        throw new CryptoError(CryptoErrorCode.InvalidJwe, 'ECDH-ES "secret" must not be all zeros.');
+      }
     }
 
     // Determine the desired CEK length (keydatalen) from the "enc" (Encryption Algorithm)

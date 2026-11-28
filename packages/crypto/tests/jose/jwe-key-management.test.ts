@@ -465,5 +465,27 @@ describe('JweKeyManagement', () => {
         ).rejects.toThrow('Unsupported');
       });
     });
+
+    describe('ECDH-ES redirect secret hardening', () => {
+      it('should reject an all-zero or wrong-length 32-byte redirect secret', async () => {
+        const { X25519 } = await import('../../src/primitives/x25519.js');
+        const recipient = await X25519.generateKey();
+        const peerPublicKey = { kty: 'OKP', crv: 'X25519', x: recipient.x };
+
+        await expect(
+          JweKeyManagement.encrypt({
+            key        : { mode: 'ecdh-es', peerPublicKey, secret: new Uint8Array(32) },
+            joseHeader : { alg: 'ECDH-ES', enc: 'XC20P' },
+          }),
+        ).rejects.toThrow('must not be all zeros');
+
+        await expect(
+          JweKeyManagement.encrypt({
+            key        : { mode: 'ecdh-es', peerPublicKey, secret: new Uint8Array(16) },
+            joseHeader : { alg: 'ECDH-ES', enc: 'XC20P' },
+          }),
+        ).rejects.toThrow('must be a 32-byte Uint8Array');
+      });
+    });
   });
 });

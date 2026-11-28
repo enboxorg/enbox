@@ -56,8 +56,12 @@ export const RESPONSE_SECRET_BYTE_LENGTH = 32;
 /** Maximum length in characters permitted for a connect `redirectUri`. */
 const MAX_REDIRECT_URI_LENGTH = 2_048;
 
-/** Loopback hosts allowed to use `http:` for local development redirect URIs. */
-const LOCAL_REDIRECT_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+/** Loopback hosts allowed to use `http:` for local development redirect/callback URIs. */
+export const LOCAL_REDIRECT_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** ASCII control characters forbidden in connect URLs. */
+// eslint-disable-next-line no-control-regex
+const ASCII_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/;
 
 // ─── Field-level validation helpers ─────────────────────────────────────
 //
@@ -149,17 +153,18 @@ function requireResponseKey(payload: Record<string, unknown>, context: string): 
 }
 
 /**
- * Validates a connect `redirectUri`: must be an `https:` URL (or `http:` on
- * loopback for local development), with NO credentials, NO query string
- * (`url.search === ''`, preventing open-redirector chains and RFC 9700
- * fragment reattachment), and NO existing fragment (`url.hash === ''`).
+ * Validates a connect `redirectUri`: must be a canonical `https:` URL (or
+ * `http:` on loopback for local development), with NO control chars, NO
+ * whitespace, NO backslashes, NO credentials, NO query string (`url.search === ''`,
+ * preventing open-redirector chains and RFC 9700 fragment reattachment), and
+ * NO existing fragment (`url.hash === ''`).
  */
 export function assertValidRedirectUri(value: unknown, context = 'invalid connect request'): asserts value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REDIRECT_URI_LENGTH) {
     fail(context, 'reply.redirectUri', 'must be a non-empty URL string (max 2048 chars)');
   }
-  if (/\s/.test(value)) {
-    fail(context, 'reply.redirectUri', 'must not contain whitespace');
+  if (/\s/.test(value) || ASCII_CONTROL_PATTERN.test(value) || value.includes('\\')) {
+    fail(context, 'reply.redirectUri', 'must not contain whitespace, control characters, or backslashes');
   }
   let parsed: URL;
   try {
@@ -171,6 +176,9 @@ export function assertValidRedirectUri(value: unknown, context = 'invalid connec
   if (parsed.protocol !== 'https:' && !isLocalHttp) {
     fail(context, 'reply.redirectUri', 'must use HTTPS (or http on localhost)');
   }
+  if (parsed.port === '0') {
+    fail(context, 'reply.redirectUri', 'must not use port 0');
+  }
   if (parsed.username !== '' || parsed.password !== '') {
     fail(context, 'reply.redirectUri', 'must not contain credentials');
   }
@@ -179,6 +187,42 @@ export function assertValidRedirectUri(value: unknown, context = 'invalid connec
   }
   if (parsed.hash !== '' || value.includes('#')) {
     fail(context, 'reply.redirectUri', 'must not contain a fragment');
+  }
+  if (parsed.href !== value && parsed.origin !== value) {
+    fail(context, 'reply.redirectUri', 'must be in canonical URL form');
+  }
+}
+
+/**
+ * Validates a relay `callbackUrl` for `redirect` (and authenticated) connect
+ * requests: must be a canonical `https:` (or loopback `http:`) URL with no
+ * credentials, control characters, whitespace, backslashes, or fragment.
+ */
+export function assertValidCallbackUrl(value: unknown, context = 'invalid connect request'): asserts value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REDIRECT_URI_LENGTH) {
+    fail(context, 'reply.callbackUrl', 'must be a non-empty URL string (max 2048 chars)');
+  }
+  if (/\s/.test(value) || ASCII_CONTROL_PATTERN.test(value) || value.includes('\\')) {
+    fail(context, 'reply.callbackUrl', 'must not contain whitespace, control characters, or backslashes');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(context, 'reply.callbackUrl', 'must be a valid URL');
+  }
+  const isLocalHttp = parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !isLocalHttp) {
+    fail(context, 'reply.callbackUrl', 'must use HTTPS (or http on localhost)');
+  }
+  if (parsed.port === '0') {
+    fail(context, 'reply.callbackUrl', 'must not use port 0');
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    fail(context, 'reply.callbackUrl', 'must not contain credentials');
+  }
+  if (parsed.hash !== '' || value.includes('#')) {
+    fail(context, 'reply.callbackUrl', 'must not contain a fragment');
   }
 }
 
@@ -193,9 +237,7 @@ function requireReplyDescriptor(payload: Record<string, unknown>, context: strin
   }
 
   if (value.mode === 'redirect') {
-    if (typeof value.callbackUrl !== 'string' || value.callbackUrl.length === 0 || value.callbackUrl.length > MAX_REDIRECT_URI_LENGTH) {
-      fail(context, 'reply.callbackUrl', 'must be a non-empty string');
-    }
+    assertValidCallbackUrl(value.callbackUrl, context);
     assertValidRedirectUri(value.redirectUri, context);
     return;
   }

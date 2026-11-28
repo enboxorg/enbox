@@ -15,8 +15,10 @@ import {
 import {
   completeRedirectAuthenticationFromWindow,
   completeRedirectConnectFromWindow,
+  getPendingRedirectConnectType,
   hasPendingRedirectConnect,
   isIosStandalonePwa,
+  isSessionStorageAvailable,
   PENDING_REDIRECT_MAX_AGE_MS,
   PENDING_REDIRECT_STORAGE_KEY,
   startRedirectConnect,
@@ -68,7 +70,23 @@ describe('isIosStandalonePwa', () => {
       standaloneWin,
     )).toBe(false);
 
+    expect(isIosStandalonePwa(
+      { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: '', maxTouchPoints: 5 },
+      { matchMedia: (query: string): MediaQueryList => ({ matches: query === '(display-mode: fullscreen)' } as MediaQueryList) },
+    )).toBe(true);
+
     expect(isIosStandalonePwa(undefined, undefined)).toBe(false);
+  });
+
+  it('probes sessionStorage availability safely', () => {
+    expect(isSessionStorageAvailable()).toBe(true);
+    expect(isSessionStorageAvailable(createFakeStorage())).toBe(true);
+    expect(isSessionStorageAvailable(null)).toBe(false);
+    expect(isSessionStorageAvailable({
+      getItem    : (): null => null,
+      setItem    : (): void => { throw new DOMException('Quota exceeded', 'QuotaExceededError'); },
+      removeItem : (): void => {},
+    })).toBe(false);
   });
 });
 
@@ -135,7 +153,27 @@ describe('browser redirect connect lifecycle', () => {
     const returnUrl = buildRedirectReturnUri({ redirectUri, state: request.state, responseSecret });
 
     expect(hasPendingRedirectConnect({ storage, href: returnUrl })).toBe(true);
+    expect(getPendingRedirectConnectType({ storage, href: returnUrl })).toBe('connect');
     expect(hasPendingRedirectConnect({ storage, href: redirectUri })).toBe(false);
+    expect(getPendingRedirectConnectType({ storage, href: redirectUri })).toBeUndefined();
+
+    // A stray state mismatch or wrong completion helper must NOT delete the live session.
+    const wrongStateUrl = buildRedirectReturnUri({ redirectUri, state: 'other-state', responseSecret });
+    await expect(completeRedirectConnectFromWindow({
+      storage,
+      href          : wrongStateUrl,
+      scrubFragment : (): void => {},
+      fetchFn,
+    })).rejects.toThrow('enbox_state');
+    expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).not.toBeNull();
+
+    await expect(completeRedirectAuthenticationFromWindow({
+      storage,
+      href          : returnUrl,
+      scrubFragment : (): void => {},
+      fetchFn,
+    })).rejects.toThrow('invalid-request');
+    expect(storage.getItem(PENDING_REDIRECT_STORAGE_KEY)).not.toBeNull();
 
     const result = await completeRedirectConnectFromWindow({
       storage,
@@ -228,15 +266,18 @@ describe('browser redirect connect lifecycle', () => {
 
     const owner = await DidJwk.create();
     const challenge = randomToken();
+    const windowRedirectUri = `${window.location.origin}${window.location.pathname}`;
+    const isWindowHttps = window.location.protocol === 'https:';
+    const authRedirectUri = isWindowHttps ? windowRedirectUri : redirectUri;
     await startRedirectConnect({
       connectServerUrl,
       walletUri,
-      redirectUri,
+      redirectUri         : authRedirectUri,
       appName             : 'Auth Redirect Browser App',
       requestType         : 'authenticate',
       expectedProviderDid : owner.uri,
       permissionRequests  : [],
-      authentication      : { version: 1, audience: 'https://app.example', challenge },
+      authentication      : { version: 1, audience: new URL(authRedirectUri).origin, challenge },
       fetchFn,
       navigate            : (url): void => { navigatedTo = url; },
     });
@@ -255,14 +296,15 @@ describe('browser redirect connect lifecycle', () => {
       approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) },
     });
 
-    const returnUrl = buildRedirectReturnUri({ redirectUri, state: request.state, responseSecret });
-    expect(await completeRedirectAuthenticationFromWindow({ href: redirectUri })).toBeUndefined();
+    const returnUrl = buildRedirectReturnUri({ redirectUri: authRedirectUri, state: request.state, responseSecret });
+    expect(await completeRedirectAuthenticationFromWindow({ href: authRedirectUri })).toBeUndefined();
 
     // Exercise default window.history.replaceState scrubbing + default sessionStorage.
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${new URL(returnUrl).hash}`);
-    expect(hasPendingRedirectConnect()).toBe(true);
+    expect(hasPendingRedirectConnect({ href: returnUrl })).toBe(true);
+    expect(getPendingRedirectConnectType({ href: returnUrl })).toBe('authenticate');
 
-    const authResult = await completeRedirectAuthenticationFromWindow({ fetchFn });
+    const authResult = await completeRedirectAuthenticationFromWindow({ href: returnUrl, fetchFn });
     expect(window.location.hash).toBe('');
     expect(authResult?.connectedDid).toBe(owner.uri);
     expect(authResult?.authentication.subject).toBe(owner.uri);

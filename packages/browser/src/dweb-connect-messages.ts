@@ -1,17 +1,20 @@
 /**
  * Wire shapes for the DWeb Connect popup/postMessage channel.
  *
- * The dapp and the wallet exchange exactly four message kinds over
+ * The dapp and the wallet exchange five message kinds over
  * `window.postMessage`:
  *
- * 1. `loaded` beacon (wallet → dapp): announces the wallet page is ready and
+ * 1. `hello` ping (dapp → wallet): allows the wallet to discover and pin the
+ *    browser-verified opener `event.origin` when `Referrer-Policy: no-referrer`
+ *    strips `document.referrer`, without ever falling back to `'*'`.
+ * 2. `loaded` beacon (wallet → dapp): announces the wallet page is ready and
  *    carries a fresh ephemeral X25519 public key plus the wallet's origin.
- * 2. `request` (dapp → wallet): the sealed connect request JWE — ciphertext
+ * 3. `request` (dapp → wallet): the sealed connect request JWE — ciphertext
  *    only, encrypted to the beacon key with ECDH-ES and the wallet origin
  *    bound into the JWE `apv` header.
- * 3. `response` (wallet → dapp): the sealed connect response JWE, or the
+ * 4. `response` (wallet → dapp): the sealed connect response JWE, or the
  *    literal deny token — again ciphertext only.
- * 4. `ack` (dapp → wallet): payload-less completion signal — the dapp opened
+ * 5. `ack` (dapp → wallet): payload-less completion signal — the dapp opened
  *    the response successfully, so the wallet can flip to a confirmed
  *    "connected" state before closing itself. Optional and observational;
  *    wallets unaware of it simply ignore the message.

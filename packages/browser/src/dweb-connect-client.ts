@@ -56,7 +56,7 @@ const CLOSED_POLL_INTERVAL_MS = 500;
  * until the `loaded` beacon arrives. Lets the wallet discover the browser-verified
  * opener `event.origin` when `Referrer-Policy: no-referrer` strips `document.referrer`.
  */
-const HELLO_PING_INTERVAL_MS = 100;
+const HELLO_PING_INTERVAL_MS = 200;
 
 /**
  * Grace period after the popup is seen closed for an already-posted response

@@ -16,9 +16,12 @@
  *    same but stays alive briefly for the dapp's completion ack, so the
  *    wallet can show a confirmed "connected" state before closing itself.
  *
- * The dapp origin is never assumed: it is taken from an explicit option or
- * derived from `document.referrer`, and `create()` fails when neither is
- * available. `'*'` is never used as a `targetOrigin`.
+ * The dapp origin is never assumed: it is taken from an explicit option,
+ * derived from `document.referrer`, or discovered from the browser-verified
+ * `event.origin` of a `hello` ping sent by `window.opener` (handling
+ * `Referrer-Policy: no-referrer` and same-origin wallet redirects). `create()`
+ * fails when none of these yields a valid origin. `'*'` is never used as a
+ * `targetOrigin`.
  *
  * @module
  */
@@ -367,27 +370,32 @@ export class WalletPostMessageTransport {
 }
 
 /**
- * Resolves the dapp origin to pin:
- * 1. Explicit `dappOrigin` option when provided.
- * 2. Origin of `document.referrer` when non-empty.
- * 3. Browser-verified `event.origin` from a `{ type: 'enbox-connect-hello' }`
- *    ping whose `event.source === dappWindow` (handles `Referrer-Policy: no-referrer`
- *    without ever falling back to `'*'`).
+ * Grace window to listen for a browser-verified `hello` ping when
+ * `document.referrer` shares the wallet's own origin (which can happen after
+ * an internal wallet navigation such as `/dweb-connect` → `/unlock` → `/dweb-connect`).
  */
-async function resolveDappOrigin(
-  explicitOrigin: string | undefined,
-  dappWindow: Window,
-  helloTimeoutMs: number,
-): Promise<string> {
-  if (explicitOrigin !== undefined) {
-    return new URL(explicitOrigin).origin;
-  }
+const SAME_ORIGIN_REFERRER_HELLO_GRACE_MS = 500;
 
-  if (document.referrer) {
-    return new URL(document.referrer).origin;
+/** Parses `document.referrer` into a non-opaque origin string, or `undefined`. */
+function parseReferrerOrigin(referrer: string): string | undefined {
+  if (!referrer) {
+    return undefined;
   }
+  try {
+    const origin = new URL(referrer).origin;
+    return origin && origin !== 'null' ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
-  return await new Promise<string>((resolve, reject): void => {
+/**
+ * Waits up to `timeoutMs` for a `{ type: 'enbox-connect-hello' }` ping from
+ * `dappWindow` and returns its browser-verified `event.origin`, or `undefined`
+ * on timeout.
+ */
+function awaitHelloOrigin(dappWindow: Window, timeoutMs: number): Promise<string | undefined> {
+  return new Promise<string | undefined>((resolve): void => {
     const cleanup = (): void => {
       clearTimeout(timeoutId);
       window.removeEventListener('message', onHello);
@@ -405,12 +413,54 @@ async function resolveDappOrigin(
 
     const timeoutId = setTimeout((): void => {
       cleanup();
-      reject(new Error(
-        '[@enbox/browser] Unable to determine the dapp origin: no `dappOrigin` option was provided, '
-        + '`document.referrer` is empty, and no hello handshake arrived from the opener window.'
-      ));
-    }, helloTimeoutMs);
+      resolve(undefined);
+    }, timeoutMs);
 
     window.addEventListener('message', onHello);
   });
+}
+
+/**
+ * Resolves the dapp origin to pin:
+ * 1. Explicit `dappOrigin` option when provided.
+ * 2. Origin of `document.referrer` when non-empty, valid, non-opaque, and
+ *    cross-origin relative to the wallet.
+ * 3. Browser-verified `event.origin` from a `{ type: 'enbox-connect-hello' }`
+ *    ping whose `event.source === dappWindow` (handles `Referrer-Policy: no-referrer`
+ *    and internal same-origin wallet redirects without ever falling back to `'*'`).
+ */
+async function resolveDappOrigin(
+  explicitOrigin: string | undefined,
+  dappWindow: Window,
+  helloTimeoutMs: number,
+): Promise<string> {
+  if (explicitOrigin !== undefined) {
+    return new URL(explicitOrigin).origin;
+  }
+
+  const referrerOrigin = parseReferrerOrigin(document.referrer);
+  if (referrerOrigin !== undefined && referrerOrigin !== globalThis.location.origin) {
+    return referrerOrigin;
+  }
+
+  // When `document.referrer` matches our own wallet origin, an internal wallet
+  // redirect (e.g. unlock flow) may have clobbered a cross-origin dapp's
+  // referrer. Give the dapp a short window to announce its true `event.origin`
+  // via `hello` before falling back to the same-origin referrer.
+  const waitMs = referrerOrigin === undefined
+    ? helloTimeoutMs
+    : Math.min(helloTimeoutMs, SAME_ORIGIN_REFERRER_HELLO_GRACE_MS);
+
+  const helloOrigin = await awaitHelloOrigin(dappWindow, waitMs);
+  if (helloOrigin !== undefined) {
+    return helloOrigin;
+  }
+  if (referrerOrigin !== undefined) {
+    return referrerOrigin;
+  }
+
+  throw new Error(
+    '[@enbox/browser] Unable to determine the dapp origin: no `dappOrigin` option was provided, '
+    + '`document.referrer` is empty, and no hello handshake arrived from the opener window.'
+  );
 }

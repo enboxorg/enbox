@@ -115,8 +115,10 @@ export type {
 export {
   completeRedirectAuthenticationFromWindow,
   completeRedirectConnectFromWindow,
+  getPendingRedirectConnectType,
   hasPendingRedirectConnect,
   isIosStandalonePwa,
+  isSessionStorageAvailable,
   PENDING_REDIRECT_MAX_AGE_MS,
   PENDING_REDIRECT_STORAGE_KEY,
   startRedirectConnect,

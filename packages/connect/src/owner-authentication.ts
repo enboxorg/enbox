@@ -3,6 +3,7 @@ import type { BearerDid, DidDocument, DidResolver, DidVerificationMethod } from 
 import type { ConnectAuthenticationParams, ConnectRequest, VerifiedConnectAuthentication } from './types.js';
 
 import { Convert } from '@enbox/common';
+import { assertValidCallbackUrl, assertValidRedirectUri } from './envelope.js';
 import { Did, DidDht, DidJwk, UniversalResolver } from '@enbox/dids';
 import { Ed25519, isOkpPublicJwk, isPublicJwk, Secp256k1, Secp256r1, Sha256 } from '@enbox/crypto';
 
@@ -260,50 +261,68 @@ async function verifyProofSignature(
   if (!valid) { throw new ConnectAuthenticationError('invalid-signature'); }
 }
 
-/** Validate the complete JSON context of combined and authentication-only requests before consent. */
-export function assertConnectRequestAuthentication(request: ConnectRequest): void {
-  if (!object(request)) { throw new ConnectAuthenticationError('invalid-request'); }
-  assertConnectAuthenticationParams(request.authentication);
+function assertAuthenticationReply(request: ConnectRequest): void {
+  const reply = request.reply;
+  if (!reply || !['post_message', 'direct_post', 'redirect'].includes(reply.mode)) {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
+  if (reply.mode === 'direct_post' || reply.mode === 'redirect') {
+    try {
+      assertValidCallbackUrl(reply.callbackUrl);
+    } catch {
+      throw new ConnectAuthenticationError('invalid-request');
+    }
+  }
+  if (reply.mode !== 'redirect') {
+    return;
+  }
+  try {
+    assertValidRedirectUri(reply.redirectUri);
+  } catch {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
+  const parsedRedirect = new URL(reply.redirectUri);
+  const parsedAudience = new URL(request.authentication!.audience);
+  if (parsedRedirect.protocol !== 'https:' || parsedRedirect.origin !== parsedAudience.origin) {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
+  if (request.delegateDid !== undefined && request.requestType !== 'refresh') {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
+}
+
+function assertAuthenticationRequestIdentity(request: ConnectRequest): void {
   if (typeof request.clientDid !== 'string' || typeof request.nonce !== 'string' || typeof request.state !== 'string') {
     throw new ConnectAuthenticationError('invalid-request');
   }
   const client = Did.parse(request.clientDid);
-  if (client?.uri !== request.clientDid || client?.method !== 'jwk' || client.path || client.query || client.fragment ||
-      typeof request.appName !== 'string' || request.appName.length === 0 || request.appName.length > 256 ||
-      !/^[A-Za-z0-9_-]{22,128}$/u.test(request.nonce) || !/^[A-Za-z0-9_-]{22,128}$/u.test(request.state) ||
-      !Array.isArray(request.permissionRequests) || request.permissionRequests.length > 32 ||
-      !Array.isArray(request.supportedDidMethods) || request.supportedDidMethods.length === 0 || request.supportedDidMethods.length > 8 ||
+  if (client?.uri !== request.clientDid || client?.method !== 'jwk' || client.path || client.query || client.fragment) {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
+  if (typeof request.appName !== 'string' || request.appName.length === 0 || request.appName.length > 256 ||
+      !/^[A-Za-z0-9_-]{22,128}$/u.test(request.nonce) || !/^[A-Za-z0-9_-]{22,128}$/u.test(request.state)) {
+    throw new ConnectAuthenticationError('invalid-request');
+  }
+}
+
+function assertAuthenticationRequestShape(request: ConnectRequest): void {
+  if (!Array.isArray(request.permissionRequests) || request.permissionRequests.length > 32 ||
+      !Array.isArray(request.supportedDidMethods) || request.supportedDidMethods.length === 0 ||
+      request.supportedDidMethods.length > 8 ||
       new Set(request.supportedDidMethods).size !== request.supportedDidMethods.length ||
       request.supportedDidMethods.some(method => typeof method !== 'string' || !/^did:[a-z0-9]+$/u.test(method)) ||
-      !isOkpPublicJwk(request.responseKey) || request.responseKey.crv !== 'X25519' ||
-      !request.reply || !['post_message', 'direct_post', 'redirect'].includes(request.reply.mode)) {
+      !isOkpPublicJwk(request.responseKey) || request.responseKey.crv !== 'X25519') {
     throw new ConnectAuthenticationError('invalid-request');
   }
-  if ((request.reply.mode === 'direct_post' || request.reply.mode === 'redirect') && (typeof request.reply.callbackUrl !== 'string' ||
-      request.reply.callbackUrl.length === 0 || request.reply.callbackUrl.length > 2_048)) {
-    throw new ConnectAuthenticationError('invalid-request');
-  }
-  if (request.reply.mode === 'redirect') {
-    if (typeof request.reply.redirectUri !== 'string' || request.reply.redirectUri.length === 0 ||
-        request.reply.redirectUri.length > 2_048 || /\s/.test(request.reply.redirectUri)) {
-      throw new ConnectAuthenticationError('invalid-request');
-    }
-    try {
-      const parsedRedirect = new URL(request.reply.redirectUri);
-      const isLocalHttp = parsedRedirect.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsedRedirect.hostname);
-      if ((parsedRedirect.protocol !== 'https:' && !isLocalHttp) ||
-          parsedRedirect.username !== '' || parsedRedirect.password !== '' ||
-          parsedRedirect.search !== '' || request.reply.redirectUri.includes('?') ||
-          parsedRedirect.hash !== '' || request.reply.redirectUri.includes('#')) {
-        throw new ConnectAuthenticationError('invalid-request');
-      }
-    } catch {
-      throw new ConnectAuthenticationError('invalid-request');
-    }
-    if (request.delegateDid !== undefined && request.requestType !== 'refresh') {
-      throw new ConnectAuthenticationError('invalid-request');
-    }
-  }
+}
+
+/** Validate the complete JSON context of combined and authentication-only requests before consent. */
+export function assertConnectRequestAuthentication(request: ConnectRequest): void {
+  if (!object(request)) { throw new ConnectAuthenticationError('invalid-request'); }
+  assertConnectAuthenticationParams(request.authentication);
+  assertAuthenticationRequestIdentity(request);
+  assertAuthenticationRequestShape(request);
+  assertAuthenticationReply(request);
   if (request.requestType !== undefined && !['connect', 'refresh', 'authenticate'].includes(request.requestType)) {
     throw new ConnectAuthenticationError('invalid-request');
   }

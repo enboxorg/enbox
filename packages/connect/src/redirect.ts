@@ -50,6 +50,8 @@ import { CONNECT_DENIED_TOKEN } from './types.js';
 import {
   assertConnectRequest,
   assertValidRedirectUri,
+  isCanonicalX25519Coordinate,
+  LOCAL_REDIRECT_HOSTS,
   openAuthenticationResponse,
   openResponse,
   RESPONSE_SECRET_BYTE_LENGTH,
@@ -73,6 +75,12 @@ export const REDIRECT_RETURN_ERROR_PARAM = 'enbox_error';
 /** Default per-request HTTP timeout for redirect relay calls. */
 const REDIRECT_HTTP_TIMEOUT_MS = 30_000;
 
+/** Default maximum age (10 minutes) of a pending redirect session before completion rejects it. */
+export const DEFAULT_REDIRECT_SESSION_MAX_AGE_MS = 10 * 60 * 1_000;
+
+/** Clock-skew tolerance (60s) for `pendingSession.createdAt`. */
+const PENDING_SESSION_FUTURE_SKEW_MS = 60_000;
+
 /** Default HTTP timeout for fetching an app's `/.well-known/enbox-app` manifest. */
 const APP_MANIFEST_TIMEOUT_MS = 5_000;
 
@@ -84,6 +92,9 @@ const MAX_APP_MANIFEST_REDIRECT_URIS = 32;
 
 /** DID methods accepted by default on prepared redirect requests. */
 const DEFAULT_SUPPORTED_DID_METHODS = ['did:dht', 'did:jwk'];
+
+/** HTTP statuses worth retrying briefly during relay token fetch. */
+const RETRYABLE_TOKEN_HTTP_STATUSES = new Set([204, 404, 429, 502, 503, 504]);
 
 /** Default fetch helper deferring to ambient global `fetch`. */
 const defaultFetch: FetchFn = (input, init): Promise<Response> => globalThis.fetch(input, init);
@@ -101,6 +112,10 @@ export type ConnectAppManifest = Readonly<{
 /**
  * Serializable pending state held by the requesting app (e.g. in
  * `sessionStorage`) across the same-tab wallet redirect.
+ *
+ * Intentionally carries ONLY ephemeral per-handshake state (never long-lived
+ * `delegatePortableDid` private keys); for `refresh` flows, the caller
+ * re-supplies its local `delegatePortableDid` from the vault on return.
  */
 export type PendingRedirectConnectSession = {
   /** Ephemeral client DID URI (`did:jwk`) used to sign the request. */
@@ -126,9 +141,6 @@ export type PendingRedirectConnectSession = {
 
   /** Optional expected provider DID enforced on response open. */
   expectedProviderDid?: string;
-
-  /** Pre-supplied delegate DID credentials (present only for `requestType === 'refresh'`). */
-  delegatePortableDid?: PortableDid;
 
   /** Unix epoch milliseconds when this pending redirect session was created. */
   createdAt: number;
@@ -166,8 +178,8 @@ export type PrepareRedirectConnectParams = {
   /** Advisory preferred session TTL in seconds. */
   requestedSessionTtlSeconds?: number;
 
-  /** Existing delegate credentials (allowed ONLY when `requestType === 'refresh'`). */
-  delegatePortableDid?: PortableDid;
+  /** Existing delegate DID URI (allowed ONLY when `requestType === 'refresh'`). */
+  delegateDid?: string;
 
   /** User-facing request purpose (`'connect' | 'refresh' | 'authenticate'`). */
   requestType?: ConnectRequestType;
@@ -183,6 +195,9 @@ export type PrepareRedirectConnectParams = {
 
   /** Injectable fetch implementation. */
   fetchFn?: FetchFn;
+
+  /** Optional abort signal to cancel the PAR preparation before navigation. */
+  signal?: AbortSignal;
 
   /** Per-request HTTP timeout in milliseconds. */
   timeoutMs?: number;
@@ -232,6 +247,37 @@ export function buildRedirectReturnUri(
   return `${params.redirectUri}#${fragment.toString()}`;
 }
 
+/** Decodes and validates a canonical non-zero 32-byte base64url `enbox_key` fragment secret. */
+function decodeRedirectResponseSecret(encodedKey: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]+$/.test(encodedKey)) {
+    throw new Error('Connect: redirect return `enbox_key` is not valid base64url.');
+  }
+
+  let responseSecret: Uint8Array;
+  try {
+    responseSecret = Convert.base64Url(encodedKey).toUint8Array();
+  } catch {
+    throw new Error('Connect: redirect return `enbox_key` is not valid base64url.');
+  }
+
+  if (responseSecret.byteLength !== RESPONSE_SECRET_BYTE_LENGTH) {
+    throw new Error(`Connect: redirect return \`enbox_key\` must decode to ${RESPONSE_SECRET_BYTE_LENGTH} bytes.`);
+  }
+  if (!isCanonicalX25519Coordinate(encodedKey)) {
+    throw new Error('Connect: redirect return `enbox_key` is not valid base64url.');
+  }
+
+  let nonZeroAccumulator = 0;
+  for (const byte of responseSecret) {
+    nonZeroAccumulator |= byte;
+  }
+  if (nonZeroAccumulator === 0) {
+    throw new Error('Connect: redirect return `enbox_key` must not be all zeros.');
+  }
+
+  return responseSecret;
+}
+
 /**
  * Parses a redirect return payload strictly from `url`'s `#fragment`.
  *
@@ -254,13 +300,20 @@ export function parseRedirectReturnUri(url: string): RedirectReturnPayload | und
   }
 
   const params = new URLSearchParams(rawHash);
-  const state = params.get(REDIRECT_RETURN_STATE_PARAM);
-  const encodedKey = params.get(REDIRECT_RETURN_KEY_PARAM);
-  const error = params.get(REDIRECT_RETURN_ERROR_PARAM);
+  const states = params.getAll(REDIRECT_RETURN_STATE_PARAM);
+  const keys = params.getAll(REDIRECT_RETURN_KEY_PARAM);
+  const errors = params.getAll(REDIRECT_RETURN_ERROR_PARAM);
 
-  if (state === null && encodedKey === null && error === null) {
+  if (states.length === 0 && keys.length === 0 && errors.length === 0) {
     return undefined;
   }
+  if (states.length > 1 || keys.length > 1 || errors.length > 1) {
+    throw new Error('Connect: redirect return fragment must not contain duplicate Enbox parameters.');
+  }
+
+  const state = states[0] ?? null;
+  const encodedKey = keys[0] ?? null;
+  const error = errors[0] ?? null;
 
   if (state === null || state.length === 0) {
     throw new Error('Connect: redirect return fragment is missing `enbox_state`.');
@@ -280,18 +333,91 @@ export function parseRedirectReturnUri(url: string): RedirectReturnPayload | und
     throw new Error('Connect: redirect return fragment is missing `enbox_key`.');
   }
 
-  let responseSecret: Uint8Array;
+  return { state, responseSecret: decodeRedirectResponseSecret(encodedKey) };
+}
+
+/**
+ * Reads a response body as UTF-8 text while enforcing a strict byte ceiling
+ * before decoding, cancelling the stream immediately on overflow.
+ */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string | undefined> {
+  const contentLength = response.headers.get('content-length');
+  if (contentLength !== null) {
+    const parsedLength = Number(contentLength);
+    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+      await response.body?.cancel().catch((): void => {});
+      return undefined;
+    }
+  }
+
+  if (response.body === null) {
+    const text = await response.text();
+    return new TextEncoder().encode(text).byteLength <= maxBytes ? text : undefined;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  const readNext = async (): Promise<boolean> => {
+    const { done, value } = await reader.read();
+    if (done) {
+      return true;
+    }
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel().catch((): void => {});
+      return false;
+    }
+    chunks.push(value);
+    return readNext();
+  };
+
   try {
-    responseSecret = Convert.base64Url(encodedKey).toUint8Array();
-  } catch {
-    throw new Error('Connect: redirect return `enbox_key` is not valid base64url.');
+    const withinLimit = await readNext();
+    if (!withinLimit) {
+      return undefined;
+    }
+  } finally {
+    reader.releaseLock();
   }
 
-  if (responseSecret.byteLength !== RESPONSE_SECRET_BYTE_LENGTH) {
-    throw new Error(`Connect: redirect return \`enbox_key\` must decode to ${RESPONSE_SECRET_BYTE_LENGTH} bytes.`);
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
+}
+
+/** Parses and filters a validated `/.well-known/enbox-app` JSON payload for `expectedOrigin`. */
+function parseConnectAppManifestText(text: string, expectedOrigin: string): ConnectAppManifest | undefined {
+  const parsed = JSON.parse(text) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || !Object.hasOwn(parsed, 'redirectUris')) {
+    return undefined;
+  }
+  const redirectUris = (parsed as { redirectUris?: unknown }).redirectUris;
+  if (!Array.isArray(redirectUris) || redirectUris.length > MAX_APP_MANIFEST_REDIRECT_URIS) {
+    return undefined;
   }
 
-  return { state, responseSecret };
+  const verifiedUris: string[] = [];
+  for (const candidate of redirectUris) {
+    if (typeof candidate !== 'string') {
+      continue;
+    }
+    try {
+      assertValidRedirectUri(candidate);
+      if (new URL(candidate).origin === expectedOrigin) {
+        verifiedUris.push(candidate);
+      }
+    } catch {
+      // Ignore invalid or cross-origin redirect URI entries.
+    }
+  }
+
+  return Object.freeze({ redirectUris: Object.freeze(verifiedUris) });
 }
 
 /**
@@ -312,7 +438,8 @@ export async function fetchConnectAppManifest(
   } catch {
     return undefined;
   }
-  if (baseUrl.origin !== origin || (baseUrl.protocol !== 'https:' && baseUrl.protocol !== 'http:')) {
+  const isLocalHttp = baseUrl.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(baseUrl.hostname);
+  if (baseUrl.origin !== origin || (baseUrl.protocol !== 'https:' && !isLocalHttp)) {
     return undefined;
   }
 
@@ -330,32 +457,12 @@ export async function fetchConnectAppManifest(
       return undefined;
     }
 
-    const text = await response.text();
-    if (text.length > MAX_APP_MANIFEST_BYTES) {
+    const text = await readBoundedText(response, MAX_APP_MANIFEST_BYTES);
+    if (text === undefined) {
       return undefined;
     }
 
-    const parsed = JSON.parse(text) as { redirectUris?: unknown };
-    if (!Array.isArray(parsed?.redirectUris) || parsed.redirectUris.length > MAX_APP_MANIFEST_REDIRECT_URIS) {
-      return undefined;
-    }
-
-    const verifiedUris: string[] = [];
-    for (const candidate of parsed.redirectUris) {
-      if (typeof candidate !== 'string') {
-        continue;
-      }
-      try {
-        assertValidRedirectUri(candidate);
-        if (new URL(candidate).origin === baseUrl.origin) {
-          verifiedUris.push(candidate);
-        }
-      } catch {
-        // Ignore invalid or cross-origin redirect URI entries.
-      }
-    }
-
-    return Object.freeze({ redirectUris: Object.freeze(verifiedUris) });
+    return parseConnectAppManifestText(text, baseUrl.origin);
   } catch {
     return undefined;
   }
@@ -394,18 +501,19 @@ export async function prepareRedirectConnectRequest(
     permissionRequests  : structuredClone(input.permissionRequests),
     clientMetadata      : structuredClone(input.clientMetadata),
     authentication      : structuredClone(input.authentication),
-    delegatePortableDid : structuredClone(input.delegatePortableDid),
     supportedDidMethods : input.supportedDidMethods === undefined ? undefined : [...input.supportedDidMethods],
   };
 
   assertValidRedirectUri(params.redirectUri);
 
-  if (params.requestType === 'refresh' && params.delegatePortableDid === undefined) {
-    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+  if (params.requestType === 'refresh' && (typeof params.delegateDid !== 'string' || params.delegateDid.length === 0)) {
+    throw new Error('Connect: refresh requests require an existing `delegateDid`.');
   }
-  if (params.delegatePortableDid !== undefined && params.requestType !== 'refresh') {
-    throw new Error('Connect: `delegatePortableDid` cannot be pre-supplied on a new redirect request.');
+  if (params.delegateDid !== undefined && params.requestType !== 'refresh') {
+    throw new Error('Connect: `delegateDid` cannot be pre-supplied on a new redirect request.');
   }
+
+  params.signal?.throwIfAborted();
 
   const clientDid = await DidJwk.create();
   const responsePrivateKey = await X25519.generateKey();
@@ -424,7 +532,7 @@ export async function prepareRedirectConnectRequest(
     authentication             : params.authentication,
     permissionRequests         : params.permissionRequests,
     requestedSessionTtlSeconds : params.requestedSessionTtlSeconds,
-    delegateDid                : params.delegatePortableDid?.uri,
+    delegateDid                : params.delegateDid,
     requestType                : params.requestType,
     expectedProviderDid        : params.expectedProviderDid,
     supportedDidMethods        : params.supportedDidMethods ?? [...DEFAULT_SUPPORTED_DID_METHODS],
@@ -443,11 +551,18 @@ export async function prepareRedirectConnectRequest(
     await params.onAuthenticationRequest?.(structuredClone(request));
   }
 
+  params.signal?.throwIfAborted();
+
   const requestJwe = await sealRequest({
     request,
     signer     : clientDid,
     encryption : { mode: 'dir', requestKey },
   });
+
+  const timeoutSignal = AbortSignal.timeout(params.timeoutMs ?? REDIRECT_HTTP_TIMEOUT_MS);
+  const requestSignal = params.signal === undefined
+    ? timeoutSignal
+    : AbortSignal.any([params.signal, timeoutSignal]);
 
   const doFetch = params.fetchFn ?? defaultFetch;
   const parUrl = concatenateUrl(params.connectServerUrl, 'par');
@@ -455,16 +570,17 @@ export async function prepareRedirectConnectRequest(
     body    : JSON.stringify({ request: requestJwe }),
     method  : 'POST',
     headers : { 'Content-Type': 'application/json' },
-    signal  : AbortSignal.timeout(params.timeoutMs ?? REDIRECT_HTTP_TIMEOUT_MS),
+    signal  : requestSignal,
   });
 
   if (!parResponse.ok) {
+    await parResponse.body?.cancel().catch((): void => {});
     throw new Error(`Connect: pushed authorization request failed with HTTP ${parResponse.status}.`);
   }
 
   const parData = await parResponse.json() as { request_uri?: unknown; expires_in?: unknown };
   if (typeof parData.request_uri !== 'string' || typeof parData.expires_in !== 'number') {
-    throw new Error('Connect: pushed authorization response is missing `request_uri` or `expires_in`.');
+    throw new TypeError('Connect: pushed authorization response is missing `request_uri` or `expires_in`.');
   }
 
   const walletUri = buildWalletConnectUri({
@@ -482,7 +598,6 @@ export async function prepareRedirectConnectRequest(
     redirectUri         : params.redirectUri,
     request,
     expectedProviderDid : params.expectedProviderDid,
-    delegatePortableDid : params.delegatePortableDid,
     createdAt           : (params.now ?? ((): number => Date.now()))(),
   };
 
@@ -502,30 +617,49 @@ async function fetchRedirectTokenOnce({ connectServerUrl, state, fetchFn, timeou
   timeoutMs: number;
   sleepFn: (ms: number) => Promise<void>;
 }): Promise<string> {
-  const tokenUrl = concatenateUrl(connectServerUrl, `token/${state}.jwt`);
+  const tokenUrl = concatenateUrl(connectServerUrl, `token/${encodeURIComponent(state)}.jwt`);
   const maxAttempts = 3;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const response = await fetchFn(tokenUrl, {
-      method : 'GET',
-      signal : AbortSignal.timeout(timeoutMs),
-    });
+  const attemptFetch = async (attempt: number): Promise<string> => {
+    let response: Response;
+    try {
+      response = await fetchFn(tokenUrl, {
+        method : 'GET',
+        signal : AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      if (attempt + 1 < maxAttempts) {
+        await sleepFn(250);
+        return attemptFetch(attempt + 1);
+      }
+      throw error;
+    }
 
-    if (response.ok) {
+    if (response.ok && response.status !== 204) {
       const body = await response.text();
       if (body.length > 0) {
         return body;
       }
     } else {
       await response.body?.cancel().catch((): void => {});
+      if (!RETRYABLE_TOKEN_HTTP_STATUSES.has(response.status)) {
+        throw new Error(`Connect: redirect token fetch failed with HTTP ${response.status}.`);
+      }
     }
 
-    if (attempt < maxAttempts - 1) {
+    if (attempt + 1 < maxAttempts) {
       await sleepFn(250);
+      return attemptFetch(attempt + 1);
     }
-  }
 
-  throw new Error('Connect: redirect response was not found on the relay (it may have expired or already been consumed).');
+    if (response.status !== 204 && response.status !== 404 && !response.ok) {
+      throw new Error(`Connect: redirect token fetch failed with HTTP ${response.status}.`);
+    }
+
+    throw new Error('Connect: redirect response was not found on the relay (it may have expired or already been consumed).');
+  };
+
+  return attemptFetch(0);
 }
 
 /** Best-effort completion marker POST after successfully opening a redirected response. */
@@ -540,6 +674,108 @@ function postBestEffortComplete(connectServerUrl: string, state: string, fetchFn
   }).catch((): undefined => undefined);
 }
 
+/** Validates session freshness, return URL exact match, and `enbox_state` correlation. */
+function validateRedirectReturn({
+  pendingSession,
+  returnUrl,
+  maxSessionAgeMs,
+  now,
+}: {
+  pendingSession: PendingRedirectConnectSession;
+  returnUrl: string;
+  maxSessionAgeMs?: number;
+  now?: () => number;
+}): RedirectReturnPayload {
+  const nowMs = (now ?? ((): number => Date.now()))();
+  const maxAgeMs = maxSessionAgeMs ?? DEFAULT_REDIRECT_SESSION_MAX_AGE_MS;
+  if (
+    !Number.isFinite(pendingSession.createdAt)
+    || nowMs - pendingSession.createdAt > maxAgeMs
+    || pendingSession.createdAt > nowMs + PENDING_SESSION_FUTURE_SKEW_MS
+  ) {
+    throw new Error('Connect: pending redirect session has expired.');
+  }
+
+  const parsed = parseRedirectReturnUri(returnUrl);
+  if (parsed === undefined) {
+    throw new Error('Connect: return URL does not contain Enbox redirect parameters.');
+  }
+
+  const parsedReturnUrl = new URL(returnUrl);
+  const expectedReturnUrl = new URL(pendingSession.redirectUri);
+  if (
+    parsedReturnUrl.origin !== expectedReturnUrl.origin
+    || parsedReturnUrl.pathname !== expectedReturnUrl.pathname
+    || parsedReturnUrl.search !== ''
+  ) {
+    throw new Error('Connect: redirect return URL does not match the requested `redirectUri`.');
+  }
+
+  if (parsed.state !== pendingSession.state) {
+    throw new Error('Connect: redirect return `enbox_state` does not match the pending session.');
+  }
+
+  return parsed;
+}
+
+/** Validates caller-provided refresh delegate credentials and expected provider DID agreement. */
+function assertRedirectCompletionGuards(
+  pendingSession: PendingRedirectConnectSession,
+  localDelegatePortableDid: PortableDid | undefined,
+  expectedProviderDid: string | undefined,
+): string | undefined {
+  if (pendingSession.request.delegateDid !== undefined) {
+    if (localDelegatePortableDid === undefined || localDelegatePortableDid.uri !== pendingSession.request.delegateDid) {
+      throw new Error('Connect: completing a refresh redirect requires the matching `localDelegatePortableDid`.');
+    }
+  } else if (localDelegatePortableDid !== undefined) {
+    throw new Error('Connect: `localDelegatePortableDid` must only be supplied when completing a refresh redirect.');
+  }
+
+  if (
+    expectedProviderDid !== undefined
+    && pendingSession.expectedProviderDid !== undefined
+    && expectedProviderDid !== pendingSession.expectedProviderDid
+  ) {
+    throw new Error('Connect: `expectedProviderDid` does not match the pending redirect session.');
+  }
+  return expectedProviderDid ?? pendingSession.expectedProviderDid;
+}
+
+/** Verifies an optional owner authentication proof attached to a delegated redirect response. */
+async function verifyOptionalRedirectAuthentication({
+  pendingSession,
+  authenticationProof,
+  providerDid,
+  authenticationResolver,
+}: {
+  pendingSession: PendingRedirectConnectSession;
+  authenticationProof: string | undefined;
+  providerDid: string;
+  authenticationResolver?: ConnectAuthenticationResolver;
+}): Promise<Awaited<ReturnType<typeof verifyOwnerAuthenticationProof>> | undefined> {
+  if (pendingSession.request.authentication === undefined) {
+    if (authenticationProof !== undefined) {
+      throw new ConnectAuthenticationError('context-mismatch');
+    }
+    return undefined;
+  }
+
+  if (authenticationProof === undefined) {
+    throw new ConnectAuthenticationError('invalid-proof');
+  }
+  return await verifyOwnerAuthenticationProof({
+    proof    : authenticationProof,
+    request  : pendingSession.request,
+    providerDid,
+    resolver : authenticationResolver,
+    expected : {
+      audience  : pendingSession.request.authentication.audience,
+      challenge : pendingSession.request.authentication.challenge,
+    },
+  });
+}
+
 /**
  * Phase 2 of same-device hybrid redirect connect (delegation / combined flow):
  * parses `#enbox_state` + `#enbox_key` (or `#enbox_error=denied`) from
@@ -551,29 +787,39 @@ function postBestEffortComplete(connectServerUrl: string, state: string, fetchFn
 export async function completeRedirectConnect({
   pendingSession,
   returnUrl,
+  localDelegatePortableDid,
+  expectedProviderDid,
   fetchFn,
   authenticationResolver,
   timeoutMs,
+  maxSessionAgeMs,
+  now,
   sleepFn,
 }: {
   pendingSession: PendingRedirectConnectSession;
   returnUrl: string;
+  /** Local delegate credentials re-supplied from the vault when completing a `refresh` redirect. */
+  localDelegatePortableDid?: PortableDid;
+  /** Optional provider DID guard (must agree with `pendingSession.expectedProviderDid` if both are set). */
+  expectedProviderDid?: string;
   fetchFn?: FetchFn;
   authenticationResolver?: ConnectAuthenticationResolver;
   timeoutMs?: number;
+  maxSessionAgeMs?: number;
+  now?: () => number;
   sleepFn?: (ms: number) => Promise<void>;
 }): Promise<ConnectResult | undefined> {
   if (pendingSession.request.requestType === 'authenticate') {
     throw new Error('Connect: use completeRedirectAuthentication() for an authentication-only redirect session.');
   }
 
-  const parsed = parseRedirectReturnUri(returnUrl);
-  if (parsed === undefined) {
-    throw new Error('Connect: return URL does not contain Enbox redirect parameters.');
-  }
-  if (parsed.state !== pendingSession.state) {
-    throw new Error('Connect: redirect return `enbox_state` does not match the pending session.');
-  }
+  const parsed = validateRedirectReturn({ pendingSession, returnUrl, maxSessionAgeMs, now });
+  const effectiveExpectedProviderDid = assertRedirectCompletionGuards(
+    pendingSession,
+    localDelegatePortableDid,
+    expectedProviderDid,
+  );
+
   if (parsed.error === 'denied') {
     return undefined;
   }
@@ -599,33 +845,19 @@ export async function completeRedirectConnect({
       clientDid   : pendingSession.clientDid,
       nonce       : pendingSession.nonce,
       state       : pendingSession.state,
-      providerDid : pendingSession.expectedProviderDid,
+      providerDid : effectiveExpectedProviderDid,
     },
   });
 
-  let authentication;
-  if (pendingSession.request.authentication === undefined) {
-    if (response.authenticationProof !== undefined) {
-      throw new ConnectAuthenticationError('context-mismatch');
-    }
-  } else {
-    if (response.authenticationProof === undefined) {
-      throw new ConnectAuthenticationError('invalid-proof');
-    }
-    authentication = await verifyOwnerAuthenticationProof({
-      proof       : response.authenticationProof,
-      request     : pendingSession.request,
-      providerDid : response.providerDid,
-      resolver    : authenticationResolver,
-      expected    : {
-        audience  : pendingSession.request.authentication.audience,
-        challenge : pendingSession.request.authentication.challenge,
-      },
-    });
-  }
+  const authentication = await verifyOptionalRedirectAuthentication({
+    pendingSession,
+    authenticationProof : response.authenticationProof,
+    providerDid         : response.providerDid,
+    authenticationResolver,
+  });
 
   const delegatePortableDid = resolveDelegatePortableDid({
-    localDelegatePortableDid: pendingSession.delegatePortableDid,
+    localDelegatePortableDid,
     response,
   });
 
@@ -649,6 +881,8 @@ export async function completeRedirectAuthentication({
   fetchFn,
   authenticationResolver,
   timeoutMs,
+  maxSessionAgeMs,
+  now,
   sleepFn,
 }: {
   pendingSession: PendingRedirectConnectSession;
@@ -656,19 +890,15 @@ export async function completeRedirectAuthentication({
   fetchFn?: FetchFn;
   authenticationResolver?: ConnectAuthenticationResolver;
   timeoutMs?: number;
+  maxSessionAgeMs?: number;
+  now?: () => number;
   sleepFn?: (ms: number) => Promise<void>;
 }): Promise<ConnectAuthenticationResult | undefined> {
   if (pendingSession.request.requestType !== 'authenticate' || pendingSession.request.authentication === undefined) {
     throw new ConnectAuthenticationError('invalid-request');
   }
 
-  const parsed = parseRedirectReturnUri(returnUrl);
-  if (parsed === undefined) {
-    throw new Error('Connect: return URL does not contain Enbox redirect parameters.');
-  }
-  if (parsed.state !== pendingSession.state) {
-    throw new Error('Connect: redirect return `enbox_state` does not match the pending session.');
-  }
+  const parsed = validateRedirectReturn({ pendingSession, returnUrl, maxSessionAgeMs, now });
   if (parsed.error === 'denied') {
     return undefined;
   }

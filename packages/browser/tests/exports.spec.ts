@@ -182,6 +182,27 @@ describe('@enbox/browser exports', () => {
     const mod = await getBrowserExports();
     expect(typeof mod.ConnectProvider).toBe('function');
     expect(mod.CONNECT_DENIED_TOKEN).toBe('DENIED');
+    expect(typeof mod.createConnectVerificationHandshake).toBe('function');
+    expect(typeof mod.deriveConnectVerificationSymbols).toBe('function');
+    expect(typeof mod.postRelayHandshake).toBe('function');
+    expect(typeof mod.buildRedirectReturnUri).toBe('function');
+    expect(typeof mod.parseRedirectReturnUri).toBe('function');
+    expect(typeof mod.generateRedirectResponseSecret).toBe('function');
+    expect(typeof mod.fetchConnectAppManifest).toBe('function');
+    expect(typeof mod.isRedirectUriVerifiedInManifest).toBe('function');
+    expect(typeof mod.assertValidRedirectUri).toBe('function');
+  });
+
+  it('exports the same-device mobile redirect helpers and hello message type', async () => {
+    const mod = await getBrowserExports();
+    expect(typeof mod.startRedirectConnect).toBe('function');
+    expect(typeof mod.hasPendingRedirectConnect).toBe('function');
+    expect(typeof mod.getPendingRedirectConnectType).toBe('function');
+    expect(typeof mod.completeRedirectConnectFromWindow).toBe('function');
+    expect(typeof mod.completeRedirectAuthenticationFromWindow).toBe('function');
+    expect(typeof mod.isIosStandalonePwa).toBe('function');
+    expect(typeof mod.isSessionStorageAvailable).toBe('function');
+    expect(mod.DWEB_CONNECT_HELLO_MESSAGE_TYPE).toBe('enbox-connect-hello');
   });
 
   it('exports runConnectModal', async () => {
