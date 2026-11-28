@@ -895,6 +895,32 @@ describe('registerSyncScopeForIdentity', () => {
       })
     ).rejects.toThrow('database unavailable');
   });
+
+  test('uses ensureIdentityOptions instead of setIdentityOptions when skipIfUnchanged is true', async () => {
+    const setCalls: any[] = [];
+    const ensureCalls: any[] = [];
+    const agent = createMockAgent({
+      syncSetIdentityOptions    : async (params) => { setCalls.push(params); },
+      syncEnsureIdentityOptions : async (params, options) => { ensureCalls.push({ params, options }); return false; },
+    });
+
+    const registered = await registerSyncScopeForIdentity({
+      userAgent           : agent,
+      connectedDid        : 'did:dht:connected1',
+      identitySyncModules : ['https://modules.example/profile'],
+      lifecycleOptions    : { timeout: 5_000 },
+      skipIfUnchanged     : true,
+    });
+
+    expect(registered).toBe(true);
+    expect(setCalls).toHaveLength(0);
+    expect(ensureCalls).toHaveLength(1);
+    expect(ensureCalls[0].params).toEqual({
+      did     : 'did:dht:connected1',
+      options : { modules: ['https://modules.example/profile'] },
+    });
+    expect(ensureCalls[0].options.timeout).toBeLessThanOrEqual(5_000);
+  });
 });
 
 describe('finalizeDelegateSession', () => {
