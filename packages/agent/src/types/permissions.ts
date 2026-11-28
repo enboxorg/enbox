@@ -9,6 +9,12 @@ export type FetchPermissionsParams = {
   remote?: boolean;
   /** Whether to filter out revoked grants. Defaults to `false`. */
   checkRevoked?: boolean;
+  /**
+   * When `true`, filters out grants that are not currently active (expired or
+   * not yet active) before issuing revocation `RecordsRead` checks. Defaults
+   * to `false`.
+   */
+  activeOnly?: boolean;
 };
 
 export type FetchPermissionRequestParams = {

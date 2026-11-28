@@ -436,7 +436,11 @@ describe('recoverIdentitiesFromRemote', () => {
     expect(recovered.map(identity => identity.did.uri)).toEqual(identities.map(identity => identity.did.uri));
     expect(removed).toEqual([]);
     expect(grantQueries).toEqual([{
-      author: delegateIdentity.did.uri, target: delegateIdentity.did.uri, grantee: delegateIdentity.did.uri, checkRevoked: true,
+      author       : delegateIdentity.did.uri,
+      target       : delegateIdentity.did.uri,
+      grantee      : delegateIdentity.did.uri,
+      checkRevoked : true,
+      activeOnly   : true,
     }]);
   });
 

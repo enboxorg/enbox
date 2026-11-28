@@ -62,12 +62,15 @@ describe('AgentPermissionsApi', () => {
   });
 
   describe('getPermission', () => {
-    const storeGrantAsBob = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
+    const storeGrantAsBob = async (
+      scope: DwnPermissionScope,
+      dateExpires: string = Time.createOffsetTimestamp({ seconds: 60 }),
+    ): Promise<PermissionGrantEntry> => {
       const grant = await testHarness.agent.permissions.createGrant({
-        store       : true,
-        author      : aliceDid.uri,
-        grantedTo   : bobDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        store     : true,
+        author    : aliceDid.uri,
+        grantedTo : bobDid.uri,
+        dateExpires,
         scope
       });
 
@@ -369,6 +372,33 @@ describe('AgentPermissionsApi', () => {
       });
       expect(secondFetched.message.recordId).toBe(secondGrant.message.recordId);
       expect(fetchGrantSpy.mock.calls).toHaveLength(1);
+    });
+
+    it('skips revocation reads for expired grants when populating the permission catalog', async () => {
+      const moduleUri = 'http://example.com/catalog-active-only';
+      const scope = {
+        interface : DwnInterfaceName.Records,
+        method    : DwnMethodName.Write,
+        module    : moduleUri,
+      } as const;
+      await storeGrantAsBob(scope, Time.createOffsetTimestamp({ seconds: -60 }));
+      const activeGrant = await storeGrantAsBob(scope);
+
+      await testHarness.agent.permissions.clear();
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
+
+      const matched = await testHarness.agent.permissions.getPermissionForRequest({
+        connectedDid : aliceDid.uri,
+        delegateDid  : bobDid.uri,
+        messageType  : DwnInterface.RecordsWrite,
+        module       : moduleUri,
+      });
+      expect(matched.message.recordId).toBe(activeGrant.message.recordId);
+
+      const revocationReads = processDwnRequestSpy.mock.calls
+        .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
+        .map(([request]) => (request.messageParams.filter as Record<string, unknown>).parentId);
+      expect(revocationReads).toEqual([activeGrant.message.recordId]);
     });
   });
 
@@ -744,6 +774,75 @@ describe('AgentPermissionsApi', () => {
 
       // expect exactly 1 call: only the grants query
       expect(processDwnRequestSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should skip revocation reads for expired grants when activeOnly is true', async () => {
+      const moduleUri = 'http://example.com/active-only-revocation-test';
+      const createTestGrant = (method: DwnMethodName, offsetSeconds: number): Promise<PermissionGrantEntry> =>
+        testHarness.agent.permissions.createGrant({
+          store       : true,
+          author      : aliceDid.uri,
+          grantedTo   : aliceDid.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: offsetSeconds }),
+          scope       : { interface: DwnInterfaceName.Records, method, module: moduleUri },
+        });
+      const expiredGrant = await createTestGrant(DwnMethodName.Write, -60);
+      const activeGrant = await createTestGrant(DwnMethodName.Read, 60);
+      const revokedActiveGrant = await createTestGrant(DwnMethodName.Delete, 60);
+      await testHarness.agent.permissions.createRevocation({
+        store  : true,
+        author : aliceDid.uri,
+        grant  : revokedActiveGrant.grant,
+      });
+      await testHarness.agent.permissions.clear();
+
+      const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
+      const activeGrants = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        module       : moduleUri,
+        checkRevoked : true,
+        activeOnly   : true,
+      });
+
+      expect(activeGrants).toHaveLength(1);
+      expect(activeGrants[0].message.recordId).toBe(activeGrant.message.recordId);
+
+      const revocationReadParents = processDwnRequestSpy.mock.calls
+        .filter(([request]) => request.messageType === DwnInterface.RecordsRead)
+        .map(([request]) => (request.messageParams.filter as Record<string, unknown>).parentId)
+        .sort();
+      expect(revocationReadParents).toEqual([
+        activeGrant.message.recordId,
+        revokedActiveGrant.message.recordId,
+      ].sort());
+
+      // activeOnly: true with checkRevoked: false excludes expired grants without revocation reads.
+      processDwnRequestSpy.mockClear();
+      const activeWithoutRevocationCheck = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        module       : moduleUri,
+        checkRevoked : false,
+        activeOnly   : true,
+      });
+      expect(activeWithoutRevocationCheck.map((entry) => entry.message.recordId).sort()).toEqual([
+        activeGrant.message.recordId,
+        revokedActiveGrant.message.recordId,
+      ].sort());
+      expect(processDwnRequestSpy).toHaveBeenCalledTimes(1);
+
+      // Default behavior (activeOnly: false) still includes non-revoked expired grants.
+      const allNonRevokedGrants = await testHarness.agent.permissions.fetchGrants({
+        author       : aliceDid.uri,
+        target       : aliceDid.uri,
+        module       : moduleUri,
+        checkRevoked : true,
+      });
+      expect(allNonRevokedGrants.map((entry) => entry.message.recordId).sort()).toEqual([
+        activeGrant.message.recordId,
+        expiredGrant.message.recordId,
+      ].sort());
     });
   });
 

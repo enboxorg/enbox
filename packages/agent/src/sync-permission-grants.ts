@@ -3,7 +3,7 @@ import type { GenericMessage, GenericSignaturePayload, MessagesPermissionScope }
 import type { NonEmptyStringArray, SyncAuthorizationGrant, syncScopeFromModules } from './types/sync.js';
 import type { PermissionGrantEntry, PermissionsApi } from './types/permissions.js';
 
-import { Jws, Message } from '@enbox/dwn-sdk-js';
+import { Jws, Message, Time } from '@enbox/dwn-sdk-js';
 
 import { lexicographicalCompare } from './types/sync.js';
 
@@ -95,13 +95,14 @@ export async function resolveMessagesScopes({
     return [{ scope: requestedScope, permissionGrants: [] }];
   }
 
-  const now = new Date().toISOString();
+  const now = Time.getCurrentTimestamp();
   const permissionGrants = (await permissionsApi.fetchGrants({
     author       : delegateDid,
     target       : delegateDid,
     grantor      : did,
     grantee      : delegateDid,
     checkRevoked : true,
+    activeOnly   : true,
   })).filter(entry => isActiveMessagesGrant(entry, did, delegateDid, now));
 
   if (requestedScope.kind === 'full') {

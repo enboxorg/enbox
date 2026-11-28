@@ -14,6 +14,7 @@ export default defineConfig({
   test: {
     include: [
       'tests/hd-identity-vault.spec.ts',
+      'tests/permissions-api.spec.ts',
       'tests/sync-admit-closure.spec.ts',
       'tests/sync-durable-feed-reconciler.spec.ts',
       'tests/sync-followed-modules.spec.ts',
@@ -34,6 +35,7 @@ export default defineConfig({
     coverage: {
       include: [
         'src/hd-identity-vault.ts',
+        'src/permissions-api.ts',
         'src/followed-sync-module.ts',
         'src/followed-sync-source.ts',
         'src/sync-admit-closure.ts',

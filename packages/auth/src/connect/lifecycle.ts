@@ -467,6 +467,7 @@ export async function deriveActiveSyncScope(
     target       : delegateDid,
     grantee      : delegateDid,
     checkRevoked : true,
+    activeOnly   : true,
   });
   const grantEntries: PermissionGrantEntry[] = timeout === undefined
     ? await grantQuery
