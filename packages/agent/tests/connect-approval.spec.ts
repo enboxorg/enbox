@@ -30,6 +30,20 @@ import {
 
 import type { BearerIdentity, DwnModuleDefinition } from '../src/index.js';
 
+function hangUntilAborted(signal: AbortSignal | undefined, onAbort?: () => void): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    const abort = (): void => {
+      onAbort?.();
+      reject(signal?.reason ?? new DOMException('aborted', 'AbortError'));
+    };
+    if (signal?.aborted) {
+      abort();
+    } else {
+      signal?.addEventListener('abort', abort, { once: true });
+    }
+  });
+}
+
 describe('connect approval ceremony', () => {
 
   /** The real tenant (identity) of the DWN that the provider had chosen to connect */
@@ -429,17 +443,7 @@ describe('connect approval ceremony', () => {
 
       sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake(async ({ dwnUrl, signal }) => {
         if (dwnUrl === hangingUrl) {
-          return new Promise((_, reject) => {
-            const onAbort = (): void => {
-              hangingAborted = true;
-              reject(signal!.reason);
-            };
-            if (signal?.aborted) {
-              onAbort();
-            } else {
-              signal?.addEventListener('abort', onAbort, { once: true });
-            }
-          });
+          return hangUntilAborted(signal, () => { hangingAborted = true; });
         }
         return { status: { code: 202, detail: 'Accepted' } } as any;
       });
@@ -1939,17 +1943,7 @@ describe('connect approval ceremony', () => {
         const queriesSeen = new Map<string, number>();
         sinon.stub(testHarness.agent.rpc, 'sendDwnRequest').callsFake((req: any) => {
           if (req.dwnUrl === hangingUrl) {
-            return new Promise((_resolve, reject) => {
-              const signal = req.signal!;
-              const onAbort = (): void => {
-                reject(new DOMException('aborted', 'AbortError'));
-              };
-              if (signal.aborted) {
-                onAbort();
-              } else {
-                signal.addEventListener('abort', onAbort, { once: true });
-              }
-            });
+            return hangUntilAborted(req.signal);
           }
           if (req.message === signedModuleQuery) {
             const seen = queriesSeen.get(req.dwnUrl) ?? 0;
@@ -1994,85 +1988,7 @@ describe('connect approval ceremony', () => {
         expect(elapsed).toBeLessThan(25_000);
       }, 60_000); // bun:test per-test timeout, kept above the assertion budget
 
-      it('should bound grantKey and revocation fan-outs via quorum tail grace when a secondary endpoint hangs', async () => {
-        const encryptedModule: DwnModuleDefinition = {
-          module    : 'http://quorum-tail-encrypted.xyz',
-          published : true,
-          types     : {
-            note: {
-              schema             : 'http://quorum-tail-encrypted.xyz/note',
-              dataFormats        : ['text/plain'],
-              encryptionRequired : true,
-            },
-          },
-          structure: { note: {} },
-        };
-        const readScopes: RecordsPermissionScope[] = [{
-          interface : 'Records' as any,
-          method    : 'Read' as any,
-          module    : encryptedModule.module,
-        }];
-        const grantKeyRecord = {
-          recordId   : 'grant-key-quorum-tail-id',
-          descriptor : {
-            interface  : 'Records',
-            method     : 'Write',
-            recipient  : delegateBearerDid.uri,
-            module     : EncryptionModule.uri,
-            modulePath : EncryptionModule.wrappedGrantKeyPath,
-            dataFormat : 'application/json',
-            tags       : { module: encryptedModule.module },
-          },
-          encodedData: Convert.uint8Array(new Uint8Array([1, 2, 3])).toBase64Url(),
-        };
-
-        const healthyUrl = 'https://dwn-healthy.example/';
-        const hangingUrl = 'https://dwn-hanging.example/';
-        let abortedSecondarySends = 0;
-
-        stubApprovalCeremony();
-        sinon.stub(ConnectCeremony, 'createGrantKeyRecordsForGrants').resolves([grantKeyRecord] as any);
-        // Let module preparation queries/configures succeed quickly on both
-        // endpoints, then hang secondary grantKey + revocation sends until aborted.
-        await stubMissingModulePreparation([encryptedModule], {
-          endpoints  : [healthyUrl, hangingUrl],
-          otherReply : (req: any): Promise<{ status: { code: number; detail: string } }> | { status: { code: number; detail: string } } => {
-            if (req.dwnUrl === hangingUrl) {
-              return new Promise((_resolve, reject) => {
-                const signal = req.signal as AbortSignal;
-                const onAbort = (): void => {
-                  abortedSecondarySends++;
-                  reject(signal.reason);
-                };
-                if (signal.aborted) {
-                  onAbort();
-                } else {
-                  signal.addEventListener('abort', onAbort, { once: true });
-                }
-              });
-            }
-            return { status: { code: 202, detail: 'Accepted' } };
-          },
-        });
-
-        const start = Date.now();
-        await executeConnectApproval({
-          agent       : testHarness.agent,
-          providerDid : providerIdentity.did.uri,
-          transport   : 'relay',
-          request     : approvalRequest({
-            permissionRequests: [{ moduleDefinition: encryptedModule, permissionScopes: readScopes }],
-          }),
-        });
-        const elapsed = Date.now() - start;
-
-        // Without quorum tail grace, grantKey (10 s) + revocation (10 s) would
-        // stall ~20 s. With 1.5 s tail grace per phase, total stays ~3 s.
-        expect(abortedSecondarySends).toBeGreaterThanOrEqual(2);
-        expect(elapsed).toBeLessThan(7_000);
-      }, 20_000);
-
-      it('should not starve healthy endpoints when >= 8 grantKeys and revocations fan out with a hanging primary endpoint', async () => {
+      it('should bound grantKey and revocation fan-outs via quorum tail grace without starving healthy endpoints', async () => {
         const encryptedModule: DwnModuleDefinition = {
           module    : 'http://quorum-tail-starvation.xyz',
           published : true,
@@ -2123,18 +2039,7 @@ describe('connect approval ceremony', () => {
           endpoints  : [hangingUrl, healthyUrl],
           otherReply : (req: any): Promise<{ status: { code: number; detail: string } }> | { status: { code: number; detail: string } } => {
             if (req.dwnUrl === hangingUrl) {
-              return new Promise((_resolve, reject) => {
-                const signal = req.signal as AbortSignal;
-                const onAbort = (): void => {
-                  abortedHangingSends++;
-                  reject(signal.reason);
-                };
-                if (signal.aborted) {
-                  onAbort();
-                } else {
-                  signal.addEventListener('abort', onAbort, { once: true });
-                }
-              });
+              return hangUntilAborted(req.signal, () => { abortedHangingSends++; });
             }
             if (req.message?.descriptor?.module === EncryptionModule.uri) {
               healthyGrantKeyDeliveries++;
@@ -2158,7 +2063,9 @@ describe('connect approval ceremony', () => {
 
         expect(healthyGrantKeyDeliveries).toBe(itemCount);
         expect(healthyRevocationDeliveries).toBe(itemCount);
-        expect(abortedHangingSends).toBeGreaterThanOrEqual(2);
+        // Sequential per-endpoint sending stops immediately after the first
+        // hung send aborts in each of the grantKey and revocation phases.
+        expect(abortedHangingSends).toBe(2);
         expect(elapsed).toBeLessThan(7_000);
       }, 20_000);
     });
