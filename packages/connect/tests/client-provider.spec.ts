@@ -30,6 +30,7 @@ const TEST_REVOCATIONS = [
 type LoopbackWalletResult = {
   response: string;
   handshakeKey?: Jwk;
+  handshakeKeys?: Jwk[];
 };
 
 /**
@@ -73,8 +74,9 @@ class LoopbackTransport implements ConnectTransport {
       throw new Error('LoopbackTransport: no request delivered.');
     }
     const result = await this._responsePromise;
-    if (result.handshakeKey !== undefined) {
-      await options?.onHandshake?.(result.handshakeKey);
+    const keys = result.handshakeKeys ?? (result.handshakeKey === undefined ? [] : [result.handshakeKey]);
+    for (const key of keys) {
+      await options?.onHandshake?.(key);
     }
     return result.response;
   }
@@ -343,33 +345,11 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
     const provider = await DidJwk.create();
     const rogueKey = await X25519.generateKey();
     const roguePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: rogueKey.x };
-    let requestKey: Uint8Array;
-    let deliveredJwe: string | undefined;
 
-    const transport: ConnectTransport = {
-      requiresHandshake : true,
-      requestProfile    : async (state: string): Promise<ConnectRequestProfile> => {
-        requestKey = CryptoUtils.randomBytes(32);
-        return {
-          state,
-          encryption : { mode: 'dir', requestKey },
-          reply      : { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' },
-        };
-      },
-      deliverRequest: async (jwe: string): Promise<void> => {
-        deliveredJwe = jwe;
-      },
-      awaitResponse: async (options): Promise<string> => {
-        const approved = await approveWithMintedDelegate({
-          jwe         : deliveredJwe!,
-          requestKey,
-          providerDid : provider.uri,
-        });
-        await options?.onHandshake?.(approved.handshakeKey);
-        await options?.onHandshake?.(roguePublicKey);
-        return approved.responseJwe;
-      },
-    };
+    const transport = createRelayLoopback(async (jwe, requestKey): Promise<LoopbackWalletResult> => {
+      const approved = await approveWithMintedDelegate({ jwe, requestKey, providerDid: provider.uri });
+      return { response: approved.responseJwe, handshakeKeys: [approved.handshakeKey, roguePublicKey] };
+    });
 
     const client = new ConnectClient({ transport, onVerificationReady: (): void => {} });
     await expect(client.connect({ appName: 'Conflicting Handshake App', permissionRequests: [] }))
@@ -567,9 +547,8 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
       const responsePrivateKey = await X25519.generateKey();
       const handshakePrivateKey = await X25519.generateKey();
       const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakePrivateKey.x };
-      const portableDid = await delegate.export();
 
-      const relayRequest: ConnectRequest = {
+      const baseRequest: ConnectRequest = {
         clientDid           : provider.uri,
         appName             : 'Channel Guard App',
         permissionRequests  : [],
@@ -579,56 +558,31 @@ describe('ConnectClient + ConnectProvider (loopback)', () => {
         responseKey         : { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x },
         reply               : { mode: 'direct_post', callbackUrl: 'https://relay.example/connect/callback' },
       };
-      const popupRequest: ConnectRequest = {
-        ...relayRequest,
-        reply: { mode: 'post_message' },
-      };
       const approval: ConnectApproval = {
         delegateDid         : delegate.uri,
-        delegatePortableDid : portableDid,
+        delegatePortableDid : await delegate.export(),
         delegateGrants      : [],
         sessionRevocations  : [],
       };
-
-      await expect(ConnectProvider.sealApprovedResponse({
-        request     : relayRequest,
-        providerDid : provider.uri,
-        approval,
-        signer      : delegate,
-      })).rejects.toThrow('`handshakeKey` is required');
-
-      await expect(ConnectProvider.sealApprovedResponse({
-        request     : popupRequest,
-        providerDid : provider.uri,
-        approval,
-        signer      : delegate,
-        handshakeKey,
-      })).rejects.toThrow('`handshakeKey` must not be supplied');
-
-      const authRelayRequest: ConnectRequest = {
-        ...relayRequest,
+      const authRequest: ConnectRequest = {
+        ...baseRequest,
         requestType    : 'authenticate',
         authentication : { version: 1, audience: 'https://identity.example', challenge: randomToken() },
       };
-      const authPopupRequest: ConnectRequest = {
-        ...authRelayRequest,
-        reply: { mode: 'post_message' },
-      };
 
-      await expect(ConnectProvider.sealAuthenticationResponse({
-        request     : authRelayRequest,
-        providerDid : provider.uri,
-        approval    : { authenticationProof: 'proof' },
-        signer      : delegate,
-      })).rejects.toThrow('`handshakeKey` is required');
-
-      await expect(ConnectProvider.sealAuthenticationResponse({
-        request     : authPopupRequest,
-        providerDid : provider.uri,
-        approval    : { authenticationProof: 'proof' },
-        signer      : delegate,
-        handshakeKey,
-      })).rejects.toThrow('`handshakeKey` must not be supplied');
+      const sealers = [
+        (request: ConnectRequest, key?: Jwk): Promise<string> =>
+          ConnectProvider.sealApprovedResponse({ request, providerDid: provider.uri, approval, signer: delegate, handshakeKey: key }),
+        (request: ConnectRequest, key?: Jwk): Promise<string> =>
+          ConnectProvider.sealAuthenticationResponse({
+            request, providerDid: provider.uri, approval: { authenticationProof: 'proof' }, signer: delegate, handshakeKey: key,
+          }),
+      ];
+      for (const [seal, req] of [[sealers[0], baseRequest], [sealers[1], authRequest]] as const) {
+        await expect(seal(req, undefined)).rejects.toThrow('`handshakeKey` is required');
+        await expect(seal({ ...req, reply: { mode: 'post_message' } }, handshakeKey))
+          .rejects.toThrow('`handshakeKey` must not be supplied');
+      }
     });
 
     it('should reject approval output that contradicts a request-supplied delegate', async () => {

@@ -6,6 +6,7 @@ import { Convert } from '@enbox/common';
 import { AesGcm } from '../../primitives/aes-gcm.js';
 import { AesKw } from '../../primitives/aes-kw.js';
 import { ConcatKdf } from '../../primitives/concat-kdf.js';
+import { CryptoUtils } from '../../utils.js';
 import { Pbkdf2 } from '../../primitives/pbkdf2.js';
 import { X25519 } from '../../primitives/x25519.js';
 import { XChaCha20Poly1305 } from '../../primitives/xchacha20-poly1305.js';
@@ -575,7 +576,7 @@ export class JweKeyManagement {
   }): Promise<Jwk> {
     // Reject an all-zero shared secret, which results from an X25519 exchange with a low-order
     // public key and would yield an attacker-predictable CEK.
-    if (sharedSecret.every((byte): boolean => byte === 0)) {
+    if (CryptoUtils.isAllZeroBytes(sharedSecret)) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe, 'ECDH-ES shared secret must not be all zeros.');
     }
 

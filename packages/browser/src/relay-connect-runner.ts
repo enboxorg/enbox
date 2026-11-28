@@ -10,14 +10,13 @@
  * @module
  */
 
-import type { PortableDid } from '@enbox/dids';
 import type {
-  ConnectClientMetadata,
-  ConnectPermissionRequest,
+  ConnectClientConnectParams,
   ConnectRequestType,
   ConnectResult,
   ConnectTransport,
   ConnectVerificationSymbol,
+  RelayClientTransportOptions,
   WalletUriHandoff,
 } from '@enbox/connect';
 
@@ -32,78 +31,35 @@ export class RelayConnectCancelledError extends Error {
 }
 
 /** Options for {@link runRelayConnect}. */
-export interface RelayConnectOptions {
-  /** Relay base URL (the wallet's `connectServerUrl`). */
-  connectServerUrl: string;
+export type RelayConnectOptions =
+  Pick<
+    ConnectClientConnectParams,
+    | 'appName'
+    | 'appIcon'
+    | 'applicationId'
+    | 'clientMetadata'
+    | 'permissionRequests'
+    | 'delegatePortableDid'
+    | 'requestType'
+    | 'expectedProviderDid'
+  >
+  & Pick<RelayClientTransportOptions, 'connectServerUrl' | 'walletUri' | 'timeoutMs' | 'pollIntervalMs' | 'onClaimed'>
+  & {
+    /** Receives the wallet URI handoff (with the request pointer TTL) as soon as delivered. */
+    onWalletUriReady: (handoff: WalletUriHandoff) => void;
 
-  /** Wallet URI the request pointer is attached to (QR / deep-link target). */
-  walletUri: string;
+    /** Invoked once when the wallet publishes its ephemeral handshake key and SAS symbols are derived. */
+    onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => void;
 
-  /** The user-friendly name of the app, shown in the wallet consent UI. */
-  appName: string;
+    /** Cancellation signal: when it settles, polling stops and the handshake rejects. */
+    cancelled?: Promise<never>;
 
-  /** Optional icon URL for the app, shown in the wallet consent UI. */
-  appIcon?: string;
-
-  /** Stable application identifier hint available to the wallet during approval. */
-  applicationId?: string;
-
-  /** Optional client/environment metadata for wallet session display. */
-  clientMetadata?: ConnectClientMetadata;
-
-  /** DWN modules and permission scopes being requested. */
-  permissionRequests: ConnectPermissionRequest[];
-
-  /** Existing delegate credentials reused by a refresh request. */
-  delegatePortableDid?: PortableDid;
-
-  /** User-facing request purpose. Absent means a normal connect. */
-  requestType?: Exclude<ConnectRequestType, 'authenticate'>;
-
-  /** Wallet profile DID that a refresh must renew. */
-  expectedProviderDid?: string;
-
-  /** Total milliseconds to poll the relay for a wallet response. */
-  timeoutMs?: number;
-
-  /** Milliseconds between relay polling attempts. */
-  pollIntervalMs?: number;
-
-  /**
-   * Receives the wallet URI handoff (with the request pointer TTL) as soon
-   * as the request is delivered — render it as a QR code or deep link.
-   */
-  onWalletUriReady: (handoff: WalletUriHandoff) => void;
-
-  /**
-   * Invoked once when the wallet publishes its ephemeral handshake key and the
-   * 3 pre-approval SAS verification symbols are derived — display them so the
-   * user can tap the matching 3 tiles in their wallet.
-   */
-  onVerificationReady: (symbols: readonly ConnectVerificationSymbol[]) => void;
-
-  /**
-   * Cancellation signal: when it settles, polling stops and the handshake
-   * rejects with {@link RelayConnectCancelledError}.
-   */
-  cancelled?: Promise<never>;
-
-  /**
-   * Invoked once when the relay reports the wallet has claimed (fetched)
-   * the pushed request — the app can show "phone connected" progress.
-   */
-  onClaimed?: () => void;
-
-  /** Transport factory override (tests). */
-  createTransport?: (options: {
-    connectServerUrl: string;
-    walletUri: string;
-    timeoutMs?: number;
-    pollIntervalMs?: number;
-    onClaimed?: () => void;
-    signal?: AbortSignal;
-  }) => ConnectTransport;
-}
+    /** Transport factory override (tests). */
+    createTransport?: (options: Pick<
+      RelayClientTransportOptions,
+      'connectServerUrl' | 'walletUri' | 'timeoutMs' | 'pollIntervalMs' | 'onClaimed' | 'signal'
+    >) => ConnectTransport;
+  };
 
 /**
  * Sleep used between relay polls that ends early when the page returns to
@@ -141,9 +97,6 @@ export function visibilityAwareSleep(ms: number): Promise<void> {
 export async function runRelayConnect(options: RelayConnectOptions): Promise<ConnectResult | undefined> {
   if ((options.requestType as ConnectRequestType | undefined) === 'authenticate') {
     throw new Error('Connect: runRelayConnect creates data sessions; use ConnectClient.authenticate for identity-only requests.');
-  }
-  if (options.requestType === 'refresh' && options.delegatePortableDid === undefined) {
-    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
   }
 
   const createTransport = options.createTransport
@@ -183,7 +136,6 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     delegatePortableDid : options.delegatePortableDid,
     requestType         : options.requestType,
     expectedProviderDid : options.expectedProviderDid,
-    supportedDidMethods : ['did:dht', 'did:jwk'],
   });
 
   if (options.cancelled === undefined) {

@@ -120,21 +120,11 @@ export class ConnectServer {
     state: string,
     walletEpk: Record<string, unknown>,
   ): Promise<'created' | 'unchanged' | 'conflict'> {
-    const key = `handshake:${state}`;
-    const inserted = await this.cache.insertIfAbsent(key, walletEpk, ConnectServer.ttlInSeconds);
-    if (inserted) {
+    const result = await this.cache.insertIfAbsent(`handshake:${state}`, walletEpk, ConnectServer.ttlInSeconds);
+    if (result.inserted) {
       return 'created';
     }
-    const existing = await this.cache.get(key) as Record<string, unknown> | undefined;
-    if (existing === undefined) {
-      const retried = await this.cache.insertIfAbsent(key, walletEpk, ConnectServer.ttlInSeconds);
-      if (retried) {
-        return 'created';
-      }
-      const winner = await this.cache.get(key) as Record<string, unknown> | undefined;
-      return winner?.x === walletEpk.x ? 'unchanged' : 'conflict';
-    }
-    return existing.x === walletEpk.x ? 'unchanged' : 'conflict';
+    return (result.existing as Record<string, unknown>).x === walletEpk.x ? 'unchanged' : 'conflict';
   }
 
   /**

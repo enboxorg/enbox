@@ -237,127 +237,109 @@ describe('RelayClientTransport', () => {
     }
   });
 
-  it('polls handshake once until walletEpk arrives and invokes onHandshake before returning token', async () => {
-    const walletEpk: Jwk = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
-    let handshakeCalls = 0;
-    let tokenCalls = 0;
+  const TEST_WALLET_EPK: Jwk = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
+
+  function stubRelayPoll(handlers: {
+    onHandshake?: (call: number) => Response | Promise<Response>;
+    onToken?: (call: number) => Response | Promise<Response>;
+  }): { fetchFn: sinon.SinonStub; counts: { handshake: number; token: number } } {
+    const counts = { handshake: 0, token: 0 };
     const fetchFn = sinon.stub().callsFake(async (input: string | URL): Promise<Response> => {
       const url = String(input);
-      if (url.includes('/handshake/')) {
-        handshakeCalls += 1;
-        if (handshakeCalls === 1) {
-          return new Response(JSON.stringify({ ready: false }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ ready: true, walletEpk }), { status: 200 });
+      if (url.includes('/handshake/') && handlers.onHandshake !== undefined) {
+        counts.handshake += 1;
+        return handlers.onHandshake(counts.handshake);
       }
-      if (url.includes('/token/')) {
-        tokenCalls += 1;
-        if (tokenCalls < 3) {
-          return new Response(null, { status: 204 });
-        }
-        return new Response('SEALED_RESPONSE_JWE', { status: 200 });
+      if (url.includes('/token/') && handlers.onToken !== undefined) {
+        counts.token += 1;
+        return handlers.onToken(counts.token);
       }
       throw new Error(`Unexpected URL: ${url}`);
+    });
+    return { fetchFn, counts };
+  }
+
+  it('polls handshake once until walletEpk arrives and invokes onHandshake before returning token', async () => {
+    const { fetchFn, counts } = stubRelayPoll({
+      onHandshake: (n): Response => new Response(
+        JSON.stringify(n === 1 ? { ready: false } : { ready: true, walletEpk: TEST_WALLET_EPK }),
+        { status: 200 },
+      ),
+      onToken: (n): Response => n < 3
+        ? new Response(null, { status: 204 })
+        : new Response('SEALED_RESPONSE_JWE', { status: 200 }),
     });
 
     const receivedKeys: Jwk[] = [];
     const transport = createTransport({ fetchFn });
     await transport.requestProfile(STATE);
 
-    const response = await transport.awaitResponse({
-      onHandshake: (key): void => { receivedKeys.push(key); },
-    });
+    const response = await transport.awaitResponse({ onHandshake: (key): void => { receivedKeys.push(key); } });
 
     expect(response).toBe('SEALED_RESPONSE_JWE');
-    expect(receivedKeys).toEqual([walletEpk]);
-    expect(handshakeCalls).toBe(2);
-    expect(tokenCalls).toBe(3);
+    expect(receivedKeys).toEqual([TEST_WALLET_EPK]);
+    expect(counts).toEqual({ handshake: 2, token: 3 });
   });
 
   it('performs a final handshake check when token arrives before handshake was observed', async () => {
-    const walletEpk: Jwk = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
-    let handshakeCalls = 0;
-    const fetchFn = sinon.stub().callsFake(async (input: string | URL): Promise<Response> => {
-      const url = String(input);
-      if (url.includes('/handshake/')) {
-        handshakeCalls += 1;
-        if (handshakeCalls === 1) {
-          return new Response(JSON.stringify({ ready: false }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ ready: true, walletEpk }), { status: 200 });
-      }
-      if (url.includes('/token/')) {
-        return new Response('SEALED_RESPONSE_JWE', { status: 200 });
-      }
-      throw new Error(`Unexpected URL: ${url}`);
+    const { fetchFn, counts } = stubRelayPoll({
+      onHandshake: (n): Response => new Response(
+        JSON.stringify(n === 1 ? { ready: false } : { ready: true, walletEpk: TEST_WALLET_EPK }),
+        { status: 200 },
+      ),
+      onToken: (): Response => new Response('SEALED_RESPONSE_JWE', { status: 200 }),
     });
 
     const receivedKeys: Jwk[] = [];
     const transport = createTransport({ fetchFn });
     await transport.requestProfile(STATE);
 
-    const response = await transport.awaitResponse({
-      onHandshake: (key): void => { receivedKeys.push(key); },
-    });
+    const response = await transport.awaitResponse({ onHandshake: (key): void => { receivedKeys.push(key); } });
 
     expect(response).toBe('SEALED_RESPONSE_JWE');
-    expect(receivedKeys).toEqual([walletEpk]);
-    expect(handshakeCalls).toBe(2);
+    expect(receivedKeys).toEqual([TEST_WALLET_EPK]);
+    expect(counts.handshake).toBe(2);
   });
 
-  it('fast-fails when the relay returns 404 on the handshake endpoint', async () => {
-    const fetchFn = sinon.stub().callsFake(async (input: string | URL): Promise<Response> => {
-      const url = String(input);
-      if (url.includes('/handshake/')) {
-        return new Response('Not Found', { status: 404 });
-      }
-      throw new Error(`Unexpected URL: ${url}`);
+  it('fast-fails on 404 or private-key handshake payload and retries transient network errors', async () => {
+    const unsupported = stubRelayPoll({
+      onHandshake: (): Response => new Response('Not Found', { status: 404 }),
     });
+    const unsupportedTransport = createTransport({ fetchFn: unsupported.fetchFn });
+    await unsupportedTransport.requestProfile(STATE);
+    await expect(unsupportedTransport.awaitResponse({ onHandshake: (): void => {} }))
+      .rejects.toThrow('does not support the pre-approval SAS handshake route');
+    expect(unsupported.counts.handshake).toBe(1);
 
-    const transport = createTransport({ fetchFn });
-    await transport.requestProfile(STATE);
+    const badKey = stubRelayPoll({
+      onHandshake: (): Response => new Response(
+        JSON.stringify({ ready: true, walletEpk: { ...TEST_WALLET_EPK, d: 'vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ' } }),
+        { status: 200 },
+      ),
+    });
+    const badKeyTransport = createTransport({ fetchFn: badKey.fetchFn });
+    await badKeyTransport.requestProfile(STATE);
+    await expect(badKeyTransport.awaitResponse({ onHandshake: (): void => {} }))
+      .rejects.toThrow('X25519 public JWK');
 
-    await expect(transport.awaitResponse({
-      onHandshake: (): void => {},
-    })).rejects.toThrow('does not support the pre-approval SAS handshake route');
-    expect(fetchFn.callCount).toBe(1);
-  });
-
-  it('retries transient network errors during handshake and token polling', async () => {
-    const walletEpk: Jwk = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
-    let handshakeCalls = 0;
-    let tokenCalls = 0;
-    const fetchFn = sinon.stub().callsFake(async (input: string | URL): Promise<Response> => {
-      const url = String(input);
-      if (url.includes('/handshake/')) {
-        handshakeCalls += 1;
-        if (handshakeCalls === 1) {
-          throw new TypeError('Failed to fetch');
-        }
-        return new Response(JSON.stringify({ ready: true, walletEpk }), { status: 200 });
-      }
-      if (url.includes('/token/')) {
-        tokenCalls += 1;
-        if (tokenCalls === 1) {
-          throw new TypeError('Failed to fetch');
-        }
+    const transient = stubRelayPoll({
+      onHandshake: (n): Response => {
+        if (n === 1) { throw new TypeError('Failed to fetch'); }
+        return new Response(JSON.stringify({ ready: true, walletEpk: TEST_WALLET_EPK }), { status: 200 });
+      },
+      onToken: (n): Response => {
+        if (n === 1) { throw new TypeError('Failed to fetch'); }
         return new Response('SEALED_RESPONSE_JWE', { status: 200 });
-      }
-      throw new Error(`Unexpected URL: ${url}`);
+      },
     });
-
     const receivedKeys: Jwk[] = [];
-    const transport = createTransport({ fetchFn });
-    await transport.requestProfile(STATE);
+    const retryTransport = createTransport({ fetchFn: transient.fetchFn });
+    await retryTransport.requestProfile(STATE);
 
-    const response = await transport.awaitResponse({
-      onHandshake: (key): void => { receivedKeys.push(key); },
-    });
-
+    const response = await retryTransport.awaitResponse({ onHandshake: (key): void => { receivedKeys.push(key); } });
     expect(response).toBe('SEALED_RESPONSE_JWE');
-    expect(receivedKeys).toEqual([walletEpk]);
-    expect(handshakeCalls).toBe(2);
-    expect(tokenCalls).toBe(2);
+    expect(receivedKeys).toEqual([TEST_WALLET_EPK]);
+    expect(transient.counts).toEqual({ handshake: 2, token: 2 });
   });
 
   it('should POST the completion marker keyed by state via confirmComplete', async () => {

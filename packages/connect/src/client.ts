@@ -291,13 +291,12 @@ export class ConnectClient {
           return;
         }
         const symbols = await deriveConnectVerificationSymbols({
-          privateKey    : responsePrivateKey,
-          peerPublicKey : candidate,
+          privateKey  : responsePrivateKey,
           requestJwe,
           state,
           nonce,
-          responseKey   : responsePublicKey,
-          walletEpk     : candidate,
+          responseKey : responsePublicKey,
+          walletEpk   : candidate,
         });
         await this._onVerificationReady?.(symbols);
         verifiedWalletEpk = candidate;

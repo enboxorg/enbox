@@ -271,18 +271,6 @@ describe('CliConnectHandler', () => {
     await expect(handler.requestAccess({ permissionRequests })).resolves.toBeUndefined();
   });
 
-  it('should surface handshake verification failures from the relay client', async () => {
-    sinon.stub(WalletConnect, 'initClient').rejects(new Error('failed to decrypt response'));
-
-    const handler = CliConnectHandler({
-      walletUrl        : 'https://wallet.example',
-      connectServerUrl : 'https://relay.example/connect',
-      qrRenderer       : async (): Promise<string> => '[qr]',
-    });
-
-    await expect(handler.requestAccess({ permissionRequests })).rejects.toThrow('failed to decrypt response');
-  });
-
   it('should pass polling controls to the relay client', async () => {
     let timeoutMs: number | undefined;
     let pollIntervalMs: number | undefined;

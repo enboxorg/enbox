@@ -230,6 +230,16 @@ describe('Crypto Utils', () => {
     });
   });
 
+  describe('isAllZeroBytes()', () => {
+    it('returns true only when every byte is zero', () => {
+      expect(CryptoUtils.isAllZeroBytes(new Uint8Array(32))).toBe(true);
+      expect(CryptoUtils.isAllZeroBytes(new Uint8Array(0))).toBe(true);
+      const nonZero = new Uint8Array(32);
+      nonZero[31] = 1;
+      expect(CryptoUtils.isAllZeroBytes(nonZero)).toBe(false);
+    });
+  });
+
 });
 
 function numberToBytes(value: number, byteLength: number): Uint8Array {

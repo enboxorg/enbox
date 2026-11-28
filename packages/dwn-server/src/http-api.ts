@@ -21,6 +21,7 @@ import type { SocketConnection } from './connection/socket-connection.js';
 import log from 'loglevel';
 
 import { Convert } from '@enbox/common';
+import { isX25519PublicJwk } from '@enbox/crypto';
 import { register } from 'prom-client';
 import {
   createJsonRpcErrorResponse,
@@ -1155,97 +1156,42 @@ export class HttpApi {
   // Connect routes
   // ---------------------------------------------------------------------------
 
-  async #matchConnectRoutes(
+  #matchConnectRoutes(
     req: Request, path: string, method: string
   ): Promise<Response | null> {
-    // POST /connect/par
-    const parResult = await this.#handleConnectPar(req, path, method);
-    if (parResult !== null) {
-      return parResult;
+    if (method === 'POST') {
+      const postRoutes = new Map<string, (r: Request) => Promise<Response>>([
+        ['/connect/par', (r): Promise<Response> => this.#handleConnectPar(r)],
+        ['/connect/callback', (r): Promise<Response> => this.#handleConnectCallback(r)],
+        ['/connect/handshake', (r): Promise<Response> => this.#handleConnectHandshake(r)],
+        ['/connect/complete', (r): Promise<Response> => this.#handleConnectComplete(r)],
+      ]);
+      const handler = postRoutes.get(path);
+      return handler ? handler(req) : Promise.resolve(null);
     }
 
-    // GET /connect/authorize/:requestId.jwt
-    {
-      const match = /^\/connect\/authorize\/([^/]+)\.jwt$/.exec(path);
-      if (match && method === 'GET') {
-        return this.#handleConnectAuthorize(match[1]);
+    if (method !== 'GET') {
+      return Promise.resolve(null);
+    }
+
+    const getRoutes: Array<[RegExp, (param: string) => Promise<Response>]> = [
+      [/^\/connect\/authorize\/([^/]+)\.jwt$/, (id): Promise<Response> => this.#handleConnectAuthorize(id)],
+      [/^\/connect\/status\/([^/]+)$/, (id): Promise<Response> => this.#handleConnectRequestStatus(id)],
+      [/^\/connect\/handshake\/([^/]+)$/, (state): Promise<Response> => this.#handleConnectHandshakeState(state)],
+      [/^\/connect\/complete\/([^/]+)$/, (state): Promise<Response> => this.#handleConnectCompleteState(state)],
+      [/^\/connect\/token\/([^/]+)\.jwt$/, (state): Promise<Response> => this.#handleConnectToken(state)],
+    ];
+    for (const [pattern, handler] of getRoutes) {
+      const match = pattern.exec(path);
+      if (match) {
+        return handler(match[1]);
       }
     }
 
-    // POST /connect/callback
-    const callbackResult = await this.#handleConnectCallback(req, path, method);
-    if (callbackResult !== null) {
-      return callbackResult;
-    }
-
-    // GET /connect/status/:requestId
-    // Observational progress for the requesting app: whether the wallet has
-    // claimed (fetched) the pushed request. Always 200 so pollers can treat
-    // any non-2xx as transport failure; unknown or expired IDs read as
-    // `claimed: false`.
-    {
-      const match = /^\/connect\/status\/([^/]+)$/.exec(path);
-      if (match && method === 'GET') {
-        return this.#handleConnectRequestStatus(match[1]);
-      }
-    }
-
-    // POST /connect/handshake
-    // Wallet publishes its ephemeral X25519 handshake public key keyed by
-    // `state` so the requesting app can derive the pre-approval SAS
-    // verification symbols.
-    const handshakeResult = await this.#handleConnectHandshake(req, path, method);
-    if (handshakeResult !== null) {
-      return handshakeResult;
-    }
-
-    // GET /connect/handshake/:state
-    // Always 200 so pollers can treat any non-2xx as transport failure;
-    // unknown or expired states read as `{ ready: false }`.
-    {
-      const match = /^\/connect\/handshake\/([^/]+)$/.exec(path);
-      if (match && method === 'GET') {
-        return this.#handleConnectHandshakeState(match[1]);
-      }
-    }
-
-    // POST /connect/complete
-    // Observational completion signal from the requesting app: it fetched
-    // and successfully opened the wallet's response. Keyed by the same
-    // opaque `state` correlator as the token route; the wallet polls the
-    // matching GET to flip its pairing screen to "connected" instead of
-    // asking the user to dismiss it blind.
-    const completeResult = await this.#handleConnectComplete(req, path, method);
-    if (completeResult !== null) {
-      return completeResult;
-    }
-
-    // GET /connect/complete/:state
-    // Always 200 so pollers can treat any non-2xx as transport failure;
-    // unknown or expired states read as `completed: false`.
-    {
-      const match = /^\/connect\/complete\/([^/]+)$/.exec(path);
-      if (match && method === 'GET') {
-        return this.#handleConnectCompleteState(match[1]);
-      }
-    }
-
-    // GET /connect/token/:state.jwt
-    {
-      const match = /^\/connect\/token\/([^/]+)\.jwt$/.exec(path);
-      if (match && method === 'GET') {
-        return this.#handleConnectToken(match[1]);
-      }
-    }
-
-    return null;
+    return Promise.resolve(null);
   }
 
-  async #handleConnectPar(req: Request, path: string, method: string): Promise<Response | null> {
-    if (!(method === 'POST' && path === '/connect/par')) {
-      return null;
-    }
-
+  async #handleConnectPar(req: Request): Promise<Response> {
     log.info('Storing Pushed Authorization Request (PAR) request...');
     const body = await req.json();
 
@@ -1286,11 +1232,7 @@ export class HttpApi {
     }
   }
 
-  async #handleConnectCallback(req: Request, path: string, method: string): Promise<Response | null> {
-    if (!(method === 'POST' && path === '/connect/callback')) {
-      return null;
-    }
-
+  async #handleConnectCallback(req: Request): Promise<Response> {
     log.info('Storing Identity Provider (wallet) pushed response with ID token...');
 
     // The agent's submitConnectResponse sends application/x-www-form-urlencoded
@@ -1330,16 +1272,25 @@ export class HttpApi {
     return Response.json({ claimed }, { status: 200 });
   }
 
-  static readonly #MAX_CONNECT_HANDSHAKE_BODY_BYTES = 4096;
+  static readonly #MAX_CONNECT_JSON_BODY_BYTES = 4096;
   static readonly #CONNECT_STATE_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
-  static readonly #CANONICAL_X25519_B64U = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+
+  #connectStatus(code: number, message: string): Response {
+    return Response.json({
+      ok     : code >= 200 && code < 300,
+      status : { code, message },
+    }, { status: code });
+  }
 
   async #readBoundedJsonBody(req: Request, maxBytes: number): Promise<
     { status: 'ok'; value: unknown } | { status: 'too-large' } | { status: 'invalid' }
   > {
-    const contentLength = Number(req.headers.get('content-length'));
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      return { status: 'too-large' };
+    const rawContentLength = req.headers.get('content-length');
+    if (rawContentLength !== null) {
+      const contentLength = Number(rawContentLength);
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        return { status: 'too-large' };
+      }
     }
     if (req.body === null) {
       return { status: 'invalid' };
@@ -1351,6 +1302,7 @@ export class HttpApi {
     let text = '';
     try {
       for (;;) {
+        // NOSONAR: S9382 — streaming chunks must be read sequentially to enforce the byte ceiling.
         const { done, value } = await reader.read();
         if (done) {
           break;
@@ -1374,128 +1326,87 @@ export class HttpApi {
     }
   }
 
-  #decodeStateParam(rawState: string): string | undefined {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(rawState);
-    } catch {
-      return undefined;
-    }
-    return HttpApi.#CONNECT_STATE_PATTERN.test(decoded) ? decoded : undefined;
-  }
-
-  async #handleConnectHandshake(req: Request, path: string, method: string): Promise<Response | null> {
-    if (!(method === 'POST' && path === '/connect/handshake')) {
-      return null;
-    }
-
-    const parsedBody = await this.#readBoundedJsonBody(req, HttpApi.#MAX_CONNECT_HANDSHAKE_BODY_BYTES);
+  async #readConnectStateBody(
+    req: Request,
+    label: string,
+  ): Promise<Response | { state: string; body: Record<string, unknown> }> {
+    const parsedBody = await this.#readBoundedJsonBody(req, HttpApi.#MAX_CONNECT_JSON_BODY_BYTES);
     if (parsedBody.status === 'too-large') {
-      return Response.json({
-        ok     : false,
-        status : { code: 413, message: 'Payload Too Large: Connect handshake body exceeds maximum size' },
-      }, { status: 413 });
+      return this.#connectStatus(413, `Payload Too Large: Connect ${label} body exceeds maximum size`);
     }
-    const body = parsedBody.status === 'ok' && typeof parsedBody.value === 'object' && parsedBody.value !== null
-      ? parsedBody.value as { state?: unknown; walletEpk?: unknown }
+    const body = parsedBody.status === 'ok'
+      && typeof parsedBody.value === 'object'
+      && parsedBody.value !== null
+      && !Array.isArray(parsedBody.value)
+      ? parsedBody.value as Record<string, unknown>
       : undefined;
     const state = body?.state;
-    const walletEpk = body?.walletEpk;
-
     if (typeof state !== 'string' || !HttpApi.#CONNECT_STATE_PATTERN.test(state)) {
-      return Response.json({
-        ok     : false,
-        status : { code: 400, message: 'Bad Request: Invalid or missing \'state\' parameter' },
-      }, { status: 400 });
+      return this.#connectStatus(400, 'Bad Request: Invalid or missing \'state\' parameter');
+    }
+    return { state, body: body! };
+  }
+
+  #requireDecodedState(rawState: string): Response | string {
+    try {
+      const decoded = decodeURIComponent(rawState);
+      if (HttpApi.#CONNECT_STATE_PATTERN.test(decoded)) {
+        return decoded;
+      }
+    } catch {
+      // Malformed percent-encoding falls through to 400.
+    }
+    return this.#connectStatus(400, 'Bad Request: Invalid \'state\' parameter');
+  }
+
+  async #handleConnectHandshake(req: Request): Promise<Response> {
+    const parsed = await this.#readConnectStateBody(req, 'handshake');
+    if (parsed instanceof Response) {
+      return parsed;
     }
 
-    if (
-      typeof walletEpk !== 'object'
-      || walletEpk === null
-      || Array.isArray(walletEpk)
-      || (walletEpk as Record<string, unknown>).kty !== 'OKP'
-      || (walletEpk as Record<string, unknown>).crv !== 'X25519'
-      || typeof (walletEpk as Record<string, unknown>).x !== 'string'
-      || !HttpApi.#CANONICAL_X25519_B64U.test((walletEpk as Record<string, unknown>).x as string)
-      || (walletEpk as Record<string, unknown>).d !== undefined
-    ) {
-      return Response.json({
-        ok     : false,
-        status : { code: 400, message: 'Bad Request: \'walletEpk\' must be a public X25519 OKP JWK' },
-      }, { status: 400 });
+    const walletEpk = parsed.body.walletEpk;
+    if (!isX25519PublicJwk(walletEpk)) {
+      return this.#connectStatus(400, 'Bad Request: \'walletEpk\' must be a public X25519 OKP JWK');
     }
 
-    const publicKey = {
-      kty : 'OKP',
-      crv : 'X25519',
-      x   : (walletEpk as Record<string, unknown>).x,
-    };
-    const outcome = await this.connectServer.setConnectHandshake(state, publicKey);
+    const publicKey = { kty: 'OKP', crv: 'X25519', x: walletEpk.x };
+    const outcome = await this.connectServer.setConnectHandshake(parsed.state, publicKey);
     if (outcome === 'conflict') {
-      return Response.json({
-        ok     : false,
-        status : { code: 409, message: 'Conflict: Handshake key already registered for this state' },
-      }, { status: 409 });
+      return this.#connectStatus(409, 'Conflict: Handshake key already registered for this state');
     }
 
-    return Response.json({
-      ok     : true,
-      status : { code: outcome === 'created' ? 201 : 200, message: outcome === 'created' ? 'Created' : 'OK' },
-    }, { status: outcome === 'created' ? 201 : 200 });
+    return outcome === 'created'
+      ? this.#connectStatus(201, 'Created')
+      : this.#connectStatus(200, 'OK');
   }
 
   async #handleConnectHandshakeState(rawState: string): Promise<Response> {
-    const state = this.#decodeStateParam(rawState);
-    if (state === undefined) {
-      return Response.json({
-        ok     : false,
-        status : { code: 400, message: 'Bad Request: Invalid \'state\' parameter' },
-      }, { status: 400 });
+    const state = this.#requireDecodedState(rawState);
+    if (state instanceof Response) {
+      return state;
     }
     const walletEpk = await this.connectServer.getConnectHandshake(state);
-    if (walletEpk === undefined) {
-      return Response.json({ ready: false }, { status: 200 });
-    }
-    return Response.json({ ready: true, walletEpk }, { status: 200 });
+    return Response.json(
+      walletEpk === undefined ? { ready: false } : { ready: true, walletEpk },
+      { status: 200 },
+    );
   }
 
-  async #handleConnectComplete(req: Request, path: string, method: string): Promise<Response | null> {
-    if (!(method === 'POST' && path === '/connect/complete')) {
-      return null;
+  async #handleConnectComplete(req: Request): Promise<Response> {
+    const parsed = await this.#readConnectStateBody(req, 'completion');
+    if (parsed instanceof Response) {
+      return parsed;
     }
 
-    const parsedBody = await this.#readBoundedJsonBody(req, HttpApi.#MAX_CONNECT_HANDSHAKE_BODY_BYTES);
-    if (parsedBody.status === 'too-large') {
-      return Response.json({
-        ok     : false,
-        status : { code: 413, message: 'Payload Too Large: Connect completion body exceeds maximum size' },
-      }, { status: 413 });
-    }
-    const body = parsedBody.status === 'ok' && typeof parsedBody.value === 'object' && parsedBody.value !== null
-      ? parsedBody.value as { state?: unknown }
-      : undefined;
-    const state = body?.state;
-    if (typeof state !== 'string' || !HttpApi.#CONNECT_STATE_PATTERN.test(state)) {
-      return Response.json({
-        ok     : false,
-        status : { code: 400, message: 'Bad Request: Invalid or missing \'state\' parameter' },
-      }, { status: 400 });
-    }
-
-    await this.connectServer.setConnectComplete(state);
-    return Response.json({
-      ok     : true,
-      status : { code: 201, message: 'Created' },
-    }, { status: 201 });
+    await this.connectServer.setConnectComplete(parsed.state);
+    return this.#connectStatus(201, 'Created');
   }
 
   async #handleConnectCompleteState(rawState: string): Promise<Response> {
-    const state = this.#decodeStateParam(rawState);
-    if (state === undefined) {
-      return Response.json({
-        ok     : false,
-        status : { code: 400, message: 'Bad Request: Invalid \'state\' parameter' },
-      }, { status: 400 });
+    const state = this.#requireDecodedState(rawState);
+    if (state instanceof Response) {
+      return state;
     }
     const completed = await this.connectServer.isConnectComplete(state);
     return Response.json({ completed }, { status: 200 });

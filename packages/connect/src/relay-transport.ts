@@ -8,6 +8,9 @@
  *   Pushed Authorization Request) and receives a single-use `request_uri`.
  * - `GET /connect/authorize/{requestId}.jwt` — the wallet fetches the sealed
  *   request; the pointer is single-use and expires server-side.
+ * - `POST /connect/handshake` / `GET /connect/handshake/{state}` — the wallet
+ *   publishes its ephemeral X25519 handshake public key (`walletEpk`) before
+ *   approval so the app can derive and show the 3 SAS verification symbols.
  * - `POST /connect/callback` — the wallet posts the sealed response (or the
  *   literal `DENIED` token) keyed by the request `state`.
  * - `GET /connect/token/{state}.jwt` — the app polls for the response. The
@@ -257,20 +260,26 @@ export class RelayClientTransport implements ConnectTransport {
     throw new Error(`Connect: timed out after ${this._timeoutMs}ms waiting for the wallet response.`);
   }
 
+  /** Executes one abort-aware poll fetch, returning `undefined` on transient network errors. */
+  private async fetchPoll(url: string): Promise<Response | undefined> {
+    try {
+      return await this._fetch(url, { signal: this.requestSignal() });
+    } catch (error) {
+      if (this._signal?.aborted) {
+        throw error;
+      }
+      return undefined;
+    }
+  }
+
   /**
    * Polls `handshakeUrl` once for the wallet's ephemeral X25519 handshake
    * public key (`walletEpk`). Returns the validated public JWK when published,
    * or `undefined` while not ready yet.
    */
   private async pollHandshake(handshakeUrl: string): Promise<Jwk | undefined> {
-    let response: Response;
-    try {
-      response = await this._fetch(handshakeUrl, { signal: this.requestSignal() });
-    } catch (error) {
-      if (this._signal?.aborted) {
-        throw error;
-      }
-      // Retry transient network hiccups (e.g. backgrounded mobile tab) until deadline.
+    const response = await this.fetchPoll(handshakeUrl);
+    if (response === undefined) {
       return undefined;
     }
 
@@ -324,13 +333,8 @@ export class RelayClientTransport implements ConnectTransport {
    * the wait; an empty 2xx (204) falls through to the next poll.
    */
   private async pollToken(tokenUrl: string): Promise<string | undefined> {
-    let response: Response;
-    try {
-      response = await this._fetch(tokenUrl, { signal: this.requestSignal() });
-    } catch (error) {
-      if (this._signal?.aborted) {
-        throw error;
-      }
+    const response = await this.fetchPoll(tokenUrl);
+    if (response === undefined) {
       return undefined;
     }
 
@@ -356,7 +360,10 @@ export class RelayClientTransport implements ConnectTransport {
    */
   private async pollClaimedStatus(statusUrl: string, markClaimed: () => void): Promise<void> {
     try {
-      const statusResponse = await this._fetch(statusUrl, { signal: this.requestSignal() });
+      const statusResponse = await this.fetchPoll(statusUrl);
+      if (statusResponse === undefined) {
+        return;
+      }
       if (statusResponse.ok) {
         const status = await statusResponse.json() as { claimed?: unknown };
         if (status.claimed === true) {

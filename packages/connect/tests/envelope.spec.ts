@@ -623,27 +623,7 @@ describe('connect envelope', () => {
       expect(opened).toEqual(response);
     });
 
-    it('should fail closed when apv is present on a response where no handshake key was expected', async () => {
-      const { clientDid, request, responsePrivateKey } = await createTestRequest();
-      const walletSigner = await DidJwk.create();
-      const walletHandshake = await X25519.generateKey();
-      const handshakeKey: Jwk = { kty: 'OKP', crv: 'X25519', x: walletHandshake.x };
-
-      const jwe = await sealResponse({
-        response    : buildTestResponse(request),
-        signer      : walletSigner,
-        responseKey : request.responseKey,
-        handshakeKey,
-      });
-
-      await expect(openResponse({
-        jwe,
-        recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state },
-      })).rejects.toThrow('"apv"');
-    });
-
-    it('should fail closed when the handshake key in apv does not match', async () => {
+    it('should fail closed when apv is unexpected, mismatched, or missing', async () => {
       const { clientDid, request, responsePrivateKey } = await createTestRequest();
       const walletSigner = await DidJwk.create();
       const handshakeA = await X25519.generateKey();
@@ -651,37 +631,25 @@ describe('connect envelope', () => {
       const keyA: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakeA.x };
       const keyB: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakeB.x };
 
-      const jwe = await sealResponse({
+      const withKeyA = await sealResponse({
         response     : buildTestResponse(request),
         signer       : walletSigner,
         responseKey  : request.responseKey,
         handshakeKey : keyA,
       });
-
-      await expect(openResponse({
-        jwe,
-        recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state, handshakeKey: keyB },
-      })).rejects.toThrow('"apv"');
-    });
-
-    it('should fail closed when a handshake key was expected but apv was omitted', async () => {
-      const { clientDid, request, responsePrivateKey } = await createTestRequest();
-      const walletSigner = await DidJwk.create();
-      const handshakeA = await X25519.generateKey();
-      const keyA: Jwk = { kty: 'OKP', crv: 'X25519', x: handshakeA.x };
-
-      const jwe = await sealResponse({
+      const withoutKey = await sealResponse({
         response    : buildTestResponse(request),
         signer      : walletSigner,
         responseKey : request.responseKey,
       });
 
-      await expect(openResponse({
-        jwe,
-        recipientPrivateKey : responsePrivateKey,
-        expected            : { clientDid: clientDid.uri, nonce: request.nonce, state: request.state, handshakeKey: keyA },
-      })).rejects.toThrow('"apv"');
+      const baseExpected = { clientDid: clientDid.uri, nonce: request.nonce, state: request.state };
+      await expect(openResponse({ jwe: withKeyA, recipientPrivateKey: responsePrivateKey, expected: baseExpected }))
+        .rejects.toThrow('"apv"');
+      await expect(openResponse({ jwe: withKeyA, recipientPrivateKey: responsePrivateKey, expected: { ...baseExpected, handshakeKey: keyB } }))
+        .rejects.toThrow('"apv"');
+      await expect(openResponse({ jwe: withoutKey, recipientPrivateKey: responsePrivateKey, expected: { ...baseExpected, handshakeKey: keyA } }))
+        .rejects.toThrow('"apv"');
     });
 
     it('should reject an aud mismatch', async () => {

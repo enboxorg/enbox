@@ -29,7 +29,7 @@ import type { ConnectAuthenticationResponse, ConnectPermissionRequest, ConnectRe
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
-import { CompactJwe, isOkpPublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
+import { CompactJwe, isX25519PublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 import { ModulesConfigure, validatePermissionScope } from '@enbox/dwn-sdk-js';
 
 import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
@@ -118,22 +118,6 @@ function requireOptionalConnectRequestType(payload: Record<string, unknown>, con
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Canonical 32-byte X25519 base64url coordinate (43 chars, zero unused low 2 bits). */
-const CANONICAL_X25519_B64U = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
-
-/** Returns whether `value` is a canonical 32-byte base64url-encoded X25519 coordinate. */
-export function isCanonicalX25519Coordinate(value: unknown): value is string {
-  return typeof value === 'string' && CANONICAL_X25519_B64U.test(value);
-}
-
-/** Returns whether `value` is a public (no `d`) X25519 OKP JWK with a canonical 32-byte `x`. */
-function isX25519PublicJwk(value: unknown): value is Jwk {
-  return isPlainObject(value)
-    && isOkpPublicJwk(value)
-    && value.crv === 'X25519'
-    && isCanonicalX25519Coordinate(value.x);
 }
 
 /**

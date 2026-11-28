@@ -241,140 +241,78 @@ describe('Connect scenarios', () => {
     }
   });
 
-  it('stores write-once SAS handshake keys and rejects conflicting overwrites', async () => {
+  const postJson = (url: string, body: unknown): Promise<Response> => fetch(url, {
+    method  : 'POST',
+    headers : { 'Content-Type': 'application/json' },
+    body    : JSON.stringify(body),
+  });
+
+  it('stores write-once SAS handshake keys, handles concurrent POSTs, and cleans up on complete', async () => {
     const state = `handshake-${randomUUID()}`;
     const handshakeGetUrl = `${connectBaseUrl}/connect/handshake/${state}`;
     const handshakePostUrl = `${connectBaseUrl}/connect/handshake`;
     const walletEpkA = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
     const walletEpkB = { kty: 'OKP', crv: 'X25519', x: 'vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ' };
 
-    // 1. Before the wallet posts a handshake key, GET reports ready: false.
-    let getResult = await fetch(handshakeGetUrl, { method: 'GET' });
+    // Before the wallet posts a handshake key, GET reports ready: false.
+    let getResult = await fetch(handshakeGetUrl);
     expect(getResult.status).toBe(200);
     expect(await getResult.json()).toEqual({ ready: false });
 
-    // 2. Invalid payloads are rejected with 400.
-    for (const badBody of [
-      {},
-      { state },
-      { state, walletEpk: { kty: 'OKP', crv: 'Ed25519', x: walletEpkA.x } },
-      { state, walletEpk: { ...walletEpkA, d: 'private-material' } },
-      { state, walletEpk: { kty: 'OKP', crv: 'X25519', x: '' } },
-    ]) {
-      const badRes = await fetch(handshakePostUrl, {
-        method  : 'POST',
-        headers : { 'Content-Type': 'application/json' },
-        body    : JSON.stringify(badBody),
-      });
-      expect(badRes.status).toBe(400);
-    }
-
-    // 3. First write creates the handshake entry (201).
-    const firstPost = await fetch(handshakePostUrl, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state, walletEpk: walletEpkA }),
-    });
-    expect(firstPost.status).toBe(201);
-
-    // 4. GET returns ready: true and the exact public key, non-destructively.
+    // First write creates (201); GET is non-destructive; identical re-POST is idempotent (200); conflict is 409.
+    expect((await postJson(handshakePostUrl, { state, walletEpk: walletEpkA })).status).toBe(201);
     for (let i = 0; i < 2; i++) {
-      getResult = await fetch(handshakeGetUrl, { method: 'GET' });
+      getResult = await fetch(handshakeGetUrl);
       expect(getResult.status).toBe(200);
       expect(await getResult.json()).toEqual({ ready: true, walletEpk: walletEpkA });
     }
+    expect((await postJson(handshakePostUrl, { state, walletEpk: walletEpkA })).status).toBe(200);
+    expect((await postJson(handshakePostUrl, { state, walletEpk: walletEpkB })).status).toBe(409);
 
-    // 5. Re-posting the identical key is idempotent (200).
-    const retryPost = await fetch(handshakePostUrl, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state, walletEpk: walletEpkA }),
-    });
-    expect(retryPost.status).toBe(200);
+    // Original key remains intact after rejected conflict.
+    expect(await (await fetch(handshakeGetUrl)).json()).toEqual({ ready: true, walletEpk: walletEpkA });
 
-    // 6. Attempting to overwrite with a different key is rejected (409).
-    const conflictPost = await fetch(handshakePostUrl, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state, walletEpk: walletEpkB }),
-    });
-    expect(conflictPost.status).toBe(409);
-
-    // Original key remains intact after the rejected conflict.
-    getResult = await fetch(handshakeGetUrl, { method: 'GET' });
-    expect(getResult.status).toBe(200);
-    expect(await getResult.json()).toEqual({ ready: true, walletEpk: walletEpkA });
-
-    // 7. Invalid state / non-canonical coordinate / oversized body / malformed percent-encoding.
-    const badCoordRes = await fetch(handshakePostUrl, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state: `badcoord-${randomUUID()}`, walletEpk: { kty: 'OKP', crv: 'X25519', x: 'short' } }),
-    });
-    expect(badCoordRes.status).toBe(400);
-
-    const badStateRes = await fetch(handshakePostUrl, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state: 'bad/state with spaces', walletEpk: walletEpkA }),
-    });
-    expect(badStateRes.status).toBe(400);
-
-    const oversizedRes = await fetch(handshakePostUrl, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state, walletEpk: walletEpkA, pad: 'x'.repeat(5_000) }),
-    });
-    expect(oversizedRes.status).toBe(413);
-
-    const malformedUriRes = await fetch(`${connectBaseUrl}/connect/handshake/%ZZ`, { method: 'GET' });
-    expect(malformedUriRes.status).toBe(400);
-
-    const malformedCompleteUriRes = await fetch(`${connectBaseUrl}/connect/complete/%ZZ`, { method: 'GET' });
-    expect(malformedCompleteUriRes.status).toBe(400);
-
-    // 8. Concurrent identical or conflicting POSTs never fail with 500.
+    // Concurrent identical and conflicting POSTs never fail with 500.
     const raceIdenticalState = `race-same-${randomUUID()}`;
     const [r1, r2] = await Promise.all([
-      fetch(handshakePostUrl, {
-        method  : 'POST',
-        headers : { 'Content-Type': 'application/json' },
-        body    : JSON.stringify({ state: raceIdenticalState, walletEpk: walletEpkA }),
-      }),
-      fetch(handshakePostUrl, {
-        method  : 'POST',
-        headers : { 'Content-Type': 'application/json' },
-        body    : JSON.stringify({ state: raceIdenticalState, walletEpk: walletEpkA }),
-      }),
+      postJson(handshakePostUrl, { state: raceIdenticalState, walletEpk: walletEpkA }),
+      postJson(handshakePostUrl, { state: raceIdenticalState, walletEpk: walletEpkA }),
     ]);
     expect([r1.status, r2.status].sort()).toEqual([200, 201]);
 
     const raceConflictState = `race-diff-${randomUUID()}`;
     const [c1, c2] = await Promise.all([
-      fetch(handshakePostUrl, {
-        method  : 'POST',
-        headers : { 'Content-Type': 'application/json' },
-        body    : JSON.stringify({ state: raceConflictState, walletEpk: walletEpkA }),
-      }),
-      fetch(handshakePostUrl, {
-        method  : 'POST',
-        headers : { 'Content-Type': 'application/json' },
-        body    : JSON.stringify({ state: raceConflictState, walletEpk: walletEpkB }),
-      }),
+      postJson(handshakePostUrl, { state: raceConflictState, walletEpk: walletEpkA }),
+      postJson(handshakePostUrl, { state: raceConflictState, walletEpk: walletEpkB }),
     ]);
     expect([c1.status, c2.status].sort()).toEqual([201, 409]);
 
-    // 9. Completing the connect session cleans up the handshake entry.
-    const completeRes = await fetch(`${connectBaseUrl}/connect/complete`, {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify({ state }),
-    });
-    expect(completeRes.status).toBe(201);
+    // Completing the connect session cleans up the handshake entry.
+    expect((await postJson(`${connectBaseUrl}/connect/complete`, { state })).status).toBe(201);
+    expect(await (await fetch(handshakeGetUrl)).json()).toEqual({ ready: false });
+  });
 
-    const afterComplete = await fetch(handshakeGetUrl, { method: 'GET' });
-    expect(afterComplete.status).toBe(200);
-    expect(await afterComplete.json()).toEqual({ ready: false });
+  it('rejects malformed payloads, bad state encoding, and oversized bodies on handshake/complete routes', async () => {
+    const state = `validate-${randomUUID()}`;
+    const handshakePostUrl = `${connectBaseUrl}/connect/handshake`;
+    const completePostUrl = `${connectBaseUrl}/connect/complete`;
+    const walletEpk = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
+
+    for (const badBody of [
+      {},
+      { state },
+      { state: 'bad/state with spaces', walletEpk },
+      { state, walletEpk: { kty: 'OKP', crv: 'Ed25519', x: walletEpk.x } },
+      { state, walletEpk: { ...walletEpk, d: 'private-material' } },
+      { state, walletEpk: { kty: 'OKP', crv: 'X25519', x: 'short' } },
+    ]) {
+      expect((await postJson(handshakePostUrl, badBody)).status).toBe(400);
+    }
+
+    expect((await postJson(handshakePostUrl, { state, walletEpk, pad: 'x'.repeat(5_000) })).status).toBe(413);
+    expect((await postJson(completePostUrl, { state, pad: 'x'.repeat(5_000) })).status).toBe(413);
+    expect((await fetch(`${connectBaseUrl}/connect/handshake/%ZZ`)).status).toBe(400);
+    expect((await fetch(`${connectBaseUrl}/connect/complete/%ZZ`)).status).toBe(400);
   });
 
   it('should clean up objects that are expired', async () => {

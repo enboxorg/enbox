@@ -1543,11 +1543,6 @@ const MODAL_STYLES = `
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     @keyframes stageIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes shake {
-      0%, 100% { transform: translateX(0); }
-      20%, 60% { transform: translateX(-6px); }
-      40%, 80% { transform: translateX(6px); }
-    }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes claimedPulse {
       0%, 100% { transform: scale(0.85); opacity: 0.7; }

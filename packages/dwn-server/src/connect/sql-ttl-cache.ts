@@ -71,9 +71,14 @@ export class SqlTtlCache {
    * Inserts a cache entry only if no non-expired entry already exists for `key`.
    * Removes any expired entry for `key` first so reusing an expired key succeeds.
    *
-   * @returns `true` if the entry was inserted, `false` if a live entry already existed.
+   * @returns `{ inserted: true }` when inserted, or `{ inserted: false, existing }`
+   *          when a live entry already exists.
    */
-  public async insertIfAbsent(key: string, value: object, ttl: number): Promise<boolean> {
+  public async insertIfAbsent(
+    key: string,
+    value: object,
+    ttl: number,
+  ): Promise<{ inserted: boolean; existing?: object }> {
     const now = Date.now();
     await this.db
       .deleteFrom(SqlTtlCache.cacheTableName)
@@ -88,11 +93,11 @@ export class SqlTtlCache {
         .insertInto(SqlTtlCache.cacheTableName)
         .values({ key, value: objectString, expiry })
         .execute();
-      return true;
+      return { inserted: true };
     } catch (error) {
       const existing = await this.get(key);
       if (existing !== undefined) {
-        return false;
+        return { inserted: false, existing };
       }
       throw error;
     }

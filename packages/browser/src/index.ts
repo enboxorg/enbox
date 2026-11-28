@@ -51,18 +51,13 @@ export * from '@enbox/auth/browser';
 // transports: opening/sealing envelopes and the deny token.
 
 export {
-  buildVerificationGrid,
   CONNECT_DENIED_TOKEN,
-  CONNECT_VERIFICATION_GRID_SIZE,
   CONNECT_VERIFICATION_SYMBOL_COUNT,
   CONNECT_VERIFICATION_SYMBOLS,
   ConnectProvider,
   createConnectVerificationHandshake,
-  deriveConnectVerificationSymbols,
-  formatVerificationLabels,
   formatVerificationSymbols,
   postRelayHandshake,
-  verifyVerificationSelection,
 } from '@enbox/connect';
 export type { ConnectApproval, ConnectRequest, ConnectVerificationHandshake, ConnectVerificationSymbol } from '@enbox/connect';
 

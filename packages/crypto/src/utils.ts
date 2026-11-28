@@ -147,6 +147,17 @@ export class CryptoUtils {
   }
 
   /**
+   * Checks whether every byte in `bytes` is zero without short-circuiting.
+   */
+  static isAllZeroBytes(bytes: Uint8Array): boolean {
+    let nonZeroAccumulator = 0;
+    for (const byte of bytes) {
+      nonZeroAccumulator |= byte;
+    }
+    return nonZeroAccumulator === 0;
+  }
+
+  /**
    * Generates secure pseudorandom values of the specified length using
    * `crypto.getRandomValues`, which defers to the operating system.
    *

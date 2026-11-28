@@ -163,69 +163,18 @@ export type ModulePermissionOptions = {
  * @returns The kernel `ConnectResult`, or `undefined` when the user denied
  *          the request in the wallet.
  */
-async function initClient({
-  displayName,
-  appIcon,
-  applicationId,
-  clientMetadata,
-  requestedSessionTtlSeconds,
-  preSupplyDelegateDid,
-  delegatePortableDid,
-  requestType,
-  expectedProviderDid,
-  authentication,
-  authenticationResolver,
-  onAuthenticationRequest,
-  connectServerUrl,
-  walletUri,
-  permissionRequests,
-  onWalletUriReady,
-  onVerificationReady,
-  timeoutMs,
-  pollIntervalMs,
-}: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
-  if ((requestType as ConnectRequestType | undefined) === 'authenticate') {
-    throw new Error('Connect: use WalletConnect.initAuthentication for an authentication-only request.');
-  }
-  if (requestType === 'refresh' && delegatePortableDid === undefined) {
-    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
-  }
-
-  const localDelegatePortableDid = await resolveLocalDelegatePortableDid({
-    delegatePortableDid,
-    preSupplyDelegateDid,
-  });
-
-  const client = new ConnectClient({
-    transport: new RelayClientTransport({
-      connectServerUrl,
-      walletUri,
-      timeoutMs,
-      pollIntervalMs,
-    }),
-    onWalletUriReady: async (handoff): Promise<void> => { await onWalletUriReady(handoff.walletUri); },
-    onVerificationReady,
-    authenticationResolver,
-    onAuthenticationRequest,
-  });
-
-  return await client.connect({
-    appName             : displayName,
-    appIcon,
-    applicationId,
-    clientMetadata,
-    permissionRequests,
-    requestedSessionTtlSeconds,
-    delegatePortableDid : localDelegatePortableDid,
-    requestType,
-    expectedProviderDid,
-    authentication,
-  });
-}
-
-/** Run a relay login without importing credentials or creating an AgentSession. */
-async function initAuthentication(options: WalletAuthenticationClientOptions): Promise<ConnectAuthenticationResult | undefined> {
-  const client = new ConnectClient({
+function createRelayConnectClient(options: Pick<
+  WalletConnectClientOptions,
+  | 'connectServerUrl'
+  | 'walletUri'
+  | 'timeoutMs'
+  | 'pollIntervalMs'
+  | 'onWalletUriReady'
+  | 'onVerificationReady'
+  | 'authenticationResolver'
+  | 'onAuthenticationRequest'
+>): ConnectClient {
+  return new ConnectClient({
     transport: new RelayClientTransport({
       connectServerUrl : options.connectServerUrl,
       walletUri        : options.walletUri,
@@ -237,7 +186,38 @@ async function initAuthentication(options: WalletAuthenticationClientOptions): P
     authenticationResolver  : options.authenticationResolver,
     onAuthenticationRequest : options.onAuthenticationRequest,
   });
-  return await client.authenticate({
+}
+
+async function initClient(options: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
+  if ((options.requestType as ConnectRequestType | undefined) === 'authenticate') {
+    throw new Error('Connect: use WalletConnect.initAuthentication for an authentication-only request.');
+  }
+  if (options.requestType === 'refresh' && options.delegatePortableDid === undefined) {
+    throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
+  }
+
+  const localDelegatePortableDid = await resolveLocalDelegatePortableDid({
+    delegatePortableDid  : options.delegatePortableDid,
+    preSupplyDelegateDid : options.preSupplyDelegateDid,
+  });
+
+  return await createRelayConnectClient(options).connect({
+    appName                    : options.displayName,
+    appIcon                    : options.appIcon,
+    applicationId              : options.applicationId,
+    clientMetadata             : options.clientMetadata,
+    permissionRequests         : options.permissionRequests,
+    requestedSessionTtlSeconds : options.requestedSessionTtlSeconds,
+    delegatePortableDid        : localDelegatePortableDid,
+    requestType                : options.requestType,
+    expectedProviderDid        : options.expectedProviderDid,
+    authentication             : options.authentication,
+  });
+}
+
+/** Run a relay login without importing credentials or creating an AgentSession. */
+async function initAuthentication(options: WalletAuthenticationClientOptions): Promise<ConnectAuthenticationResult | undefined> {
+  return await createRelayConnectClient(options).authenticate({
     appName             : options.displayName,
     appIcon             : options.appIcon,
     applicationId       : options.applicationId,
