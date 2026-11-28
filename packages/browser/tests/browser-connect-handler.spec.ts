@@ -7,9 +7,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { BrowserConnectHandler } from '../src/browser-connect-handler.js';
 import { runConnectModal } from '../src/ui/connect-modal.js';
+import {
+  completeRedirectConnectFromWindowWithMeta,
+  getPendingRedirectConnectType,
+} from '../src/redirect-connect.js';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 vi.mock('../src/ui/connect-modal.js', { spy: true });
+vi.mock('../src/redirect-connect.js', { spy: true });
 
 describe('BrowserConnectHandler', () => {
   beforeEach((): void => {
@@ -90,5 +95,45 @@ describe('BrowserConnectHandler', () => {
 
     await expect(handler.requestAccess({ permissionRequests: [] })).rejects.toBeInstanceOf(TypeError);
     expect(runConnectModal).not.toHaveBeenCalled();
+  });
+
+  it('validates redirectUri eagerly when creating BrowserConnectHandler', (): void => {
+    expect(() => BrowserConnectHandler({ redirectUri: 'http://evil.example/callback' })).toThrow('reply.redirectUri');
+    expect(() => BrowserConnectHandler({ redirectUri: 'https://app.example/callback?q=1' })).toThrow('reply.redirectUri');
+  });
+
+  it('automatically completes a pending redirect return without mounting the modal and remembers the chosen wallet', async (): Promise<void> => {
+    const walletUrl = 'https://wallet-one.example.com';
+    const expectedResult: ConnectResult = {
+      connectedDid        : 'did:example:owner',
+      delegatePortableDid : { uri: 'did:example:delegate', document: { id: 'did:example:delegate' }, metadata: {} },
+      delegateGrants      : [],
+      sessionRevocations  : [],
+    };
+    vi.mocked(getPendingRedirectConnectType).mockReturnValue('connect');
+    vi.mocked(completeRedirectConnectFromWindowWithMeta).mockResolvedValue({ result: expectedResult, walletUrl });
+
+    try {
+      localStorage.removeItem('enbox:connect:lastChoice');
+      localStorage.removeItem('enbox:connect:sessionChoices');
+
+      const handler = BrowserConnectHandler({ redirectUri: 'https://app.example/callback', timeout: 45_000 });
+      const result = await handler.requestAccess({ permissionRequests: [], expectedProviderDid: 'did:example:owner' });
+
+      expect(runConnectModal).not.toHaveBeenCalled();
+      expect(completeRedirectConnectFromWindowWithMeta).toHaveBeenCalledWith({
+        localDelegatePortableDid : undefined,
+        expectedProviderDid      : 'did:example:owner',
+        timeoutMs                : 45_000,
+      });
+      expect(result).toBe(expectedResult);
+      expect(JSON.parse(localStorage.getItem('enbox:connect:lastChoice') ?? 'null')).toEqual({
+        method: 'redirect',
+        walletUrl,
+      });
+    } finally {
+      localStorage.removeItem('enbox:connect:lastChoice');
+      localStorage.removeItem('enbox:connect:sessionChoices');
+    }
   });
 });

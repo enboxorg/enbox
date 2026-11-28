@@ -37,6 +37,7 @@ import { assertX25519PublicJwk, CONNECT_DENIED_TOKEN, ConnectClient } from '@enb
 import { createHandledDeferred } from './handled-deferred.js';
 import {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
+  DWEB_CONNECT_HELLO_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_PATH,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
@@ -49,6 +50,13 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 
 /** Interval at which the transport checks whether the user closed the popup. */
 const CLOSED_POLL_INTERVAL_MS = 500;
+
+/**
+ * Interval at which the dapp sends pinned `hello` pings to the wallet popup
+ * until the `loaded` beacon arrives. Lets the wallet discover the browser-verified
+ * opener `event.origin` when `Referrer-Policy: no-referrer` strips `document.referrer`.
+ */
+const HELLO_PING_INTERVAL_MS = 200;
 
 /**
  * Grace period after the popup is seen closed for an already-posted response
@@ -148,6 +156,7 @@ export class PopupClientTransport implements ConnectTransport {
   private _walletEpkReceived = false;
   private readonly _timeoutId?: ReturnType<typeof setTimeout>;
   private readonly _closedPollId?: ReturnType<typeof setInterval>;
+  private _helloPollId?: ReturnType<typeof setInterval>;
   private _messageListener?: (event: MessageEvent) => void;
 
   private readonly _walletEpkPromise: Promise<Jwk>;
@@ -203,6 +212,22 @@ export class PopupClientTransport implements ConnectTransport {
     }, this._timeoutMs);
 
     this._closedPollId = setInterval((): void => { this.onClosedPoll(); }, CLOSED_POLL_INTERVAL_MS);
+
+    // Periodically ping the popup with `targetOrigin` strictly pinned to
+    // `_walletOrigin` until `loaded` arrives. If the dapp uses
+    // `Referrer-Policy: no-referrer`, the wallet reads `event.origin` from
+    // this ping to pin the dapp origin without ever falling back to `'*'`.
+    this._helloPollId = setInterval((): void => {
+      if (this._settled || this._walletEpkReceived || this._popup.closed === true) {
+        this.stopHelloPing();
+        return;
+      }
+      try {
+        this._popup.postMessage({ type: DWEB_CONNECT_HELLO_MESSAGE_TYPE }, this._walletOrigin);
+      } catch {
+        // Popup may still be navigating across origins; retry on next tick.
+      }
+    }, HELLO_PING_INTERVAL_MS);
   }
 
   /**
@@ -305,6 +330,7 @@ export class PopupClientTransport implements ConnectTransport {
     }
 
     this._walletEpkReceived = true;
+    this.stopHelloPing();
     this._resolveWalletEpk?.(walletEpk);
   }
 
@@ -357,9 +383,15 @@ export class PopupClientTransport implements ConnectTransport {
     this._rejectResponse(error);
   }
 
+  private stopHelloPing(): void {
+    clearInterval(this._helloPollId);
+    this._helloPollId = undefined;
+  }
+
   private cleanup(): void {
     clearTimeout(this._timeoutId);
     clearInterval(this._closedPollId);
+    this.stopHelloPing();
     if (this._messageListener !== undefined) {
       window.removeEventListener('message', this._messageListener);
       this._messageListener = undefined;

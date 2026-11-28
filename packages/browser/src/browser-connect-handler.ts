@@ -11,7 +11,13 @@ import type { PortableDid } from '@enbox/dids';
 import type { ConnectHandler, ConnectResult } from '@enbox/auth';
 import type { ConnectPermissionRequest, ConnectRequestType } from '@enbox/connect';
 
-import { runConnectModal } from './ui/connect-modal.js';
+import { assertValidRedirectUri } from '@enbox/connect';
+
+import {
+  completeRedirectConnectFromWindowWithMeta,
+  getPendingRedirectConnectType,
+} from './redirect-connect.js';
+import { recordConnectChoice, runConnectModal } from './ui/connect-modal.js';
 
 import type { ConnectMethod, ConnectModalTheme } from './ui/connect-modal.js';
 
@@ -116,9 +122,10 @@ export interface BrowserConnectHandlerOptions {
 
   /**
    * Preferred connect method on open: `'phone'` (QR / deep link via the
-   * relay) or `'browser'` (wallet popup on this device). Overrides the
+   * relay), `'browser'` (wallet popup on this device), or `'redirect'`
+   * (same-tab mobile redirect when `redirectUri` is configured). Overrides the
    * remembered choice.
-   * @default 'phone'
+   * @default 'phone' (desktop) or 'redirect' / 'browser' (mobile)
    */
   preferredMethod?: ConnectMethod;
 
@@ -145,6 +152,20 @@ export interface BrowserConnectHandlerOptions {
   relayWalletPath?: string;
 
   /**
+   * Optional exact return URL (HTTPS or localhost, no query string or fragment)
+   * enabling the same-device mobile redirect flow (`reply.mode = 'redirect'`).
+   *
+   * When set on a mobile browser (excluding iOS standalone PWAs), the connect
+   * modal defaults to a one-tap same-tab redirect to the wallet and returns to
+   * this URL with `#enbox_state=...&enbox_key=...`. On return, check
+   * {@link getPendingRedirectConnectType} and invoke `auth.connect()` (or
+   * `auth.restoreSession()` + `auth.refresh()` for `'refresh'`): this handler
+   * automatically completes the pending redirect without reopening the modal
+   * and records the chosen wallet.
+   */
+  redirectUri?: string;
+
+  /**
    * Color scheme for the connect modal. By default it follows the
    * visitor's system light/dark appearance; apps can force an appearance
    * and/or override palette tokens (accent, surfaces, text) per scheme to
@@ -156,11 +177,13 @@ export interface BrowserConnectHandlerOptions {
 /**
  * Create a browser-native connect handler over the connect modal.
  *
- * The modal owns the whole session on one surface: the phone path (a QR /
- * deep link over the relay, with pre-approval SAS symbol verification) is the
- * default, the in-browser wallet popup is the alternate, and the wallet catalog
- * plus custom-URL entry live in a disclosure. It resolves with the delegate
- * credentials on success and `undefined` when the user denies.
+ * The modal owns the whole session on one surface: on desktop the phone path
+ * (QR / deep link over the relay with pre-approval SAS symbol verification) is
+ * the default; on mobile browsers (outside iOS standalone PWAs) the modal
+ * defaults to same-tab redirect when `redirectUri` is configured, or the
+ * in-browser popup path otherwise. The wallet catalog plus custom-URL entry
+ * live in a disclosure. It resolves with the delegate credentials on success
+ * and `undefined` when the user denies.
  *
  * @example
  * ```ts
@@ -192,8 +215,13 @@ export function BrowserConnectHandler(
     rememberChoice,
     connectServerUrl,
     relayWalletPath,
+    redirectUri,
     theme,
   } = options;
+
+  if (redirectUri !== undefined) {
+    assertValidRedirectUri(redirectUri, 'invalid BrowserConnectHandler options');
+  }
 
   return {
     async requestAccess(params: {
@@ -202,6 +230,28 @@ export function BrowserConnectHandler(
       requestType?: Exclude<ConnectRequestType, 'authenticate'>;
       expectedProviderDid?: string;
     }): Promise<ConnectResult | undefined> {
+      // Automatically complete a matching same-tab redirect return without
+      // reopening the connect modal, committing the result through AuthManager.
+      const expectedType = params.requestType ?? 'connect';
+      if (getPendingRedirectConnectType() === expectedType) {
+        const completed = await completeRedirectConnectFromWindowWithMeta({
+          localDelegatePortableDid : params.delegatePortableDid,
+          expectedProviderDid      : params.expectedProviderDid,
+          timeoutMs                : timeout,
+        });
+        if (completed !== undefined) {
+          if (completed.result !== undefined && rememberChoice !== false && completed.walletUrl !== undefined) {
+            recordConnectChoice(undefined, {
+              delegateDid : completed.result.delegatePortableDid.uri,
+              providerDid : completed.result.connectedDid,
+              method      : 'redirect',
+              walletUrl   : completed.walletUrl,
+            });
+          }
+          return completed.result;
+        }
+      }
+
       const appIconBase = window.location.origin === 'null' ? window.location.href : window.location.origin;
       return runConnectModal({
         wallets,
@@ -213,6 +263,7 @@ export function BrowserConnectHandler(
         applicationId,
         connectServerUrl,
         relayWalletPath,
+        redirectUri,
         timeout,
         theme,
         mode                : params.requestType,

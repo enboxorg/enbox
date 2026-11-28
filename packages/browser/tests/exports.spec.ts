@@ -180,8 +180,31 @@ describe('@enbox/browser exports', () => {
 
   it('re-exports the connect kernel provider surface for wallets', async () => {
     const mod = await getBrowserExports();
-    expect(typeof mod.ConnectProvider).toBe('function');
     expect(mod.CONNECT_DENIED_TOKEN).toBe('DENIED');
+    for (const name of [
+      'ConnectProvider',
+      'createConnectVerificationHandshake',
+      'postRelayHandshake',
+      'buildRedirectReturnUri',
+      'generateRedirectResponseSecret',
+      'fetchConnectAppManifest',
+      'isRedirectUriVerifiedInManifest',
+      'assertValidRedirectUri',
+    ] as const) {
+      expect(typeof mod[name]).toBe('function');
+    }
+  });
+
+  it('exports the same-device mobile redirect helpers', async () => {
+    const mod = await getBrowserExports();
+    for (const name of [
+      'startRedirectConnect',
+      'getPendingRedirectConnectType',
+      'completeRedirectConnectFromWindow',
+      'completeRedirectAuthenticationFromWindow',
+    ] as const) {
+      expect(typeof mod[name]).toBe('function');
+    }
   });
 
   it('exports runConnectModal', async () => {

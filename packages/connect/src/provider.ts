@@ -84,15 +84,16 @@ export class ConnectProvider {
    * @param params.handshakeKey - Optional wallet ephemeral X25519 handshake public key on relay channels.
    * @returns A promise resolving to the sealed response as a Compact JWE string.
    */
-  public static async sealApprovedResponse({ request, providerDid, approval, signer, handshakeKey }: {
+  public static async sealApprovedResponse({ request, providerDid, approval, signer, handshakeKey, responseSecret }: {
     request: ConnectRequest;
     providerDid: string;
     approval: ConnectApproval;
     signer: BearerDid;
     handshakeKey?: Jwk;
+    responseSecret?: Uint8Array;
   }): Promise<string> {
     assertExpectedProviderDid(request, providerDid);
-    assertChannelHandshakeKey(request, handshakeKey);
+    assertChannelBinding(request, handshakeKey, responseSecret);
     if (request.requestType === 'authenticate') { throw new ConnectAuthenticationError('invalid-request'); }
     if ((request.authentication === undefined) !== (approval.authenticationProof === undefined)) {
       throw new ConnectAuthenticationError('invalid-proof');
@@ -123,20 +124,21 @@ export class ConnectProvider {
       ...(approval.delegatePortableDid !== undefined ? { delegatePortableDid: approval.delegatePortableDid } : {}),
     };
 
-    return await sealResponse({ response, signer, responseKey: request.responseKey, handshakeKey });
+    return await sealResponse({ response, signer, responseKey: request.responseKey, handshakeKey, responseSecret });
   }
 
   /** Seal a verified-request owner's authentication-only approval; no delegate fields are permitted. */
-  public static async sealAuthenticationResponse({ request, providerDid, approval, signer, handshakeKey }: {
+  public static async sealAuthenticationResponse({ request, providerDid, approval, signer, handshakeKey, responseSecret }: {
     request: ConnectRequest;
     providerDid: string;
     approval: { authenticationProof: string };
     signer: BearerDid;
     handshakeKey?: Jwk;
+    responseSecret?: Uint8Array;
   }): Promise<string> {
     assertConnectAuthenticationRequest(request);
     assertExpectedProviderDid(request, providerDid);
-    assertChannelHandshakeKey(request, handshakeKey);
+    assertChannelBinding(request, handshakeKey, responseSecret);
     if (typeof approval.authenticationProof !== 'string' || approval.authenticationProof.length === 0 ||
         ['delegateDid', 'delegatePortableDid', 'delegateGrants', 'sessionRevocations'].some(key => Object.hasOwn(approval, key))) {
       throw new ConnectAuthenticationError('invalid-proof');
@@ -147,7 +149,7 @@ export class ConnectProvider {
       iat, exp                 : iat + CONNECT_RESPONSE_TTL_SECONDS, nonce               : request.nonce, state               : request.state,
       authenticationProof : approval.authenticationProof,
     };
-    return sealAuthenticationResponse({ response, signer, responseKey: request.responseKey, handshakeKey });
+    return sealAuthenticationResponse({ response, signer, responseKey: request.responseKey, handshakeKey, responseSecret });
   }
 
   /**
@@ -159,12 +161,28 @@ export class ConnectProvider {
   }
 }
 
-/** Enforces that `direct_post` responses bind `handshakeKey` and `post_message` responses do not. */
-function assertChannelHandshakeKey(request: ConnectRequest, handshakeKey: Jwk | undefined): void {
-  if (request.reply.mode === 'direct_post' && handshakeKey === undefined) {
+/**
+ * Enforces channel-appropriate response binding:
+ * - `direct_post`: requires `handshakeKey`, forbids `responseSecret`.
+ * - `redirect`: requires `responseSecret`, forbids `handshakeKey`.
+ * - `post_message`: forbids both `handshakeKey` and `responseSecret`.
+ */
+function assertChannelBinding(
+  request: ConnectRequest,
+  handshakeKey: Jwk | undefined,
+  responseSecret: Uint8Array | undefined,
+): void {
+  const mode = request.reply.mode;
+  if (mode === 'direct_post' && handshakeKey === undefined) {
     throw new Error('Connect: `handshakeKey` is required when sealing a `direct_post` relay response.');
   }
-  if (request.reply.mode === 'post_message' && handshakeKey !== undefined) {
-    throw new Error('Connect: `handshakeKey` must not be supplied for `post_message` responses.');
+  if (mode !== 'direct_post' && handshakeKey !== undefined) {
+    throw new Error(`Connect: \`handshakeKey\` must not be supplied for \`${mode}\` responses.`);
+  }
+  if (mode === 'redirect' && responseSecret === undefined) {
+    throw new Error('Connect: redirect responses require a 32-byte `responseSecret`.');
+  }
+  if (mode !== 'redirect' && responseSecret !== undefined) {
+    throw new Error(`Connect: \`responseSecret\` must not be supplied for \`${mode}\` responses.`);
   }
 }

@@ -29,7 +29,7 @@ import type { ConnectAuthenticationResponse, ConnectPermissionRequest, ConnectRe
 
 import { Convert } from '@enbox/common';
 import { isPortableDid } from '@enbox/dids';
-import { CompactJwe, isX25519PublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
+import { CompactJwe, CryptoUtils, isX25519PublicJwk, XChaCha20Poly1305 } from '@enbox/crypto';
 import { ModulesConfigure, validatePermissionScope } from '@enbox/dwn-sdk-js';
 
 import { assertConnectAuthenticationRequest, assertConnectRequestAuthentication } from './owner-authentication.js';
@@ -49,6 +49,30 @@ const CONNECT_RESPONSE_MAX_CLOCK_SKEW_SECONDS = 60;
 
 /** Byte length required of the single-use symmetric request key (XC20P). */
 export const REQUEST_KEY_BYTE_LENGTH = 32;
+
+/** Byte length required of the redirect response fragment secret (256 bits). */
+export const RESPONSE_SECRET_BYTE_LENGTH = 32;
+
+/** Maximum length in characters permitted for a connect `redirectUri`. */
+const MAX_REDIRECT_URI_LENGTH = 2_048;
+
+/** Loopback hosts allowed to use `http:` for local development redirect/callback URIs. */
+const LOCAL_REDIRECT_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Returns whether `origin` is a canonical `https:` origin or loopback `http:` origin. */
+export function isSafeConnectOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin
+      && (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname)));
+  } catch {
+    return false;
+  }
+}
+
+/** ASCII control characters forbidden in connect URLs. */
+// eslint-disable-next-line no-control-regex
+const ASCII_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/;
 
 // ─── Field-level validation helpers ─────────────────────────────────────
 //
@@ -139,6 +163,62 @@ function requireResponseKey(payload: Record<string, unknown>, context: string): 
   }
 }
 
+/** Shared URL validator for connect `redirectUri` and `callbackUrl` values. */
+function parseSafeConnectUrl(value: unknown, field: string, context: string): URL {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REDIRECT_URI_LENGTH) {
+    fail(context, field, 'must be a non-empty URL string (max 2048 chars)');
+  }
+  if (/\s/.test(value) || ASCII_CONTROL_PATTERN.test(value) || value.includes('\\')) {
+    fail(context, field, 'must not contain whitespace, control characters, or backslashes');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(context, field, 'must be a valid URL');
+  }
+  const isLocalHttp = parsed.protocol === 'http:' && LOCAL_REDIRECT_HOSTS.has(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !isLocalHttp) {
+    fail(context, field, 'must use HTTPS (or http on localhost)');
+  }
+  if (parsed.port === '0') {
+    fail(context, field, 'must not use port 0');
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    fail(context, field, 'must not contain credentials');
+  }
+  if (parsed.hash !== '' || value.includes('#')) {
+    fail(context, field, 'must not contain a fragment');
+  }
+  return parsed;
+}
+
+/**
+ * Validates a connect `redirectUri`: must be a canonical `https:` URL (or
+ * `http:` on loopback for local development), with NO control chars, NO
+ * whitespace, NO backslashes, NO credentials, NO query string (`url.search === ''`,
+ * preventing open-redirector chains and RFC 9700 fragment reattachment), and
+ * NO existing fragment (`url.hash === ''`).
+ */
+export function assertValidRedirectUri(value: unknown, context = 'invalid connect request'): asserts value is string {
+  const parsed = parseSafeConnectUrl(value, 'reply.redirectUri', context);
+  if (parsed.search !== '' || (value as string).includes('?')) {
+    fail(context, 'reply.redirectUri', 'must not contain a query string');
+  }
+  if (parsed.href !== value && parsed.origin !== value) {
+    fail(context, 'reply.redirectUri', 'must be in canonical URL form');
+  }
+}
+
+/**
+ * Validates a relay `callbackUrl` for `redirect` (and authenticated) connect
+ * requests: must be a canonical `https:` (or loopback `http:`) URL with no
+ * credentials, control characters, whitespace, backslashes, or fragment.
+ */
+export function assertValidCallbackUrl(value: unknown, context = 'invalid connect request'): asserts value is string {
+  parseSafeConnectUrl(value, 'reply.callbackUrl', context);
+}
+
 /** Validates the `reply` field against the {@link ConnectRequest} reply union. */
 function requireReplyDescriptor(payload: Record<string, unknown>, context: string): void {
   const value = payload.reply;
@@ -149,8 +229,14 @@ function requireReplyDescriptor(payload: Record<string, unknown>, context: strin
     return;
   }
 
+  if (value.mode === 'redirect') {
+    assertValidCallbackUrl(value.callbackUrl, context);
+    assertValidRedirectUri(value.redirectUri, context);
+    return;
+  }
+
   if (value.mode !== 'post_message') {
-    fail(context, 'reply.mode', 'must be "direct_post" or "post_message"');
+    fail(context, 'reply.mode', 'must be "direct_post", "redirect", or "post_message"');
   }
 }
 
@@ -227,6 +313,10 @@ export function assertConnectRequest(payload: Record<string, unknown>): asserts 
   requireString(payload, 'state', ctx);
   requireResponseKey(payload, ctx);
   requireReplyDescriptor(payload, ctx);
+  const reply = payload.reply as ConnectRequest['reply'];
+  if (reply.mode === 'redirect' && payload.delegateDid !== undefined && payload.requestType !== 'refresh') {
+    fail(ctx, 'delegateDid', 'cannot be pre-supplied on a new "redirect" request');
+  }
   if (payload.authentication !== undefined) { assertConnectRequestAuthentication(payload as ConnectRequest); }
   if (payload.requestType === 'authenticate') { assertConnectAuthenticationRequest(payload as ConnectRequest); }
   assertConnectPermissionRequests(payload.permissionRequests);
@@ -399,13 +489,14 @@ export async function openRequest({ jwe, decryption }: {
  * @param params.handshakeKey - Optional wallet ephemeral X25519 public handshake key (`walletEpk`).
  * @returns A promise resolving to the sealed response as a Compact JWE string.
  */
-export async function sealResponse({ response, signer, responseKey, handshakeKey }: {
+export async function sealResponse({ response, signer, responseKey, handshakeKey, responseSecret }: {
   response: ConnectResponse;
   signer: BearerDid;
   responseKey: Jwk;
   handshakeKey?: Jwk;
+  responseSecret?: Uint8Array;
 }): Promise<string> {
-  return sealResponseEnvelope({ response, signer, responseKey, handshakeKey });
+  return sealResponseEnvelope({ response, signer, responseKey, handshakeKey, responseSecret });
 }
 
 /** Seal the authentication-only response with the same channel encryption, without delegation fields. */
@@ -414,22 +505,39 @@ export async function sealAuthenticationResponse(params: {
   signer: BearerDid;
   responseKey: Jwk;
   handshakeKey?: Jwk;
+  responseSecret?: Uint8Array;
 }): Promise<string> {
   assertConnectAuthenticationResponse(params.response);
   return sealResponseEnvelope(params);
 }
 
-async function sealResponseEnvelope({ response: inputResponse, signer, responseKey: inputResponseKey, handshakeKey }: {
+export function assertResponseSecret(secret: unknown): asserts secret is Uint8Array {
+  if (!(secret instanceof Uint8Array) || secret.byteLength !== RESPONSE_SECRET_BYTE_LENGTH) {
+    throw new Error(`Connect: response secret must be ${RESPONSE_SECRET_BYTE_LENGTH} bytes.`);
+  }
+  if (CryptoUtils.isAllZeroBytes(secret)) {
+    throw new Error('Connect: response secret must not be all zeros.');
+  }
+}
+
+async function sealResponseEnvelope({ response: inputResponse, signer, responseKey: inputResponseKey, handshakeKey, responseSecret }: {
   response: ConnectResponse | ConnectAuthenticationResponse;
   signer: BearerDid;
   responseKey: Jwk;
   handshakeKey?: Jwk;
+  responseSecret?: Uint8Array;
 }): Promise<string> {
   // Capture the agreed recipient and response before asynchronous KMS signing.
   const response = structuredClone(inputResponse);
   const responseKey = structuredClone(inputResponseKey);
+  if (handshakeKey !== undefined && responseSecret !== undefined) {
+    throw new Error('Connect: cannot combine `handshakeKey` and `responseSecret` on the same response.');
+  }
   if (handshakeKey !== undefined) {
     assertX25519PublicJwk(handshakeKey);
+  }
+  if (responseSecret !== undefined) {
+    assertResponseSecret(responseSecret);
   }
   const apv = handshakeKey === undefined ? undefined : handshakeKey.x as string;
   const jwt = await signJwt({ did: signer, data: response });
@@ -444,23 +552,28 @@ async function sealResponseEnvelope({ response: inputResponse, signer, responseK
       enc : 'XC20P',
       typ : CONNECT_RESPONSE_JWE_TYP,
     },
-    key: { mode: 'ecdh-es', peerPublicKey: responseKey },
+    key: {
+      mode          : 'ecdh-es',
+      peerPublicKey : responseKey,
+      ...(responseSecret === undefined ? {} : { secret: responseSecret }),
+    },
   });
 }
 
 /**
  * Opens a sealed connect response on the app side: decrypts the Compact JWE
  * with the client's X25519 response key (ECDH-ES only, XC20P only), verifies
- * the envelope header and `apu` (plus optional `apv` handshake key) binding,
- * verifies the JWT signature, asserts the payload shape, and then enforces
- * the mandatory value checks — `aud` must equal the client DID, the request
- * `nonce` and `state` must be echoed exactly, and the `iat`/`exp` window must
- * cover the current time.
+ * the envelope header and `apu` (plus optional `apv` handshake key or 256-bit
+ * `responseSecret`) binding, verifies the JWT signature, asserts the payload
+ * shape, and then enforces the mandatory value checks — `aud` must equal the
+ * client DID, the request `nonce` and `state` must be echoed exactly, and the
+ * `iat`/`exp` window must cover the current time.
  */
 export type OpenConnectResponseOptions = {
   jwe: string;
   recipientPrivateKey: Jwk;
   expected: { clientDid: string; nonce: string; state: string; providerDid?: string; handshakeKey?: Jwk };
+  responseSecret?: Uint8Array;
 };
 
 export async function openResponse(options: OpenConnectResponseOptions): Promise<ConnectResponse> {
@@ -478,11 +591,26 @@ export async function openAuthenticationResponse(options: OpenConnectResponseOpt
   return payload;
 }
 
-async function openResponseEnvelope({ jwe, recipientPrivateKey, expected }: OpenConnectResponseOptions): Promise<Record<string, unknown>> {
+async function openResponseEnvelope({
+  jwe,
+  recipientPrivateKey,
+  expected,
+  responseSecret,
+}: OpenConnectResponseOptions): Promise<Record<string, unknown>> {
+  if (expected.handshakeKey !== undefined && responseSecret !== undefined) {
+    throw new Error('Connect: cannot combine `handshakeKey` and `responseSecret` when opening a response.');
+  }
+  if (responseSecret !== undefined) {
+    assertResponseSecret(responseSecret);
+  }
   const { plaintext, protectedHeader } = await CompactJwe.decrypt({
     jwe,
-    key     : { mode: 'ecdh-es', privateKey: recipientPrivateKey },
-    options : { allowedAlgs: ['ECDH-ES'], allowedEncs: ['XC20P'] },
+    key: {
+      mode       : 'ecdh-es',
+      privateKey : recipientPrivateKey,
+      ...(responseSecret === undefined ? {} : { secret: responseSecret }),
+    },
+    options: { allowedAlgs: ['ECDH-ES'], allowedEncs: ['XC20P'] },
   });
 
   assertEnvelopeHeader(protectedHeader, CONNECT_RESPONSE_JWE_TYP);

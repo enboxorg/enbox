@@ -101,12 +101,16 @@ export type ConnectAuthenticationResult = {
 /**
  * Describes how the wallet must deliver its sealed response back to the app.
  *
- * - `direct_post`: the wallet POSTs the response to `callbackUrl` (relay flows).
+ * - `direct_post`: the wallet POSTs the response to `callbackUrl` (cross-device relay flows).
+ * - `redirect`: same-device hybrid redirect — the wallet POSTs the sealed response
+ *   (encrypted with a fresh 256-bit `responseSecret`) to `callbackUrl` and navigates
+ *   back to `redirectUri#enbox_state=...&enbox_key=...`.
  * - `post_message`: the wallet posts the response over the popup postMessage
  *   channel that carried the request (browser popup flows).
  */
 export type ReplyDescriptor =
   | { mode: 'direct_post'; callbackUrl: string }
+  | { mode: 'redirect'; callbackUrl: string; redirectUri: string }
   | { mode: 'post_message' };
 
 /**

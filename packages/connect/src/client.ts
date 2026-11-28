@@ -22,10 +22,12 @@ import type {
   ConnectClientMetadata,
   ConnectPermissionRequest,
   ConnectRequest,
+  ConnectRequestEncryption,
   ConnectRequestType,
   ConnectResponse,
   ConnectResult,
   ConnectTransport,
+  ReplyDescriptor,
   VerifiedConnectAuthentication,
   WalletUriHandoff,
 } from './types.js';
@@ -228,48 +230,13 @@ export class ConnectClient {
       throw new Error('Connect: refresh requests require an existing `delegatePortableDid`.');
     }
 
-    // Ephemeral client DID (did:jwk) for request signing and response addressing.
-    const clientDid = await DidJwk.create();
-
-    // Fresh X25519 key pair for this handshake; the wallet seals its response
-    // to the public half via ECDH-ES. Only the minimum key material
-    // (kty, crv, x) is placed in the request to avoid leaking identifiers.
-    const responsePrivateKey = await X25519.generateKey();
-    const responsePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x };
-
-    // Protocol-level correlators owned by the client: the anti-replay nonce
-    // and the request/response state echo (also the response JWE `apu` value).
-    const nonce = randomToken();
-    const state = randomToken();
-
-    const profile = await this._transport.requestProfile(state);
-
-    // `params` is already a private snapshot; only the transport-owned reply needs cloning.
-    const request: ConnectRequest = {
-      clientDid                  : clientDid.uri,
-      appName                    : params.appName,
-      appIcon                    : params.appIcon,
-      applicationId              : params.applicationId,
-      clientMetadata             : params.clientMetadata,
-      authentication             : params.authentication,
-      permissionRequests         : params.permissionRequests,
-      requestedSessionTtlSeconds : params.requestedSessionTtlSeconds,
-      delegateDid                : params.delegatePortableDid?.uri,
-      requestType                : params.requestType,
-      expectedProviderDid        : params.expectedProviderDid,
-      supportedDidMethods        : params.supportedDidMethods ?? [...DEFAULT_SUPPORTED_DID_METHODS],
-      nonce,
-      state,
-      responseKey                : responsePublicKey,
-      reply                      : structuredClone(profile.reply),
-    };
-
-    assertConnectRequest(request);
-    if (request.authentication !== undefined) {
-      await this._onAuthenticationRequest?.(structuredClone(request));
-    }
-
-    const requestJwe = await sealRequest({ request, signer: clientDid, encryption: profile.encryption });
+    const prepared = await createAndSealConnectRequest({
+      params         : { ...params, delegateDid: params.delegatePortableDid?.uri },
+      resolveProfile : (state): Promise<{ encryption: ConnectRequestEncryption; reply: ReplyDescriptor }> =>
+        this._transport.requestProfile(state),
+      onAuthenticationRequest: this._onAuthenticationRequest,
+    });
+    const { clientDid, responsePrivateKey, responsePublicKey, nonce, state, request, requestJwe } = prepared;
 
     const handoff = await this._transport.deliverRequest(requestJwe);
     if (handoff !== undefined) {
@@ -314,7 +281,7 @@ export class ConnectClient {
       jwe                 : responseCiphertext,
       recipientPrivateKey : responsePrivateKey,
       expected            : {
-        clientDid    : clientDid.uri,
+        clientDid,
         nonce,
         state,
         providerDid  : params.expectedProviderDid,
@@ -322,17 +289,123 @@ export class ConnectClient {
       },
     });
 
-    if (request.authentication === undefined) {
-      if (response.authenticationProof !== undefined) { throw new ConnectAuthenticationError('context-mismatch'); }
-      return { response };
-    }
-    if (response.authenticationProof === undefined) { throw new ConnectAuthenticationError('invalid-proof'); }
-    const authentication = await verifyOwnerAuthenticationProof({
-      proof       : response.authenticationProof, request, providerDid : response.providerDid, resolver    : this._authenticationResolver,
-      expected    : { audience: request.authentication.audience, challenge: request.authentication.challenge },
+    const authentication = await verifyResponseAuthentication({
+      request,
+      authenticationProof    : response.authenticationProof,
+      providerDid            : response.providerDid,
+      authenticationResolver : this._authenticationResolver,
     });
-    return { response, authentication };
+    return authentication === undefined ? { response } : { response, authentication };
   }
+}
+
+/**
+ * Shared internal request-assembly helper used by both {@link ConnectClient}
+ * and the same-device redirect preparation flow: mints ephemeral `clientDid`,
+ * X25519 `responseKey`, `nonce`, and `state`, validates the full request,
+ * runs `onAuthenticationRequest` when requested, and seals the JWE.
+ */
+export async function createAndSealConnectRequest({
+  params,
+  resolveProfile,
+  onAuthenticationRequest,
+  signal,
+}: {
+  params: Omit<ConnectClientConnectParams, 'delegatePortableDid' | 'requestType'> & {
+    delegateDid?: string;
+    requestType?: ConnectRequestType;
+  };
+  resolveProfile: (state: string) => Promise<{ encryption: ConnectRequestEncryption; reply: ReplyDescriptor }> | {
+    encryption: ConnectRequestEncryption;
+    reply: ReplyDescriptor;
+  };
+  onAuthenticationRequest?: (request: Readonly<ConnectRequest>) => Promise<void> | void;
+  signal?: AbortSignal;
+}): Promise<{
+  clientDid: string;
+  responsePrivateKey: Jwk;
+  responsePublicKey: Jwk;
+  nonce: string;
+  state: string;
+  request: ConnectRequest;
+  requestJwe: string;
+}> {
+  signal?.throwIfAborted();
+  const clientDid = await DidJwk.create();
+  const responsePrivateKey = await X25519.generateKey();
+  const responsePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x };
+  const nonce = randomToken();
+  const state = randomToken();
+  const profile = await resolveProfile(state);
+
+  const request: ConnectRequest = {
+    clientDid                  : clientDid.uri,
+    appName                    : params.appName,
+    appIcon                    : params.appIcon,
+    applicationId              : params.applicationId,
+    clientMetadata             : params.clientMetadata,
+    authentication             : params.authentication,
+    permissionRequests         : params.permissionRequests,
+    requestedSessionTtlSeconds : params.requestedSessionTtlSeconds,
+    delegateDid                : params.delegateDid,
+    requestType                : params.requestType,
+    expectedProviderDid        : params.expectedProviderDid,
+    supportedDidMethods        : params.supportedDidMethods ?? [...DEFAULT_SUPPORTED_DID_METHODS],
+    nonce,
+    state,
+    responseKey                : responsePublicKey,
+    reply                      : structuredClone(profile.reply),
+  };
+
+  assertConnectRequest(request);
+  if (request.authentication !== undefined) {
+    await onAuthenticationRequest?.(structuredClone(request));
+  }
+  signal?.throwIfAborted();
+
+  const requestJwe = await sealRequest({ request, signer: clientDid, encryption: profile.encryption });
+  return {
+    clientDid: clientDid.uri,
+    responsePrivateKey,
+    responsePublicKey,
+    nonce,
+    state,
+    request,
+    requestJwe,
+  };
+}
+
+/** Shared internal response authentication proof check used by `ConnectClient` and redirect completion. */
+export async function verifyResponseAuthentication({
+  request,
+  authenticationProof,
+  providerDid,
+  authenticationResolver,
+}: {
+  request: ConnectRequest;
+  authenticationProof: string | undefined;
+  providerDid: string;
+  authenticationResolver?: ConnectAuthenticationResolver;
+}): Promise<VerifiedConnectAuthentication | undefined> {
+  if (request.authentication === undefined) {
+    if (authenticationProof !== undefined) {
+      throw new ConnectAuthenticationError('context-mismatch');
+    }
+    return undefined;
+  }
+  if (authenticationProof === undefined) {
+    throw new ConnectAuthenticationError('invalid-proof');
+  }
+  return await verifyOwnerAuthenticationProof({
+    proof    : authenticationProof,
+    request,
+    providerDid,
+    resolver : authenticationResolver,
+    expected : {
+      audience  : request.authentication.audience,
+      challenge : request.authentication.challenge,
+    },
+  });
 }
 
 /**

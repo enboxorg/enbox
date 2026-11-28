@@ -4,8 +4,9 @@ import type { ConnectResult } from '@enbox/connect';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 
+const recordConnectChoice = mock((): void => {});
 const runConnectModal = mock(async (_options: ConnectModalOptions): Promise<ConnectResult | undefined> => undefined);
-mock.module('../src/ui/connect-modal.js', () => ({ runConnectModal }));
+mock.module('../src/ui/connect-modal.js', () => ({ recordConnectChoice, runConnectModal }));
 let BrowserConnectHandler: typeof BrowserConnectHandlerFactory;
 
 describe('BrowserConnectHandler request-time location', () => {

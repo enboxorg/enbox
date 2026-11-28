@@ -7,10 +7,20 @@ import { AesGcm } from '../../primitives/aes-gcm.js';
 import { AesKw } from '../../primitives/aes-kw.js';
 import { ConcatKdf } from '../../primitives/concat-kdf.js';
 import { CryptoUtils } from '../../utils.js';
+import { Hkdf } from '../../primitives/hkdf.js';
 import { Pbkdf2 } from '../../primitives/pbkdf2.js';
 import { X25519 } from '../../primitives/x25519.js';
 import { XChaCha20Poly1305 } from '../../primitives/xchacha20-poly1305.js';
 import { CryptoError, CryptoErrorCode } from '../../crypto-error.js';
+
+/**
+ * Domain separation info string for the ECDH-ES redirect response secret KDF wrapper:
+ * `CEK' = HKDF-SHA256(ikm=CEK, salt=secret, info=UTF8('enbox/connect/v2/redirect-secret'))`.
+ */
+const ECDH_ES_REDIRECT_SECRET_KDF_INFO = 'enbox/connect/v2/redirect-secret';
+
+/** Required byte length (256 bits) of an optional ECDH-ES response secret. */
+const ECDH_ES_SECRET_BYTE_LENGTH = 32;
 
 /**
  * The PBES2 family of "alg" (Algorithm) Header Parameter values supported by this engine.
@@ -40,6 +50,14 @@ export type JweEcdhEsEncryptKey = {
 
   /** The recipient's static X25519 public key in JWK format. */
   peerPublicKey: Jwk;
+
+  /**
+   * Optional 32-byte (256-bit) high-entropy secret mixed into the derived CEK
+   * via HKDF-SHA256 (`info = 'enbox/connect/v2/redirect-secret'`). Used by
+   * same-device redirect connect flows where the secret travels solely in the
+   * return URL `#fragment`.
+   */
+  secret?: Uint8Array;
 };
 
 /**
@@ -51,6 +69,9 @@ export type JweEcdhEsDecryptKey = {
 
   /** The recipient's static X25519 private key in JWK format. */
   privateKey: Jwk;
+
+  /** Optional 32-byte (256-bit) secret that was mixed into the CEK during encryption. */
+  secret?: Uint8Array;
 };
 
 /**
@@ -341,8 +362,8 @@ export class JweKeyManagement {
       publicKeyB  : ephemeralPublicKey
     });
 
-    // Derive the CEK from the shared secret using the Concat KDF.
-    return await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader });
+    // Derive the CEK from the shared secret using the Concat KDF (plus optional 256-bit secret).
+    return await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader, secret: key.secret });
   }
 
   /**
@@ -496,8 +517,8 @@ export class JweKeyManagement {
           publicKeyB  : key.peerPublicKey
         });
 
-        // Derive the CEK from the shared secret using the Concat KDF.
-        cek = await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader });
+        // Derive the CEK from the shared secret using the Concat KDF (plus optional 256-bit secret).
+        cek = await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader, secret: key.secret });
 
         // The ephemeral public key MUST be integrity-protected, so return it as a header
         // parameter to be merged into the JWE Protected Header.
@@ -570,14 +591,27 @@ export class JweKeyManagement {
    * @throws {@link CryptoError} if the shared secret is all zeros (low-order point rejection), the
    *         "enc" value is unsupported, or the "apu" / "apv" values cannot be decoded.
    */
-  private static async deriveEcdhEsCek({ sharedSecret, joseHeader }: {
+  private static async deriveEcdhEsCek({ sharedSecret, joseHeader, secret }: {
     sharedSecret: Uint8Array;
     joseHeader: JweHeaderParams;
+    secret?: Uint8Array;
   }): Promise<Jwk> {
     // Reject an all-zero shared secret, which results from an X25519 exchange with a low-order
     // public key and would yield an attacker-predictable CEK.
     if (CryptoUtils.isAllZeroBytes(sharedSecret)) {
       throw new CryptoError(CryptoErrorCode.InvalidJwe, 'ECDH-ES shared secret must not be all zeros.');
+    }
+
+    if (secret !== undefined) {
+      if (!(secret instanceof Uint8Array) || secret.byteLength !== ECDH_ES_SECRET_BYTE_LENGTH) {
+        throw new CryptoError(
+          CryptoErrorCode.InvalidJwe,
+          `ECDH-ES "secret" must be a ${ECDH_ES_SECRET_BYTE_LENGTH}-byte Uint8Array.`,
+        );
+      }
+      if (CryptoUtils.isAllZeroBytes(secret)) {
+        throw new CryptoError(CryptoErrorCode.InvalidJwe, 'ECDH-ES "secret" must not be all zeros.');
+      }
     }
 
     // Determine the desired CEK length (keydatalen) from the "enc" (Encryption Algorithm)
@@ -596,7 +630,7 @@ export class JweKeyManagement {
     const partyVInfo = JweKeyManagement.decodeAgreementParty('apv', joseHeader.apv);
 
     // Derive the CEK from the shared secret using the Concat KDF.
-    const cekBytes = await ConcatKdf.deriveKey({
+    let cekBytes = await ConcatKdf.deriveKey({
       sharedSecret,
       keyDataLen,
       fixedInfo: {
@@ -606,6 +640,20 @@ export class JweKeyManagement {
         suppPubInfo : keyDataLen,
       }
     });
+
+    // When a 256-bit response secret is provided (same-device redirect channel),
+    // mix it into the CEK via domain-separated HKDF-SHA256 so the relay payload
+    // cannot be decrypted without both the client's X25519 private key and the
+    // return fragment secret.
+    if (secret !== undefined) {
+      cekBytes = await Hkdf.deriveKeyBytes({
+        baseKeyBytes : cekBytes,
+        hash         : 'SHA-256',
+        salt         : secret,
+        info         : Convert.string(ECDH_ES_REDIRECT_SECRET_KDF_INFO).toUint8Array(),
+        length       : keyDataLen,
+      });
+    }
 
     // Convert the derived CEK bytes to JWK format using the "enc" appropriate converter.
     return joseHeader.enc === 'XC20P'

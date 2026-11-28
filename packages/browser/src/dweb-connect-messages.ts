@@ -1,17 +1,20 @@
 /**
  * Wire shapes for the DWeb Connect popup/postMessage channel.
  *
- * The dapp and the wallet exchange exactly four message kinds over
+ * The dapp and the wallet exchange five message kinds over
  * `window.postMessage`:
  *
- * 1. `loaded` beacon (wallet → dapp): announces the wallet page is ready and
+ * 1. `hello` ping (dapp → wallet): allows the wallet to discover and pin the
+ *    browser-verified opener `event.origin` when `Referrer-Policy: no-referrer`
+ *    strips `document.referrer`, without ever falling back to `'*'`.
+ * 2. `loaded` beacon (wallet → dapp): announces the wallet page is ready and
  *    carries a fresh ephemeral X25519 public key plus the wallet's origin.
- * 2. `request` (dapp → wallet): the sealed connect request JWE — ciphertext
+ * 3. `request` (dapp → wallet): the sealed connect request JWE — ciphertext
  *    only, encrypted to the beacon key with ECDH-ES and the wallet origin
  *    bound into the JWE `apv` header.
- * 3. `response` (wallet → dapp): the sealed connect response JWE, or the
+ * 4. `response` (wallet → dapp): the sealed connect response JWE, or the
  *    literal deny token — again ciphertext only.
- * 4. `ack` (dapp → wallet): payload-less completion signal — the dapp opened
+ * 5. `ack` (dapp → wallet): payload-less completion signal — the dapp opened
  *    the response successfully, so the wallet can flip to a confirmed
  *    "connected" state before closing itself. Optional and observational;
  *    wallets unaware of it simply ignore the message.
@@ -27,6 +30,14 @@ import type { Jwk } from '@enbox/crypto';
 /** Path of the wallet's DWeb Connect page, opened as a popup by the dapp. */
 export const DWEB_CONNECT_PATH = '/dweb-connect';
 
+/**
+ * Message type of the dapp's `hello` handshake ping (dapp → wallet).
+ * Allows the wallet popup to pin the browser-verified `event.origin` of
+ * `window.opener` even when the dapp sets `Referrer-Policy: no-referrer`
+ * (so `document.referrer` is empty) without ever using `'*'`.
+ */
+export const DWEB_CONNECT_HELLO_MESSAGE_TYPE = 'enbox-connect-hello';
+
 /** Message type of the wallet's `loaded` beacon (wallet → dapp). */
 export const DWEB_CONNECT_LOADED_MESSAGE_TYPE = 'enbox-connect-loaded';
 
@@ -38,6 +49,15 @@ export const DWEB_CONNECT_RESPONSE_MESSAGE_TYPE = 'enbox-connect-response';
 
 /** Message type of the dapp's completion acknowledgement (dapp → wallet). */
 export const DWEB_CONNECT_ACK_MESSAGE_TYPE = 'enbox-connect-ack';
+
+/**
+ * The dapp's readiness ping sent to the wallet popup with `targetOrigin` pinned
+ * to the configured wallet origin. Lets the wallet discover the browser-verified
+ * opener origin via `event.origin` when `document.referrer` is stripped.
+ */
+export type DWebConnectHelloMessage = {
+  type: typeof DWEB_CONNECT_HELLO_MESSAGE_TYPE;
+};
 
 /**
  * The wallet's readiness beacon. Emitted to `window.opener` once the wallet's

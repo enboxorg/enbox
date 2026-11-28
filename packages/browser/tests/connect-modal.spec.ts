@@ -125,6 +125,7 @@ function deps(overrides: Partial<ConnectModalDeps>): Partial<ConnectModalDeps> {
     discoverConnectServerUrl : async (): Promise<string> => 'https://relay.example.com/connect',
     validateWalletUrl        : async (): Promise<boolean> => true,
     isMobile                 : (): boolean => false,
+    isIosStandalonePwa       : (): boolean => false,
     storage                  : createFakeStorage(),
     ...overrides,
   };
@@ -498,16 +499,191 @@ describe('runConnectModal', () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
-  it('renders a new-tab deep link alongside a clickable compact QR on mobile', async () => {
+  it('defaults mobile browsers to the direct popup path when no redirectUri is configured', async () => {
     const relay = createFakeRelay();
+    let popupCalls = 0;
     const promise = runConnectModal({
       wallets            : WALLETS,
       permissionRequests : PERMISSIONS,
-      deps               : deps({ runRelay: relay.runRelay, isMobile: (): boolean => true }),
+      deps               : deps({
+        runRelay : relay.runRelay,
+        isMobile : (): boolean => true,
+        runPopup : (): Promise<ConnectResult | undefined> => {
+          popupCalls += 1;
+          return new Promise<ConnectResult | undefined>(() => { /* pending */ });
+        },
+      }),
     });
     promise.catch((): undefined => undefined);
 
     await flush();
+    expect(relay.calls).toHaveLength(0);
+    expect(stageText()).toContain('Open wallet');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    expect(popupCalls).toBe(1);
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('defaults mobile browsers to same-tab redirect when redirectUri is configured', async () => {
+    const relay = createFakeRelay();
+    const redirectCalls: Parameters<ConnectModalDeps['startRedirect']>[0][] = [];
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      redirectUri        : 'https://app.example/connect/callback',
+      deps               : deps({
+        runRelay      : relay.runRelay,
+        isMobile      : (): boolean => true,
+        startRedirect : async (opts): ReturnType<ConnectModalDeps['startRedirect']> => {
+          redirectCalls.push(opts);
+          return {} as Awaited<ReturnType<ConnectModalDeps['startRedirect']>>;
+        },
+      }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    expect(relay.calls).toHaveLength(0);
+    expect(stageText()).toContain('Continue in Enbox');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    await flush();
+    expect(redirectCalls).toHaveLength(1);
+    expect(redirectCalls[0].redirectUri).toBe('https://app.example/connect/callback');
+    expect(redirectCalls[0].walletUri).toBe('https://wallet-one.example.com/connect/app');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('handles redirect startup errors and switching between redirect and phone methods', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      redirectUri        : 'https://app.example/connect/callback',
+      deps               : deps({
+        runRelay      : relay.runRelay,
+        isMobile      : (): boolean => true,
+        startRedirect : async (): Promise<never> => { throw new Error('PAR failed'); },
+      }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    // Switch from redirect to phone via footer link, then back to redirect.
+    shadowRoot().querySelector<HTMLButtonElement>('.method-link')?.click();
+    await flush();
+    expect(relay.calls).toHaveLength(1);
+
+    shadowRoot().querySelector<HTMLButtonElement>('.method-link')?.click();
+    await flush();
+    expect(stageText()).toContain('Continue in Enbox');
+
+    // Triggering redirect error renders recovery stage.
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    await flush();
+    expect(stageText()).toContain('Something went wrong while opening the wallet.');
+
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(promise).rejects.toThrow(/cancelled/i);
+  });
+
+  it('resets on bfcache pageshow, aborts in-flight redirect on cancel, and degrades without sessionStorage or relay', async () => {
+    const relay = createFakeRelay();
+    const capturedSignals: (AbortSignal | undefined)[] = [];
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      redirectUri        : 'https://app.example/connect/callback',
+      deps               : deps({
+        runRelay      : relay.runRelay,
+        isMobile      : (): boolean => true,
+        startRedirect : async (opts): ReturnType<ConnectModalDeps['startRedirect']> => {
+          capturedSignals.push(opts.signal);
+          return new Promise(() => { /* stays pending until cancelled or bfcache return */ });
+        },
+      }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    await flush();
+    expect(stageText()).toContain('Opening Enbox…');
+    expect(capturedSignals[0]?.aborted).toBe(false);
+
+    // Simulating bfcache Back navigation restores the redirect prompt and aborts the stale attempt.
+    const pageShow = new Event('pageshow') as PageTransitionEvent;
+    Object.defineProperty(pageShow, 'persisted', { value: true });
+    window.dispatchEvent(pageShow);
+    expect(capturedSignals[0]?.aborted).toBe(true);
+    expect(stageText()).toContain('Continue in Enbox');
+
+    // Starting redirect again and cancelling the modal aborts the second in-flight attempt.
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    await flush();
+    expect(capturedSignals[1]?.aborted).toBe(false);
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    expect(capturedSignals[1]?.aborted).toBe(true);
+    await expect(promise).rejects.toThrow(/cancelled/i);
+
+    // Restricted WebView without writable sessionStorage degrades to browser popup on mobile.
+    const degraded = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      redirectUri        : 'https://app.example/connect/callback',
+      deps               : deps({
+        runRelay          : relay.runRelay,
+        isMobile          : (): boolean => true,
+        hasSessionStorage : (): boolean => false,
+      }),
+    });
+    degraded.catch((): undefined => undefined);
+    await flush();
+    expect(stageText()).toContain('Open wallet');
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(degraded).rejects.toThrow(/cancelled/i);
+
+    // Redirect relay unavailable shows distinct redirect copy.
+    const unavailable = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      redirectUri        : 'https://app.example/connect/callback',
+      deps               : deps({
+        runRelay                 : relay.runRelay,
+        isMobile                 : (): boolean => true,
+        discoverConnectServerUrl : async (): Promise<undefined> => undefined,
+      }),
+    });
+    unavailable.catch((): undefined => undefined);
+    await flush();
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
+    await flush();
+    expect(stageText()).toContain('can’t connect by redirect here');
+    shadowRoot().querySelector<HTMLButtonElement>('.close-btn')?.click();
+    await expect(unavailable).rejects.toThrow(/cancelled/i);
+  });
+
+  it('keeps iOS standalone PWAs on the phone relay path even when redirectUri is configured', async () => {
+    const relay = createFakeRelay();
+    const promise = runConnectModal({
+      wallets            : WALLETS,
+      permissionRequests : PERMISSIONS,
+      redirectUri        : 'https://app.example/connect/callback',
+      deps               : deps({
+        runRelay           : relay.runRelay,
+        isMobile           : (): boolean => true,
+        isIosStandalonePwa : (): boolean => true,
+      }),
+    });
+    promise.catch((): undefined => undefined);
+
+    await flush();
+    expect(relay.calls).toHaveLength(1);
     relay.calls[0].onWalletUriReady(HANDOFF);
 
     // The primary action opens the wallet in a NEW tab: the modal — and the
@@ -574,10 +750,8 @@ describe('runConnectModal', () => {
     promise.catch((): undefined => undefined);
     await flush();
 
-    // On a phone the popup alternative is pitched as connecting directly.
-    const methodLink = shadowRoot().querySelector<HTMLButtonElement>('.method-link');
-    expect(methodLink?.textContent).toContain('directly in this browser');
-    methodLink?.click();
+    // On mobile without redirectUri, the modal opens on the browser popup prompt.
+    shadowRoot().querySelector<HTMLButtonElement>('.stage-btn')?.click();
     await flush();
 
     expect(stageText()).toContain('The wallet tab was closed.');
@@ -587,7 +761,7 @@ describe('runConnectModal', () => {
     back?.click();
     await flush();
 
-    expect(relay.calls).toHaveLength(2);
+    expect(relay.calls).toHaveLength(1);
   });
 
   const popupRoutes = [

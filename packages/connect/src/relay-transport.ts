@@ -38,7 +38,7 @@ import { buildWalletConnectUri } from './uri.js';
 import { CONNECT_DENIED_TOKEN } from './types.js';
 
 /** Per-request abort budget applied to every relay HTTP call. */
-const RELAY_HTTP_TIMEOUT_MS = 30_000;
+export const RELAY_HTTP_TIMEOUT_MS = 30_000;
 
 /** Default interval between completion-marker polling attempts. */
 const RELAY_COMPLETE_POLL_INTERVAL_MS = 1_000;
@@ -59,7 +59,77 @@ const RELAY_DEFAULT_TIMEOUT_MS = 300_000;
 export type FetchFn = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 /** Default {@link FetchFn}: defers to the ambient global `fetch` at call time. */
-const defaultFetch: FetchFn = (input, init): Promise<Response> => globalThis.fetch(input, init);
+export const defaultFetch: FetchFn = (input, init): Promise<Response> => globalThis.fetch(input, init);
+
+/** Shared internal helper: pushes a sealed request JWE to `POST /connect/par` and builds the wallet handoff URI. */
+export async function pushParRequest({
+  connectServerUrl,
+  walletUri,
+  requestJwe,
+  requestKey,
+  fetchFn = defaultFetch,
+  signal,
+}: {
+  connectServerUrl: string;
+  walletUri: string;
+  requestJwe: string;
+  requestKey: Uint8Array;
+  fetchFn?: FetchFn;
+  signal: AbortSignal;
+}): Promise<WalletUriHandoff> {
+  const parUrl = concatenateUrl(connectServerUrl, 'par');
+  const response = await fetchFn(parUrl, {
+    body    : JSON.stringify({ request: requestJwe }),
+    method  : 'POST',
+    headers : { 'Content-Type': 'application/json' },
+    signal,
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel().catch((): void => {});
+    throw new Error(`Connect: pushed authorization request failed with HTTP ${response.status}.`);
+  }
+
+  const parData = await response.json() as { request_uri?: unknown; expires_in?: unknown };
+  if (typeof parData.request_uri !== 'string' || typeof parData.expires_in !== 'number') {
+    throw new Error('Connect: pushed authorization response is missing `request_uri` or `expires_in`.');
+  }
+
+  const handoffUri = buildWalletConnectUri({
+    walletUri,
+    requestUri    : parData.request_uri,
+    encryptionKey : requestKey,
+  });
+
+  return { walletUri: handoffUri, requestUri: parData.request_uri, expiresIn: parData.expires_in };
+}
+
+/** Shared internal helper: posts the observational completion marker (`POST /connect/complete`). */
+export async function postRelayComplete({
+  connectServerUrl,
+  state,
+  fetchFn = defaultFetch,
+  signal,
+}: {
+  connectServerUrl: string;
+  state: string;
+  fetchFn?: FetchFn;
+  signal: AbortSignal;
+}): Promise<void> {
+  const completeUrl = concatenateUrl(connectServerUrl, 'complete');
+  const response = await fetchFn(completeUrl, {
+    body      : JSON.stringify({ state }),
+    method    : 'POST',
+    headers   : { 'Content-Type': 'application/json' },
+    keepalive : true,
+    signal,
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel().catch((): void => {});
+    throw new Error(`Connect: completion signal failed with HTTP ${response.status}.`);
+  }
+}
 
 /** Options for constructing a {@link RelayClientTransport}. */
 export type RelayClientTransportOptions = {
@@ -176,32 +246,16 @@ export class RelayClientTransport implements ConnectTransport {
       throw new Error('Connect: call `requestProfile()` before `deliverRequest()`.');
     }
 
-    const parUrl = concatenateUrl(this._connectServerUrl, 'par');
-    const response = await this._fetch(parUrl, {
-      body    : JSON.stringify({ request: jwe }),
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      signal  : this.requestSignal(),
+    const handoff = await pushParRequest({
+      connectServerUrl : this._connectServerUrl,
+      walletUri        : this._walletUri,
+      requestJwe       : jwe,
+      requestKey       : this._requestKey,
+      fetchFn          : this._fetch,
+      signal           : this.requestSignal(),
     });
-
-    if (!response.ok) {
-      throw new Error(`Connect: pushed authorization request failed with HTTP ${response.status}.`);
-    }
-
-    const parData = await response.json() as { request_uri?: unknown; expires_in?: unknown };
-    if (typeof parData.request_uri !== 'string' || typeof parData.expires_in !== 'number') {
-      throw new Error('Connect: pushed authorization response is missing `request_uri` or `expires_in`.');
-    }
-
-    const walletUri = buildWalletConnectUri({
-      walletUri     : this._walletUri,
-      requestUri    : parData.request_uri,
-      encryptionKey : this._requestKey,
-    });
-
-    this._requestUri = parData.request_uri;
-
-    return { walletUri, requestUri: parData.request_uri, expiresIn: parData.expires_in };
+    this._requestUri = handoff.requestUri;
+    return handoff;
   }
 
   /**
@@ -392,19 +446,12 @@ export class RelayClientTransport implements ConnectTransport {
       throw new Error('Connect: call `requestProfile()` before `confirmComplete()`.');
     }
 
-    const completeUrl = concatenateUrl(this._connectServerUrl, 'complete');
-    const response = await this._fetch(completeUrl, {
-      body      : JSON.stringify({ state: this._state }),
-      method    : 'POST',
-      headers   : { 'Content-Type': 'application/json' },
-      keepalive : true,
-      signal    : this.requestSignal(),
+    await postRelayComplete({
+      connectServerUrl : this._connectServerUrl,
+      state            : this._state,
+      fetchFn          : this._fetch,
+      signal           : this.requestSignal(),
     });
-
-    if (!response.ok) {
-      await response.body?.cancel().catch((): void => {});
-      throw new Error(`Connect: completion signal failed with HTTP ${response.status}.`);
-    }
   }
 
   /** Combines the caller's session cancellation with the per-request timeout. */

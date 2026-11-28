@@ -51,15 +51,27 @@ export * from '@enbox/auth/browser';
 // transports: opening/sealing envelopes and the deny token.
 
 export {
+  assertValidRedirectUri,
+  buildRedirectReturnUri,
   CONNECT_DENIED_TOKEN,
   CONNECT_VERIFICATION_SYMBOL_COUNT,
   CONNECT_VERIFICATION_SYMBOLS,
   ConnectProvider,
   createConnectVerificationHandshake,
+  fetchConnectAppManifest,
   formatVerificationSymbols,
+  generateRedirectResponseSecret,
+  isRedirectUriVerifiedInManifest,
   postRelayHandshake,
 } from '@enbox/connect';
-export type { ConnectApproval, ConnectRequest, ConnectVerificationHandshake, ConnectVerificationSymbol } from '@enbox/connect';
+export type {
+  ConnectAppManifest,
+  ConnectApproval,
+  ConnectRequest,
+  ConnectVerificationHandshake,
+  ConnectVerificationSymbol,
+  PendingRedirectConnectSession,
+} from '@enbox/connect';
 
 // ─── Browser-specific exports ───────────────────────────────────
 //
@@ -87,6 +99,16 @@ export type {
   DWebConnectRequestMessage,
   DWebConnectResponseMessage,
 } from './dweb-connect-messages.js';
+export {
+  completeRedirectAuthenticationFromWindow,
+  completeRedirectConnectFromWindow,
+  getPendingRedirectConnectType,
+  startRedirectConnect,
+} from './redirect-connect.js';
+export type {
+  CompleteRedirectConnectOptions,
+  StartRedirectConnectOptions,
+} from './redirect-connect.js';
 export { fetchWalletWellKnown, probeWalletWellKnown, WALLET_WELL_KNOWN_PATH } from './ui/wallet-well-known.js';
 export type { WalletWellKnownDocument } from './ui/wallet-well-known.js';
 export { discoverWalletConnectServerUrl, runConnectModal } from './ui/connect-modal.js';

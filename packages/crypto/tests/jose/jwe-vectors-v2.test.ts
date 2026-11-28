@@ -19,6 +19,7 @@ type JweVector = {
   protectedHeader: JweHeaderParams;
   plaintextUtf8: string;
   jweCompact: string;
+  secretBase64Url?: string;
   key?: Jwk;
   passphraseUtf8?: string;
   cekJwk?: Jwk;
@@ -34,6 +35,7 @@ type JweTamperCase = {
   description: string;
   vectorId: string;
   jweCompact: string;
+  wrongSecretBase64Url?: string;
 };
 
 const vectors = JweVectorsV2.vectors as JweVector[];
@@ -49,7 +51,10 @@ function getVector(id: string): JweVector {
 /** Builds the encrypt-side key management input for the given vector. */
 function encryptKeyFor(vector: JweVector): Jwk | Uint8Array | JweEcdhEsEncryptKey {
   if (vector.recipientPublicKeyJwk !== undefined) {
-    return { mode: 'ecdh-es', peerPublicKey: vector.recipientPublicKeyJwk };
+    const secret = vector.secretBase64Url === undefined
+      ? undefined
+      : Convert.base64Url(vector.secretBase64Url).toUint8Array();
+    return { mode: 'ecdh-es', peerPublicKey: vector.recipientPublicKeyJwk, ...(secret === undefined ? {} : { secret }) };
   }
   if (vector.passphraseUtf8 !== undefined) {
     return Convert.string(vector.passphraseUtf8).toUint8Array();
@@ -58,9 +63,11 @@ function encryptKeyFor(vector: JweVector): Jwk | Uint8Array | JweEcdhEsEncryptKe
 }
 
 /** Builds the decrypt-side key management input for the given vector. */
-function decryptKeyFor(vector: JweVector): Jwk | Uint8Array | JweEcdhEsDecryptKey {
+function decryptKeyFor(vector: JweVector, secretOverrideBase64Url?: string): Jwk | Uint8Array | JweEcdhEsDecryptKey {
   if (vector.recipientPrivateKeyJwk !== undefined) {
-    return { mode: 'ecdh-es', privateKey: vector.recipientPrivateKeyJwk };
+    const encoded = secretOverrideBase64Url ?? vector.secretBase64Url;
+    const secret = encoded === undefined ? undefined : Convert.base64Url(encoded).toUint8Array();
+    return { mode: 'ecdh-es', privateKey: vector.recipientPrivateKeyJwk, ...(secret === undefined ? {} : { secret }) };
   }
   if (vector.passphraseUtf8 !== undefined) {
     return Convert.string(vector.passphraseUtf8).toUint8Array();
@@ -140,7 +147,7 @@ describe('JWE conformance vectors (jwe-vectors-v2.json)', () => {
 
         await expect(CompactJwe.decrypt({
           jwe     : tamperCase.jweCompact,
-          key     : decryptKeyFor(vector),
+          key     : decryptKeyFor(vector, tamperCase.wrongSecretBase64Url),
           options : optionsFor(vector),
         })).rejects.toThrow();
       });
@@ -152,12 +159,14 @@ describe('JWE conformance vectors (jwe-vectors-v2.json)', () => {
       const vectorIds = vectors.map((vector): string => vector.id);
       expect(vectorIds).toContain('dir-xc20p');
       expect(vectorIds).toContain('ecdh-es-xc20p');
+      expect(vectorIds).toContain('ecdh-es-xc20p-redirect-secret');
       expect(vectorIds).toContain('ecdh-es-xc20p-apu-apv');
       expect(vectorIds).toContain('pbes2-hs512-a256kw-a256gcm');
 
       const tamperIds = tamperCases.map((tamperCase): string => tamperCase.id);
       expect(tamperIds).toContain('tamper-flipped-tag-byte');
       expect(tamperIds).toContain('tamper-altered-apv');
+      expect(tamperIds).toContain('tamper-wrong-secret');
     });
 
     it('should use a 24-byte nonce for every XC20P vector', () => {

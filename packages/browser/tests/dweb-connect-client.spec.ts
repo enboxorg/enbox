@@ -12,6 +12,7 @@ import { WalletPostMessageTransport } from '../src/dweb-connect-wallet.js';
 import { authenticateViaPopup, connectViaPopup } from '../src/dweb-connect-client.js';
 import {
   DWEB_CONNECT_ACK_MESSAGE_TYPE,
+  DWEB_CONNECT_HELLO_MESSAGE_TYPE,
   DWEB_CONNECT_LOADED_MESSAGE_TYPE,
   DWEB_CONNECT_REQUEST_MESSAGE_TYPE,
   DWEB_CONNECT_RESPONSE_MESSAGE_TYPE,
@@ -677,11 +678,50 @@ describe('DWeb Connect popup flow (kernel loopback)', () => {
       }
     });
 
-    it('should throw when no dapp origin is supplied and the referrer is empty', async () => {
+    it.each([
+      ['empty (no-referrer)', ''],
+      ['opaque (about:blank)', 'about:blank'],
+      ['same-origin wallet unlock redirect', `${WALLET_ORIGIN}/unlock`],
+    ])('should discover the dapp origin via hello handshake when document.referrer is %s', async (_label, referrer) => {
+      const referrerSpy = spyOn(document, 'referrer', 'get').mockReturnValue(referrer);
+
+      try {
+        const { flow } = await startDappFlow({ appName: 'Hello Handshake Dapp' });
+        const transport = await WalletPostMessageTransport.create({
+          dappWindow     : fakeOpener,
+          helloTimeoutMs : 2_000,
+        });
+        walletTransports.push(transport);
+
+        expect(transport.dappOrigin).toBe(DAPP_ORIGIN);
+        expect(dappToWallet.some((m) => m.data.type === DWEB_CONNECT_HELLO_MESSAGE_TYPE && m.targetOrigin === WALLET_ORIGIN)).toBe(true);
+        expect(walletToDapp.every((m) => m.targetOrigin === DAPP_ORIGIN)).toBe(true);
+
+        const { delegateDidUri } = await approveRequest(transport);
+        const result = await flow;
+        expect(result?.delegatePortableDid.uri).toBe(delegateDidUri);
+      } finally {
+        referrerSpy.mockRestore();
+      }
+    });
+
+    it('should re-emit the loaded beacon if a late hello arrives before the request', async () => {
+      await createWalletTransport();
+      expect(walletToDapp.filter((m) => m.data.type === DWEB_CONNECT_LOADED_MESSAGE_TYPE)).toHaveLength(1);
+
+      window.dispatchEvent(new MessageEvent('message', {
+        data   : { type: DWEB_CONNECT_HELLO_MESSAGE_TYPE },
+        origin : DAPP_ORIGIN,
+        source : fakeOpener,
+      }));
+      expect(walletToDapp.filter((m) => m.data.type === DWEB_CONNECT_LOADED_MESSAGE_TYPE)).toHaveLength(2);
+    });
+
+    it('should throw when no dapp origin, referrer, or hello handshake arrives in time', async () => {
       const referrerSpy = spyOn(document, 'referrer', 'get').mockReturnValue('');
 
       try {
-        await expect(WalletPostMessageTransport.create({ dappWindow: fakeOpener }))
+        await expect(WalletPostMessageTransport.create({ dappWindow: fakeOpener, helloTimeoutMs: 50 }))
           .rejects.toThrow('Unable to determine the dapp origin');
       } finally {
         referrerSpy.mockRestore();
