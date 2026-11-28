@@ -1,7 +1,7 @@
 import sinon from 'sinon';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import type { BearerDid, PortableDid } from '@enbox/dids';
+import type { BearerDid, DidResolverCache, PortableDid } from '@enbox/dids';
 import { DidDht, DidJwk } from '@enbox/dids';
 
 import type { EnboxPlatformAgent } from '../src/types/agent.js';
@@ -44,6 +44,24 @@ describe('AgentDidApi', () => {
       expect(() =>
         didApi.agent
       ).toThrow('Unable to determine agent execution context');
+    });
+  });
+
+  describe('getRetainedResolution() with custom cache', () => {
+    it('returns undefined when the resolver cache does not implement getRetained', async () => {
+      const cacheWithoutRetained: DidResolverCache = {
+        clear  : async (): Promise<void> => {},
+        close  : async (): Promise<void> => {},
+        delete : async (): Promise<void> => {},
+        get    : async (): Promise<undefined> => undefined,
+        set    : async (): Promise<void> => {},
+      };
+      const didApi = new AgentDidApi({
+        didMethods    : [DidJwk],
+        resolverCache : cacheWithoutRetained,
+      });
+
+      expect(await didApi.getRetainedResolution('did:dht:unretained')).toBeUndefined();
     });
   });
 
@@ -785,7 +803,7 @@ describe('AgentDidApi', () => {
 
           // Advance wall clock beyond the 15-minute freshness TTL to ensure the
           // retained entry is returned even when stale, with zero network I/O.
-          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000 });
+          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000, toFake: ['Date'] });
           try {
             const retained = await testHarness.agent.did.getRetainedResolution(did.uri);
             expect(retained?.didDocument?.id).toBe(did.uri);

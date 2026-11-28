@@ -200,14 +200,11 @@ export class AgentDidApi<TKeyManager extends AgentKeyManager = AgentKeyManager> 
    * freshness TTL has elapsed) without triggering network resolution.
    */
   public async getRetainedResolution(didUri: string): Promise<DidResolutionResult | undefined> {
-    if (this.cache.getRetained === undefined) {
-      return undefined;
-    }
     const parsedDid = Did.parse(didUri);
     if (parsedDid === null) {
       return undefined;
     }
-    return (await this.cache.getRetained(parsedDid.uri)) ?? undefined;
+    return (await this.cache.getRetained?.(parsedDid.uri)) ?? undefined;
   }
 
   public async create({

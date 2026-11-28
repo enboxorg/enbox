@@ -1,11 +1,10 @@
-import type { BearerDid, DidResolverCache } from '@enbox/dids';
+import type { BearerDid } from '@enbox/dids';
 
 import sinon from 'sinon';
 
+import { DidDht } from '@enbox/dids';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { DidDht, DidJwk } from '@enbox/dids';
 
-import { AgentDidApi } from '../src/did-api.js';
 import { EnboxUserAgent } from '../src/enbox-user-agent.js';
 import { isDidResolutionUnavailableError } from '../src/did-resolution-error.js';
 
@@ -106,21 +105,5 @@ describe('local DWN reads during a DID resolution outage', () => {
     expect(isDidResolutionUnavailableError(signingMethodFailure)).toBe(true);
     await agent.did.cacheResolution(agentDid.uri, resolution);
     expect(await agent.keyManager.getPublicKey({ keyUri })).toEqual(publicKey);
-  });
-
-  it('returns undefined from getRetainedResolution when the resolver cache does not implement getRetained', async () => {
-    const cacheWithoutRetained: DidResolverCache = {
-      clear  : async (): Promise<void> => {},
-      close  : async (): Promise<void> => {},
-      delete : async (): Promise<void> => {},
-      get    : async (): Promise<undefined> => undefined,
-      set    : async (): Promise<void> => {},
-    };
-    const didApi = new AgentDidApi({
-      didMethods    : [DidJwk],
-      resolverCache : cacheWithoutRetained,
-    });
-
-    expect(await didApi.getRetainedResolution('did:dht:unretained')).toBeUndefined();
   });
 });

@@ -736,7 +736,7 @@ describe('AgentIdentityApi', () => {
           const resolveSpy = sinon.spy(testHarness.agent.did, 'resolve');
           const refreshSpy = sinon.spy(testHarness.agent.did, 'refreshResolution');
 
-          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000 });
+          const clock = sinon.useFakeTimers({ now: Date.now() + 60 * 60 * 1000, toFake: ['Date'] });
           try {
             const status = await testHarness.agent.identity.getRetainedDwnEndpointStatus({ didUri });
             expect(status).toEqual({
