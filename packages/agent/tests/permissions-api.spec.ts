@@ -62,12 +62,15 @@ describe('AgentPermissionsApi', () => {
   });
 
   describe('getPermission', () => {
-    const storeGrantAsBob = async (scope: DwnPermissionScope): Promise<PermissionGrantEntry> => {
+    const storeGrantAsBob = async (
+      scope: DwnPermissionScope,
+      dateExpires: string = Time.createOffsetTimestamp({ seconds: 60 }),
+    ): Promise<PermissionGrantEntry> => {
       const grant = await testHarness.agent.permissions.createGrant({
-        store       : true,
-        author      : aliceDid.uri,
-        grantedTo   : bobDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
+        store     : true,
+        author    : aliceDid.uri,
+        grantedTo : bobDid.uri,
+        dateExpires,
         scope
       });
 
@@ -373,34 +376,13 @@ describe('AgentPermissionsApi', () => {
 
     it('skips revocation reads for expired grants when populating the permission catalog', async () => {
       const moduleUri = 'http://example.com/catalog-active-only';
-      const expiredGrant = await testHarness.agent.permissions.createGrant({
-        store       : true,
-        author      : aliceDid.uri,
-        grantedTo   : bobDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: -60 }),
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Write,
-          module    : moduleUri,
-        },
-      });
-      const activeGrant = await storeGrantAsBob({
+      const scope = {
         interface : DwnInterfaceName.Records,
         method    : DwnMethodName.Write,
         module    : moduleUri,
-      });
-
-      // Store the expired grant under Bob's tenant as well.
-      const { encodedData, ...expiredGrantMessage } = expiredGrant.message;
-      const expiredReply = await testHarness.agent.processDwnRequest({
-        target      : bobDid.uri,
-        author      : bobDid.uri,
-        signAsOwner : true,
-        messageType : DwnInterface.RecordsWrite,
-        rawMessage  : expiredGrantMessage,
-        dataStream  : new Blob([ Convert.base64Url(encodedData).toUint8Array() ]),
-      });
-      expect(expiredReply.reply.status.code).toBe(202);
+      } as const;
+      await storeGrantAsBob(scope, Time.createOffsetTimestamp({ seconds: -60 }));
+      const activeGrant = await storeGrantAsBob(scope);
 
       await testHarness.agent.permissions.clear();
       const processDwnRequestSpy = spyOn(testHarness.agent, 'processDwnRequest');
@@ -796,39 +778,17 @@ describe('AgentPermissionsApi', () => {
 
     it('should skip revocation reads for expired grants when activeOnly is true', async () => {
       const moduleUri = 'http://example.com/active-only-revocation-test';
-      const expiredGrant = await testHarness.agent.permissions.createGrant({
-        store       : true,
-        author      : aliceDid.uri,
-        grantedTo   : aliceDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: -60 }),
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Write,
-          module    : moduleUri,
-        },
-      });
-      const activeGrant = await testHarness.agent.permissions.createGrant({
-        store       : true,
-        author      : aliceDid.uri,
-        grantedTo   : aliceDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Read,
-          module    : moduleUri,
-        },
-      });
-      const revokedActiveGrant = await testHarness.agent.permissions.createGrant({
-        store       : true,
-        author      : aliceDid.uri,
-        grantedTo   : aliceDid.uri,
-        dateExpires : Time.createOffsetTimestamp({ seconds: 60 }),
-        scope       : {
-          interface : DwnInterfaceName.Records,
-          method    : DwnMethodName.Delete,
-          module    : moduleUri,
-        },
-      });
+      const createTestGrant = (method: DwnMethodName, offsetSeconds: number): Promise<PermissionGrantEntry> =>
+        testHarness.agent.permissions.createGrant({
+          store       : true,
+          author      : aliceDid.uri,
+          grantedTo   : aliceDid.uri,
+          dateExpires : Time.createOffsetTimestamp({ seconds: offsetSeconds }),
+          scope       : { interface: DwnInterfaceName.Records, method, module: moduleUri },
+        });
+      const expiredGrant = await createTestGrant(DwnMethodName.Write, -60);
+      const activeGrant = await createTestGrant(DwnMethodName.Read, 60);
+      const revokedActiveGrant = await createTestGrant(DwnMethodName.Delete, 60);
       await testHarness.agent.permissions.createRevocation({
         store  : true,
         author : aliceDid.uri,

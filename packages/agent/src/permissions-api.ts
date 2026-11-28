@@ -213,77 +213,72 @@ export class AgentPermissionsApi implements PermissionsApi {
     const grantMessages = reply.entries! as DwnDataEncodedRecordsWriteMessage[];
 
     // Revocation filtering is opt-in and intentionally checks one grant at a
-    // time. If this becomes hot, add a dedicated revocation-read path instead
-    // of broad nested queries or parentId set filters.
-    if (!activeOnly) {
-      const revokedGrantIds = checkRevoked
-        ? await this.fetchRevokedGrantIds({ author, target, grantMessages, remote, cacheGeneration })
-        : new Set<string>();
-
-      const grants: PermissionGrantEntry[] = [];
-      for (const entry of grantMessages) {
-        if (revokedGrantIds.has(entry.recordId)) {
+    // time. When `activeOnly` is set, parse and drop expired grants first so
+    // revocation reads only run for active grants. Otherwise defer parsing
+    // until after revocation filtering so revoked grants are never parsed.
+    const now = activeOnly ? Time.getCurrentTimestamp() : undefined;
+    const candidates: Array<{ message: DwnDataEncodedRecordsWriteMessage; grant?: DwnPermissionGrant }> = [];
+    for (const message of grantMessages) {
+      if (now !== undefined) {
+        const grant = DwnPermissionGrant.parse(message);
+        if (!AgentPermissionsApi.isGrantActive(grant, now)) {
           continue;
         }
-        const grant = DwnPermissionGrant.parse(entry);
-        grants.push({ grant, message: entry });
+        candidates.push({ message, grant });
+      } else {
+        candidates.push({ message });
       }
-
-      return grants;
-    }
-
-    const now = Time.getCurrentTimestamp();
-    const candidateEntries: PermissionGrantEntry[] = [];
-    for (const entry of grantMessages) {
-      const grant = DwnPermissionGrant.parse(entry);
-      if (!AgentPermissionsApi.isGrantActive(grant, now)) {
-        continue;
-      }
-      candidateEntries.push({ grant, message: entry });
     }
 
     const revokedGrantIds = checkRevoked
       ? await this.fetchRevokedGrantIds({
         author,
         target,
-        grantMessages: candidateEntries.map(({ message }): DwnDataEncodedRecordsWriteMessage => message),
+        grantRecordIds: candidates.map(({ message }): string => message.recordId),
         remote,
         cacheGeneration,
       })
-      : new Set<string>();
+      : undefined;
 
-    return candidateEntries.filter(({ message }): boolean => !revokedGrantIds.has(message.recordId));
+    const grants: PermissionGrantEntry[] = [];
+    for (const { message, grant } of candidates) {
+      if (revokedGrantIds?.has(message.recordId)) {
+        continue;
+      }
+      grants.push({ grant: grant ?? DwnPermissionGrant.parse(message), message });
+    }
+    return grants;
   }
 
   /**
    * Fetches the grant record IDs that have a stored revocation.
    */
-  private async fetchRevokedGrantIds({ author, target, grantMessages, remote, cacheGeneration }: {
+  private async fetchRevokedGrantIds({ author, target, grantRecordIds, remote, cacheGeneration }: {
     author: string;
     target: string;
-    grantMessages: DwnDataEncodedRecordsWriteMessage[];
+    grantRecordIds: string[];
     remote: boolean;
     cacheGeneration: number;
   }): Promise<Set<string>> {
-    if (grantMessages.length === 0) {
+    if (grantRecordIds.length === 0) {
       return new Set<string>();
     }
 
     const revokedGrantIds = new Set<string>();
-    await mapConcurrent(grantMessages, REVOCATION_CHECK_CONCURRENCY, async (grantMessage): Promise<void> => {
-      if (this._revokedGrantIds.has(grantMessage.recordId)) {
-        revokedGrantIds.add(grantMessage.recordId);
+    await mapConcurrent(grantRecordIds, REVOCATION_CHECK_CONCURRENCY, async (grantRecordId): Promise<void> => {
+      if (this._revokedGrantIds.has(grantRecordId)) {
+        revokedGrantIds.add(grantRecordId);
         return;
       }
 
       const revoked = await this.readGrantRevocation({
         author,
         target,
-        grantRecordId: grantMessage.recordId,
+        grantRecordId,
         remote,
       }, cacheGeneration);
       if (revoked) {
-        revokedGrantIds.add(grantMessage.recordId);
+        revokedGrantIds.add(grantRecordId);
       }
     });
 
