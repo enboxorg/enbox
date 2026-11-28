@@ -241,6 +241,71 @@ describe('Connect scenarios', () => {
     }
   });
 
+  it('stores write-once SAS handshake keys and rejects conflicting overwrites', async () => {
+    const state = `handshake-${randomUUID()}`;
+    const handshakeGetUrl = `${connectBaseUrl}/connect/handshake/${state}`;
+    const handshakePostUrl = `${connectBaseUrl}/connect/handshake`;
+    const walletEpkA = { kty: 'OKP', crv: 'X25519', x: 'ZakEQ3d82ak4Vawhuarto4jHVubZwVBUz6fJXP9xIk8' };
+    const walletEpkB = { kty: 'OKP', crv: 'X25519', x: 'vxvvbso9-Eo1mJZR_oCc6hIoh72EmWKBc0i_21c5LwQ' };
+
+    // 1. Before the wallet posts a handshake key, GET reports ready: false.
+    let getResult = await fetch(handshakeGetUrl, { method: 'GET' });
+    expect(getResult.status).toBe(200);
+    expect(await getResult.json()).toEqual({ ready: false });
+
+    // 2. Invalid payloads are rejected with 400.
+    for (const badBody of [
+      {},
+      { state },
+      { state, walletEpk: { kty: 'OKP', crv: 'Ed25519', x: walletEpkA.x } },
+      { state, walletEpk: { ...walletEpkA, d: 'private-material' } },
+      { state, walletEpk: { kty: 'OKP', crv: 'X25519', x: '' } },
+    ]) {
+      const badRes = await fetch(handshakePostUrl, {
+        method  : 'POST',
+        headers : { 'Content-Type': 'application/json' },
+        body    : JSON.stringify(badBody),
+      });
+      expect(badRes.status).toBe(400);
+    }
+
+    // 3. First write creates the handshake entry (201).
+    const firstPost = await fetch(handshakePostUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state, walletEpk: walletEpkA }),
+    });
+    expect(firstPost.status).toBe(201);
+
+    // 4. GET returns ready: true and the exact public key, non-destructively.
+    for (let i = 0; i < 2; i++) {
+      getResult = await fetch(handshakeGetUrl, { method: 'GET' });
+      expect(getResult.status).toBe(200);
+      expect(await getResult.json()).toEqual({ ready: true, walletEpk: walletEpkA });
+    }
+
+    // 5. Re-posting the identical key is idempotent (200).
+    const retryPost = await fetch(handshakePostUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state, walletEpk: walletEpkA }),
+    });
+    expect(retryPost.status).toBe(200);
+
+    // 6. Attempting to overwrite with a different key is rejected (409).
+    const conflictPost = await fetch(handshakePostUrl, {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify({ state, walletEpk: walletEpkB }),
+    });
+    expect(conflictPost.status).toBe(409);
+
+    // Original key remains intact after the rejected conflict.
+    getResult = await fetch(handshakeGetUrl, { method: 'GET' });
+    expect(getResult.status).toBe(200);
+    expect(await getResult.json()).toEqual({ ready: true, walletEpk: walletEpkA });
+  });
+
   it('should clean up objects that are expired', async () => {
     // Scenario:
     // 1. App sends the Connect Request object to the Connect server.

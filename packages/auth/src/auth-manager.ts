@@ -154,7 +154,7 @@ function assertRestoreFromPhraseOptions(options: unknown): asserts options is Re
  *   connectServerUrl: 'https://enbox-dwn.fly.dev/connect',
  *   permissionRequests: [{ moduleDefinition: MyModule.definition }],
  *   onWalletUriReady: (uri) => showQRCode(uri),
- *   validatePin: () => promptUserForPin(),
+ *   onVerificationReady: (symbols) => showVerificationSymbols(symbols),
  * });
  * ```
  */

@@ -742,7 +742,6 @@ describe('AuthManager.walletConnect()', () => {
       connectServerUrl   : 'https://relay.example.com',
       permissionRequests : [],
       onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
     });
 
     expect(initCalls).toHaveLength(1);
@@ -775,7 +774,6 @@ describe('AuthManager.walletConnect()', () => {
       connectServerUrl   : 'https://relay.example.com',
       permissionRequests : [],
       onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
     });
 
     expect(initCalls).toHaveLength(0);
@@ -803,7 +801,6 @@ describe('AuthManager.walletConnect()', () => {
       connectServerUrl   : 'https://relay.example.com',
       permissionRequests : [],
       onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
     });
 
     expect(initCalls[0].password).toBe('my-password');
@@ -832,7 +829,6 @@ describe('AuthManager.walletConnect()', () => {
       connectServerUrl   : 'https://relay.example.com',
       permissionRequests : [],
       onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
     });
 
     expect(events).toContain('vault-unlocked');
@@ -860,7 +856,6 @@ describe('AuthManager.walletConnect()', () => {
       connectServerUrl   : 'https://relay.example.com',
       permissionRequests : [],
       onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
     });
 
     await expect(
@@ -869,7 +864,6 @@ describe('AuthManager.walletConnect()', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '5678',
       })
     ).rejects.toThrow('A connection attempt is already in progress');
 
@@ -891,7 +885,6 @@ describe('AuthManager.walletConnect()', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       });
     } catch { /* expected */ }
 
@@ -920,7 +913,6 @@ describe('AuthManager.walletConnect()', () => {
       connectServerUrl   : 'https://relay.example.com',
       permissionRequests : [],
       onWalletUriReady   : () => {},
-      validatePin        : async () => '1234',
     });
 
     expect(syncCalls).toHaveLength(1);

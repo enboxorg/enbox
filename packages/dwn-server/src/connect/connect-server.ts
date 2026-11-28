@@ -110,6 +110,33 @@ export class ConnectServer {
   }
 
   /**
+   * Stores the wallet's ephemeral X25519 handshake public key (`walletEpk`)
+   * keyed by `state` so the requesting app can derive the pre-approval SAS
+   * verification symbols. Write-once per `state`: re-posting the identical key
+   * is idempotent, while attempting to replace it with a different key is
+   * rejected as a conflict.
+   */
+  public async setConnectHandshake(
+    state: string,
+    walletEpk: Record<string, unknown>,
+  ): Promise<'created' | 'unchanged' | 'conflict'> {
+    const existing = await this.cache.get(`handshake:${state}`) as Record<string, unknown> | undefined;
+    if (existing !== undefined) {
+      return existing.x === walletEpk.x ? 'unchanged' : 'conflict';
+    }
+    await this.cache.insert(`handshake:${state}`, walletEpk, ConnectServer.ttlInSeconds);
+    return 'created';
+  }
+
+  /**
+   * Retrieves the wallet's ephemeral X25519 handshake public key for `state`,
+   * or `undefined` if the wallet has not published one yet. Non-consuming.
+   */
+  public async getConnectHandshake(state: string): Promise<Record<string, unknown> | undefined> {
+    return await this.cache.get(`handshake:${state}`) as Record<string, unknown> | undefined;
+  }
+
+  /**
    * Sets the Connect Response object.
    */
   public async setConnectResponse(state: string, response: any): Promise<any> {

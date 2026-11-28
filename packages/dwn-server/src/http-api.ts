@@ -1184,6 +1184,25 @@ export class HttpApi {
       }
     }
 
+    // POST /connect/handshake
+    // Wallet publishes its ephemeral X25519 handshake public key keyed by
+    // `state` so the requesting app can derive the pre-approval SAS
+    // verification symbols.
+    const handshakeResult = await this.#handleConnectHandshake(req, path, method);
+    if (handshakeResult !== null) {
+      return handshakeResult;
+    }
+
+    // GET /connect/handshake/:state
+    // Always 200 so pollers can treat any non-2xx as transport failure;
+    // unknown or expired states read as `{ ready: false }`.
+    {
+      const match = /^\/connect\/handshake\/([^/]+)$/.exec(path);
+      if (match && method === 'GET') {
+        return this.#handleConnectHandshakeState(match[1]);
+      }
+    }
+
     // POST /connect/complete
     // Observational completion signal from the requesting app: it fetched
     // and successfully opened the wallet's response. Keyed by the same
@@ -1303,6 +1322,69 @@ export class HttpApi {
   async #handleConnectRequestStatus(requestId: string): Promise<Response> {
     const claimed = await this.connectServer.isConnectRequestClaimed(requestId);
     return Response.json({ claimed }, { status: 200 });
+  }
+
+  async #handleConnectHandshake(req: Request, path: string, method: string): Promise<Response | null> {
+    if (!(method === 'POST' && path === '/connect/handshake')) {
+      return null;
+    }
+
+    const body = await req.json().catch((): undefined => undefined) as {
+      state?: unknown;
+      walletEpk?: unknown;
+    } | undefined;
+    const state = body?.state;
+    const walletEpk = body?.walletEpk;
+
+    if (typeof state !== 'string' || state === '') {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: Missing \'state\' parameter' },
+      }, { status: 400 });
+    }
+
+    if (
+      typeof walletEpk !== 'object'
+      || walletEpk === null
+      || Array.isArray(walletEpk)
+      || (walletEpk as Record<string, unknown>).kty !== 'OKP'
+      || (walletEpk as Record<string, unknown>).crv !== 'X25519'
+      || typeof (walletEpk as Record<string, unknown>).x !== 'string'
+      || ((walletEpk as Record<string, unknown>).x as string).length === 0
+      || (walletEpk as Record<string, unknown>).d !== undefined
+    ) {
+      return Response.json({
+        ok     : false,
+        status : { code: 400, message: 'Bad Request: \'walletEpk\' must be a public X25519 OKP JWK' },
+      }, { status: 400 });
+    }
+
+    const publicKey = {
+      kty : 'OKP',
+      crv : 'X25519',
+      x   : (walletEpk as Record<string, unknown>).x,
+    };
+    const outcome = await this.connectServer.setConnectHandshake(state, publicKey);
+    if (outcome === 'conflict') {
+      return Response.json({
+        ok     : false,
+        status : { code: 409, message: 'Conflict: Handshake key already registered for this state' },
+      }, { status: 409 });
+    }
+
+    return Response.json({
+      ok     : true,
+      status : { code: outcome === 'created' ? 201 : 200, message: outcome === 'created' ? 'Created' : 'OK' },
+    }, { status: outcome === 'created' ? 201 : 200 });
+  }
+
+  async #handleConnectHandshakeState(rawState: string): Promise<Response> {
+    const state = decodeURIComponent(rawState);
+    const walletEpk = await this.connectServer.getConnectHandshake(state);
+    if (walletEpk === undefined) {
+      return Response.json({ ready: false }, { status: 200 });
+    }
+    return Response.json({ ready: true, walletEpk }, { status: 200 });
   }
 
   async #handleConnectComplete(req: Request, path: string, method: string): Promise<Response | null> {

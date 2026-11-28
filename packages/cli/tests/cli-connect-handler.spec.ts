@@ -1,7 +1,9 @@
 import type { AddressInfo } from 'node:net';
-import type { ConnectPermissionRequest } from '@enbox/connect';
 import type { DwnPermissionScope } from '@enbox/agent';
+import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '@enbox/dids';
+import type { Writable } from 'node:stream';
+import type { ConnectPermissionRequest, ConnectVerificationSymbol } from '@enbox/connect';
 import type { ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 
@@ -12,7 +14,16 @@ import { createServer } from 'node:http';
 import { DidJwk } from '@enbox/dids';
 import { WalletConnect } from '@enbox/auth';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { ConnectProvider, fetchRelayRequest, parseWalletConnectUri, postRelayResponse } from '@enbox/connect';
+import {
+  CONNECT_VERIFICATION_SYMBOLS,
+  ConnectProvider,
+  createConnectVerificationHandshake,
+  fetchRelayRequest,
+  formatVerificationSymbols,
+  parseWalletConnectUri,
+  postRelayHandshake,
+  postRelayResponse,
+} from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import {
@@ -44,18 +55,24 @@ describe('CliConnectHandler', () => {
     sinon.restore();
   });
 
-  it('should complete an approved relay flow and validate the returned grants', async () => {
+  it('should complete an approved relay flow, display verification symbols, and validate the returned grants', async () => {
     let capturedOptions: WalletConnectClientOptions | undefined;
+    const sampleSymbols = [
+      CONNECT_VERIFICATION_SYMBOLS[5],
+      CONNECT_VERIFICATION_SYMBOLS[36],
+      CONNECT_VERIFICATION_SYMBOLS[45],
+    ] as const;
     const result = createConnectResult([createGrant({ scope: requestedScope })]);
     sinon.stub(WalletConnect, 'initClient').callsFake(async (options: WalletConnectClientOptions): Promise<ConnectResult | undefined> => {
       capturedOptions = options;
       await options.onWalletUriReady('https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test');
-      expect(await options.validatePin()).toBe('428113');
+      await options.onVerificationReady?.(sampleSymbols);
       return result;
     });
 
     const output = createWritableBuffer();
     const authUrls: string[] = [];
+    const seenSymbols: Array<readonly ConnectVerificationSymbol[]> = [];
     const handler = CliConnectHandler({
       appName                    : 'Test CLI',
       applicationId              : 'org.example.test-cli',
@@ -63,7 +80,7 @@ describe('CliConnectHandler', () => {
       connectServerUrl           : 'https://relay.example/connect',
       output,
       onAuthUrl                  : (uri: string): void => { authUrls.push(uri); },
-      pinPrompt                  : async (): Promise<string> => '428113',
+      onVerificationReady        : (symbols): void => { seenSymbols.push(symbols); },
       qrRenderer                 : async (): Promise<string> => '[qr]',
       timeoutMs                  : 10_000,
       requestedSessionTtlSeconds : 604_800,
@@ -80,7 +97,9 @@ describe('CliConnectHandler', () => {
     expect(capturedOptions?.requestedSessionTtlSeconds).toBe(604_800);
     expect(capturedOptions?.preSupplyDelegateDid).toBe(true);
     expect(authUrls).toEqual(['https://wallet.example/connect/app#request_uri=urn:test&encryption_key=test']);
+    expect(seenSymbols).toEqual([sampleSymbols]);
     expect(output.text()).toContain('[qr]');
+    expect(output.text()).toContain(formatVerificationSymbols(sampleSymbols));
     expect(output.text()).toContain('Waiting for approval...');
   });
 
@@ -99,7 +118,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -135,6 +153,7 @@ describe('CliConnectHandler', () => {
     let requestUri = '';
     let tokenUrl = '';
     let requestedDelegateDid = '';
+    let walletSymbols: readonly ConnectVerificationSymbol[] | undefined;
 
     try {
       const output = createWritableBuffer();
@@ -143,7 +162,6 @@ describe('CliConnectHandler', () => {
         walletUrl                  : 'https://wallet.example/connect/app',
         connectServerUrl           : `${relay.url}/connect`,
         output,
-        pinPrompt                  : async (): Promise<string> => '428113',
         qrRenderer                 : async (): Promise<string> => '[qr]',
         timeoutMs                  : 1000,
         pollIntervalMs             : 1,
@@ -168,6 +186,17 @@ describe('CliConnectHandler', () => {
             throw new Error('expected a direct_post reply descriptor on the relay channel');
           }
 
+          const handshake = await createConnectVerificationHandshake({
+            request: connectRequest,
+            requestJwe,
+          });
+          walletSymbols = handshake.symbols;
+          await postRelayHandshake({
+            callbackUrl : connectRequest.reply.callbackUrl,
+            state       : connectRequest.state,
+            walletEpk   : handshake.walletEpk,
+          });
+
           const idToken = await ConnectProvider.sealApprovedResponse({
             request     : connectRequest,
             providerDid : connectedDid,
@@ -176,8 +205,8 @@ describe('CliConnectHandler', () => {
               delegateGrants     : [createGrant({ grantee: requestedDelegateDid, scope: requestedScope })],
               sessionRevocations : [],
             },
-            signer : await DidJwk.create(),
-            pin    : '428113',
+            signer       : await DidJwk.create(),
+            handshakeKey : handshake.walletEpk,
           });
 
           await postRelayResponse({
@@ -195,6 +224,8 @@ describe('CliConnectHandler', () => {
       expect(result?.delegatePortableDid.uri).toBe(requestedDelegateDid);
       expect(result?.delegateGrants).toHaveLength(1);
       expect(output.text()).toContain('[qr]');
+      expect(walletSymbols).toBeDefined();
+      expect(output.text()).toContain(formatVerificationSymbols(walletSymbols!));
       expect(relay.requestReads()).toBe(1);
       expect(relay.tokenReads()).toBe(1);
       expect((await fetch(requestUri)).status).toBe(404);
@@ -218,7 +249,6 @@ describe('CliConnectHandler', () => {
       output,
       openBrowser      : true,
       browserOpener    : (uri: string): void => { openedUrls.push(uri); },
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -235,20 +265,18 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
     await expect(handler.requestAccess({ permissionRequests })).resolves.toBeUndefined();
   });
 
-  it('should surface PIN mismatch failures from the relay client', async () => {
+  it('should surface handshake verification failures from the relay client', async () => {
     sinon.stub(WalletConnect, 'initClient').rejects(new Error('failed to decrypt response'));
 
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '000000',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -269,7 +297,6 @@ describe('CliConnectHandler', () => {
       connectServerUrl : 'https://relay.example/connect',
       timeoutMs        : 1234,
       pollIntervalMs   : 50,
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -289,7 +316,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -320,8 +346,7 @@ describe('CliConnectHandler', () => {
         prompts.push(question);
         return answers.shift() ?? '';
       },
-      pinPrompt  : async (): Promise<string> => '428113',
-      qrRenderer : async (): Promise<string> => '[qr]',
+      qrRenderer: async (): Promise<string> => '[qr]',
     });
 
     await handler.requestAccess({ permissionRequests });
@@ -353,8 +378,7 @@ describe('CliConnectHandler', () => {
         prompts.push(question);
         return answers.shift() ?? '';
       },
-      pinPrompt  : async (): Promise<string> => '428113',
-      qrRenderer : async (): Promise<string> => '[qr]',
+      qrRenderer: async (): Promise<string> => '[qr]',
     });
 
     await handler.requestAccess({ permissionRequests });
@@ -379,13 +403,11 @@ describe('CliConnectHandler', () => {
     const firstHandler = CliConnectHandler({
       connectServerUrl : 'https://relay.example/connect',
       walletPrompt     : async (): Promise<string> => firstHandlerAnswers.shift() ?? '',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
     const secondHandler = CliConnectHandler({
       connectServerUrl : 'https://relay.example/connect',
       walletPrompt     : async (): Promise<string> => '',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -404,7 +426,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'http://',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -421,7 +442,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'my-dwn.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -434,7 +454,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'http://',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -445,7 +464,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'ftp://wallet.example',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -456,7 +474,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'ftp://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -473,7 +490,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'http://localhost:5173',
       connectServerUrl : 'http://localhost:3000/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -504,8 +520,7 @@ describe('CliConnectHandler', () => {
         prompts.push(question);
         return answers.shift() ?? '';
       },
-      pinPrompt  : async (): Promise<string> => '428113',
-      qrRenderer : async (): Promise<string> => '[qr]',
+      qrRenderer: async (): Promise<string> => '[qr]',
     });
 
     await handler.requestAccess({ permissionRequests });
@@ -537,7 +552,6 @@ describe('CliConnectHandler', () => {
       output,
       walletUrl              : 'https://wallet.example',
       connectServerUrlPrompt : async (): Promise<string> => 'https://relay.example/connect',
-      pinPrompt              : async (): Promise<string> => '428113',
       qrRenderer             : async (): Promise<string> => '[qr]',
     });
 
@@ -565,8 +579,7 @@ describe('CliConnectHandler', () => {
         prompts.push(question);
         return answers.shift() ?? '';
       },
-      pinPrompt  : async (): Promise<string> => '428113',
-      qrRenderer : async (): Promise<string> => '[qr]',
+      qrRenderer: async (): Promise<string> => '[qr]',
     });
 
     await handler.requestAccess({ permissionRequests });
@@ -590,7 +603,6 @@ describe('CliConnectHandler', () => {
       walletUrl                : 'https://wallet.example',
       connectServerUrlProvider : async (): Promise<string> => 'provider-dwn.example/connect',
       connectServerUrlPrompt   : async (): Promise<string> => { throw new Error('should not prompt'); },
-      pinPrompt                : async (): Promise<string> => '428113',
       qrRenderer               : async (): Promise<string> => '[qr]',
     });
 
@@ -617,7 +629,6 @@ describe('CliConnectHandler', () => {
       output,
       walletUrl              : 'https://wallet.example/connect/app',
       connectServerUrlPrompt : async (): Promise<string> => { throw new Error('should not prompt'); },
-      pinPrompt              : async (): Promise<string> => '428113',
       qrRenderer             : async (): Promise<string> => '[qr]',
     });
 
@@ -639,7 +650,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl              : 'https://wallet.example',
       connectServerUrlPrompt : async (): Promise<string> => 'https://relay.example/connect',
-      pinPrompt              : async (): Promise<string> => '428113',
       qrRenderer             : async (): Promise<string> => '[qr]',
     });
 
@@ -666,7 +676,6 @@ describe('CliConnectHandler', () => {
       output,
       walletUrl              : 'https://wallet.example',
       connectServerUrlPrompt : async (): Promise<string> => 'https://relay.example/connect',
-      pinPrompt              : async (): Promise<string> => '428113',
       qrRenderer             : async (): Promise<string> => '[qr]',
     });
 
@@ -686,7 +695,6 @@ describe('CliConnectHandler', () => {
     const handler = CliConnectHandler({
       walletUrl        : 'https://wallet.example',
       connectServerUrl : 'https://relay.example/connect',
-      pinPrompt        : async (): Promise<string> => '428113',
       qrRenderer       : async (): Promise<string> => '[qr]',
     });
 
@@ -711,6 +719,7 @@ type StoredRelayEntry = {
 
 async function createTestRelay(): Promise<TestRelay> {
   const requests = new Map<string, StoredRelayEntry>();
+  const handshakes = new Map<string, Jwk>();
   const tokens = new Map<string, StoredRelayEntry>();
   let requestReadCount = 0;
   let tokenReadCount = 0;
@@ -720,6 +729,7 @@ async function createTestRelay(): Promise<TestRelay> {
   const server = createServer((request: IncomingMessage, response: ServerResponse): void => {
     void handleRelayRequest({
       baseUrl,
+      handshakes,
       request,
       requests,
       response,
@@ -749,6 +759,7 @@ async function createTestRelay(): Promise<TestRelay> {
 
 async function handleRelayRequest({
   baseUrl,
+  handshakes,
   request,
   requests,
   response,
@@ -758,6 +769,7 @@ async function handleRelayRequest({
   incrementTokenReads,
 }: {
   baseUrl: string;
+  handshakes: Map<string, Jwk>;
   request: IncomingMessage;
   requests: Map<string, StoredRelayEntry>;
   response: ServerResponse;
@@ -796,6 +808,31 @@ async function handleRelayRequest({
     stored.consumed = true;
     incrementRequestReads();
     writeResponse(response, 200, stored.value, 'application/jwt');
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/connect/handshake') {
+    const body = JSON.parse(await readRequestBody(request)) as { state?: string; walletEpk?: Jwk };
+    if (body.state === undefined || body.walletEpk === undefined) {
+      writeResponse(response, 400, 'missing handshake');
+      return;
+    }
+
+    handshakes.set(body.state, body.walletEpk);
+    writeJson(response, { ok: true });
+    return;
+  }
+
+  const handshakeMatch = url.pathname.match(/^\/connect\/handshake\/([^/]+)$/);
+  if (request.method === 'GET' && handshakeMatch !== null) {
+    const state = decodeURIComponent(handshakeMatch[1]);
+    const walletEpk = handshakes.get(state);
+    if (walletEpk === undefined) {
+      writeJson(response, { ready: false });
+      return;
+    }
+
+    writeJson(response, { ready: true, walletEpk });
     return;
   }
 

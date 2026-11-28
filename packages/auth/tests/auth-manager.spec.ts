@@ -2411,7 +2411,6 @@ describe('AuthManager', () => {
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : [],
           onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
         })).rejects.toThrow('relay deliberately stopped');
         expect(initClient).toHaveBeenCalledTimes(1);
       } finally {

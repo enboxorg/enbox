@@ -13,7 +13,7 @@
  * 2. **Stage** — a height-stable region where states crossfade: the
  *    clickable QR (joined by a Continue deep-link button on phones; both
  *    open the wallet in a new tab so this session stays alive underneath),
- *    the pairing-code input, progress, success, and error states.
+ *    the SAS verification symbols, progress, success, and error states.
  * 3. **Footer** — the wallet identity row ("Connecting with" + the selected
  *    wallet and the next catalog wallets as tiles), a More tile that expands
  *    the remaining wallets as a matching grid (search + custom URL) in
@@ -39,7 +39,13 @@
 
 import type { PortableDid } from '@enbox/dids';
 import type { WalletOption } from '../browser-connect-handler.js';
-import type { ConnectPermissionRequest, ConnectRequestType, ConnectResult, WalletUriHandoff } from '@enbox/connect';
+import type {
+  ConnectPermissionRequest,
+  ConnectRequestType,
+  ConnectResult,
+  ConnectVerificationSymbol,
+  WalletUriHandoff,
+} from '@enbox/connect';
 
 import { ConnectClient } from '@enbox/connect';
 
@@ -78,9 +84,6 @@ const REMINT_SAFETY_MS = 120_000;
 
 /** Minimum delay before an automatic re-mint. */
 const REMINT_MIN_MS = 10_000;
-
-/** Pairing code length (matches the wallet's generated PIN). */
-const PIN_LENGTH = 4;
 
 /** Catalog size beyond which the wallet switcher shows its search bar. */
 const WALLET_SEARCH_THRESHOLD = 4; // one full row of tiles
@@ -566,12 +569,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     let remintTimer: ReturnType<typeof setTimeout> | undefined;
     let remintAt: number | undefined;
     let popupBusy = false;
-    let pinResolve: ((pin: string) => void) | undefined;
-    // Proxy pinResolve reads/clears for buildPinInputs (module scope), whose
-    // per-input closures would otherwise be nested inside renderPin()'s own
-    // executor chain too deeply (Sonar S2004).
-    const getPinResolve = (): ((pin: string) => void) | undefined => pinResolve;
-    const clearPinResolve = (): void => { pinResolve = undefined; };
+    let verificationActive = false;
     const discoveryCache = new Map<string, Promise<string | undefined>>();
 
     // Collapsed identity row: the selected wallet plus the next catalog
@@ -669,7 +667,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const morphToAway = (walletName: string): void => {
       const session = relaySession;
       setTimeout((): void => {
-        if (settled || session !== relaySession || session?.active !== true || pinResolve !== undefined) {
+        if (settled || session !== relaySession || session?.active !== true || verificationActive) {
           return;
         }
         renderAway(walletName);
@@ -679,7 +677,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     /**
      * Builds one same-device handoff anchor for the wallet URI. The wallet
      * opens in a new tab so this modal — and the relay session under it —
-     * stays alive, with the pairing-code entry waiting when the user
+     * stays alive, with the verification symbols waiting when the user
      * switches back. `noopener` keeps the wallet tab from reaching back into
      * this one.
      */
@@ -731,7 +729,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         qrLink.classList.add('compact');
         setStage(
           link,
-          el('p', 'stage-subline', `${walletName} opens in a new tab — approve there, then come back for your code.`),
+          el('p', 'stage-subline', `${walletName} opens in a new tab — confirm the matching symbols there.`),
           el('div', 'stage-divider', 'or scan with another phone'),
           qrLink,
         );
@@ -747,17 +745,17 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
 
     /**
      * Shown once a handoff link is followed on this device: the approval is
-     * happening in the wallet tab, this one waits for the code. "Start over"
-     * mints a fresh pointer — the right recovery, because the pointer the
-     * wallet tab carried away is single-use.
+     * happening in the wallet tab. "Start over" mints a fresh pointer — the
+     * right recovery, because the pointer the wallet tab carried away is
+     * single-use.
      */
     const renderAway = (walletName: string): void => {
       setStage(
         el('div', 'spinner'),
         el('p', 'stage-caption', `Finish in ${walletName}`),
         el('p', 'stage-subline', isMobile
-          ? `Approve the connection in the ${walletName} tab, then come back here for your code.`
-          : 'Approve the connection in the tab that just opened, then come back here for your code.'),
+          ? `Approve the connection in the ${walletName} tab, then return here.`
+          : 'Approve the connection in the tab that just opened.'),
         stageLinkButton('Start over', () => { void startPhone(); }),
       );
     };
@@ -768,34 +766,30 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       pulse.className = 'claimed-pulse';
       setStage(
         pulse,
-        el('p', 'stage-caption', `Request received — approve in ${walletName}`),
-        el('p', 'stage-subline', 'Once you approve, you’ll get a code to enter here.'),
+        el('p', 'stage-caption', `Request received — unlock ${walletName}`),
+        el('p', 'stage-subline', 'Verification symbols will appear here as soon as your wallet is ready.'),
       );
     };
 
-    const renderPin = (attempt: number, previousError?: Error): Promise<string> => {
-      return new Promise<string>((resolvePin) => {
-        pinResolve = resolvePin;
-        const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
+    const renderVerificationSymbols = (symbols: readonly ConnectVerificationSymbol[]): void => {
+      const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
+      const row = document.createElement('div');
+      row.className = 'verify-row';
+      row.setAttribute('aria-label', `Verification symbols: ${symbols.map((s) => s.label).join(', ')}`);
 
-        const boxes = document.createElement('div');
-        boxes.className = 'pin-row';
-        if (previousError !== undefined) {
-          boxes.classList.add('shake');
-        }
+      for (const symbol of symbols) {
+        const card = document.createElement('div');
+        card.className = 'verify-card';
+        card.appendChild(el('span', 'verify-emoji', symbol.emoji));
+        card.appendChild(el('span', 'verify-label', symbol.label));
+        row.appendChild(card);
+      }
 
-        const inputs = buildPinInputs(boxes, getPinResolve, clearPinResolve, renderBusy);
-
-        setStage(
-          el('p', 'stage-caption', `Enter the code shown in ${walletName}`),
-          boxes,
-          ...(previousError !== undefined
-            ? [el('p', 'stage-error', `That code doesn’t match — check ${walletName}.`)]
-            : [el('p', 'stage-subline', attempt === 1 ? 'This confirms you’re the one approving.' : '')]),
-        );
-
-        inputs[0].focus();
-      });
+      setStage(
+        el('p', 'stage-caption', `Confirm in ${walletName}`),
+        row,
+        el('p', 'stage-subline', `Tap these 3 symbols in ${walletName} to finish connecting.`),
+      );
     };
 
     const renderConnected = (): void => {
@@ -868,7 +862,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       const walletName = walletUrl !== undefined ? walletByUrl(walletUrl).name : 'your wallet';
       const exactReconnect = savedRoute !== undefined;
       const connectDescription = isMobile
-        ? 'Your wallet opens in a new tab to approve this connection — no code needed.'
+        ? 'Your wallet opens in a new tab to approve this connection directly.'
         : 'Your wallet opens in a small window to approve this connection.';
       const description = exactReconnect
         ? `We’ll open the same ${walletName} profile used for this session.`
@@ -902,7 +896,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         stageButton(blocked ? 'Open it now' : `Reopen ${popupSurface}`, () => { void startPopup(); }),
         ...(savedRoute !== undefined
           ? [stageLinkButton(savedRouteEscapeLabel, escapeSavedRoute)]
-          : [stageLinkButton(isMobile ? 'Use a code instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]),
+          : [stageLinkButton(isMobile ? 'Use another device instead' : 'Use your phone instead', () => { void switchMethod('phone'); })]),
       );
     };
 
@@ -943,8 +937,8 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     };
 
     const remintNow = (): void => {
-      // Never re-mint once the wallet has responded (pairing in progress).
-      if (!settled && pinResolve === undefined && method === 'phone') {
+      // Never re-mint once the wallet has published its verification handshake.
+      if (!settled && !verificationActive && method === 'phone') {
         void startPhone();
       }
     };
@@ -962,6 +956,7 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
     const startPhone = async (): Promise<void> => {
       relaySession?.cancel();
       clearRemint();
+      verificationActive = false;
 
       if (walletUrl === undefined) {
         renderError('No wallet is configured.');
@@ -1003,16 +998,19 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
             }
           },
           onClaimed: (): void => {
-            if (session.active && !settled) {
+            if (session.active && !settled && !verificationActive) {
               // The wallet has the request — stop re-minting (a new pointer
               // would orphan the approval in progress) and show progress.
               clearRemint();
               renderClaimed();
             }
           },
-          requestPin: (attempt, previousError): Promise<string> => {
-            clearRemint();
-            return renderPin(attempt, previousError);
+          onVerificationReady: (symbols): void => {
+            if (session.active && !settled) {
+              verificationActive = true;
+              clearRemint();
+              renderVerificationSymbols(symbols);
+            }
           },
         });
 
@@ -1121,15 +1119,15 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
         // On a phone both methods open the wallet on this device — what the
-        // popup channel actually buys the visitor is skipping the code.
-        alt.textContent = isMobile ? 'Or connect without a code →' : 'No phone? Use this browser →';
+        // popup channel actually buys the visitor is skipping manual verification.
+        alt.textContent = isMobile ? 'Or connect directly in this browser →' : 'No phone? Use this browser →';
         // startPopup runs synchronously in this click handler.
         alt.addEventListener('click', () => { void startPopup(); });
         row.appendChild(alt);
       } else if (method === 'browser' && savedRoute === undefined) {
         const alt = document.createElement('button');
         alt.className = 'footer-link method-link';
-        alt.textContent = isMobile ? 'Use a code instead →' : 'Use your phone instead →';
+        alt.textContent = isMobile ? 'Use another device instead →' : 'Use your phone instead →';
         alt.addEventListener('click', () => { void switchMethod('phone'); });
         row.appendChild(alt);
       }
@@ -1354,14 +1352,6 @@ export function runConnectModal(options: ConnectModalOptions): Promise<ConnectRe
       // due while the user was away fires now instead of never.
       if (remintAt !== undefined && Date.now() >= remintAt) {
         remintNow();
-        return;
-      }
-
-      // Returning with the code in hand: put the caret in the first empty
-      // pairing-code box so they can type it straight away.
-      if (pinResolve !== undefined) {
-        const inputs = Array.from(shadow.querySelectorAll<HTMLInputElement>('.pin-input'));
-        inputs.find((input) => input.value === '')?.focus();
       }
     };
     document.addEventListener('visibilitychange', onVisibilityReturn);
@@ -1467,77 +1457,6 @@ function buildHeader(titleText: string, appIcon: string | undefined, onCancel: (
   header.appendChild(identity);
   header.appendChild(closeBtn);
   return header;
-}
-
-/**
- * Builds the PIN-entry boxes, wires their input/keydown/paste behavior, and
- * returns the input elements in order. Module-level — `renderPin()`'s own
- * `new Promise` executor already nests two levels deep inside
- * `runConnectModal()`, so a per-input closure defined there would sit too
- * deep for Sonar's S2004 nesting-depth check.
- *
- * `getPinResolve`/`clearPinResolve` proxy the `pinResolve` state kept in
- * `runConnectModal()`'s closure: a completed code needs it read once, then
- * cleared — in that order, before the busy state renders and the pending
- * promise resolves — exactly as it was inline.
- */
-function buildPinInputs(
-  boxes: HTMLDivElement,
-  getPinResolve: () => ((pin: string) => void) | undefined,
-  clearPinResolve: () => void,
-  renderBusy: (message: string) => void,
-): HTMLInputElement[] {
-  const inputs: HTMLInputElement[] = [];
-  for (let i = 0; i < PIN_LENGTH; i++) {
-    const input = document.createElement('input');
-    input.className = 'pin-input';
-    input.type = 'text';
-    input.inputMode = 'numeric';
-    input.maxLength = 1;
-    input.setAttribute('aria-label', `Code digit ${i + 1}`);
-    inputs.push(input);
-    boxes.appendChild(input);
-  }
-
-  const submitIfComplete = (): void => {
-    const code = inputs.map((i) => i.value).join('');
-    const pinResolve = getPinResolve();
-    if (code.length === PIN_LENGTH && pinResolve !== undefined) {
-      const resolveOnce = pinResolve;
-      clearPinResolve();
-      renderBusy('Checking the code…');
-      resolveOnce(code);
-    }
-  };
-
-  inputs.forEach((input, index) => {
-    input.addEventListener('input', () => {
-      input.value = input.value.replace(/\D/g, '').slice(0, 1);
-      if (input.value !== '' && index + 1 < inputs.length) {
-        inputs[index + 1].focus();
-      }
-      submitIfComplete();
-    });
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Backspace' && input.value === '' && index > 0) {
-        inputs[index - 1].focus();
-      }
-    });
-    input.addEventListener('paste', (event) => {
-      const digits = (event.clipboardData?.getData('text') ?? '').replace(/\D/g, '').slice(0, PIN_LENGTH);
-      if (digits.length === 0) { return; }
-      event.preventDefault();
-      digits.split('').forEach((digit, digitIndex) => {
-        if (inputs[digitIndex] !== undefined) {
-          inputs[digitIndex].value = digit;
-        }
-      });
-      inputs[Math.min(digits.length, PIN_LENGTH) - 1]?.focus();
-      submitIfComplete();
-    });
-  });
-
-  return inputs;
 }
 
 function trapFocus(shadow: ShadowRoot, event: KeyboardEvent): void {
@@ -1774,19 +1693,27 @@ const MODAL_STYLES = `
     }
     .deep-link .wallet-img { border-radius: 6px; }
 
-    .pin-row { display: flex; gap: 10px; }
-    .pin-row.shake { animation: shake 0.4s ease-in-out; }
-    .pin-input {
-      width: 46px; height: 54px;
-      text-align: center;
-      font-size: 24px; font-weight: 600;
-      color: var(--ec-text);
+    .verify-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+      max-width: 300px;
+      margin: 4px 0;
+    }
+    .verify-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 14px 8px;
       background: var(--ec-surface);
       border: 1px solid var(--ec-border);
-      border-radius: 10px;
-      outline: none;
+      border-radius: 14px;
     }
-    .pin-input:focus { border-color: var(--ec-accent); }
+    .verify-emoji { font-size: 32px; line-height: 1; }
+    .verify-label { font-size: 12px; font-weight: 600; color: var(--ec-text); }
 
     .check {
       width: 56px; height: 56px;
@@ -1958,7 +1885,7 @@ const MODAL_STYLES = `
     .url-error { font-size: 12px; color: var(--ec-danger); }
 
     @media (prefers-reduced-motion: reduce) {
-      .overlay, .modal, .stage.fade-in > *, .pin-row.shake { animation: none; }
+      .overlay, .modal, .stage.fade-in > * { animation: none; }
       .claimed-pulse::after { animation: none; }
     }
 `;

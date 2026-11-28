@@ -1,10 +1,11 @@
 import type { ConnectModalDeps } from '../src/ui/connect-modal.js';
 import type { PortableDid } from '@enbox/dids';
 import type { WalletOption } from '../src/browser-connect-handler.js';
-import type { ConnectPermissionRequest, ConnectRequestType, ConnectResult, WalletUriHandoff } from '@enbox/connect';
+import type { ConnectPermissionRequest, ConnectRequestType, ConnectResult, ConnectVerificationSymbol, WalletUriHandoff } from '@enbox/connect';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { CONNECT_VERIFICATION_SYMBOLS } from '@enbox/connect';
 import { DwnInterfaceName, DwnMethodName } from '@enbox/dwn-sdk-js';
 
 import { PopupWindowClosedError } from '../src/dweb-connect-client.js';
@@ -58,14 +59,14 @@ function createFakeStorage(initial: Record<string, string> = {}): Pick<Storage, 
 
 /**
  * A controllable relay driver: records its invocations and exposes the
- * callbacks so tests can walk the session through QR → PIN → result.
+ * callbacks so tests can walk the session through QR → SAS verification → result.
  */
 type FakeRelayCall = {
   walletUri: string;
   connectServerUrl: string;
   onWalletUriReady: (handoff: WalletUriHandoff) => void;
   onClaimed?: () => void;
-  requestPin: (attempt: number, previousError?: Error) => Promise<string>;
+  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => void;
   delegatePortableDid?: PortableDid;
   requestType?: ConnectRequestType;
   applicationId?: string;
@@ -84,7 +85,7 @@ function createFakeRelay(): { calls: FakeRelayCall[]; runRelay: ConnectModalDeps
         connectServerUrl    : options.connectServerUrl,
         onWalletUriReady    : options.onWalletUriReady,
         onClaimed           : options.onClaimed,
-        requestPin          : options.requestPin,
+        onVerificationReady : options.onVerificationReady,
         delegatePortableDid : options.delegatePortableDid,
         requestType         : options.requestType,
         applicationId       : options.applicationId,
@@ -355,9 +356,14 @@ describe('runConnectModal', () => {
     })).toThrow('refresh requests require an existing `delegatePortableDid`');
   });
 
-  it('walks pairing-code entry through to success and remembers the choice', async () => {
+  it('renders SAS verification symbols through to success and remembers the choice', async () => {
     const relay = createFakeRelay();
     const storage = createFakeStorage();
+    const sampleSymbols = [
+      CONNECT_VERIFICATION_SYMBOLS[5],
+      CONNECT_VERIFICATION_SYMBOLS[36],
+      CONNECT_VERIFICATION_SYMBOLS[45],
+    ] as const;
     const promise = runConnectModal({
       wallets            : WALLETS,
       appName            : 'Test Dapp',
@@ -368,17 +374,14 @@ describe('runConnectModal', () => {
     await flush();
     relay.calls[0].onWalletUriReady(HANDOFF);
 
-    // Wallet responded — the runner asks for the pairing code.
-    const pinPromise = relay.calls[0].requestPin(1);
-    const inputs = Array.from(shadowRoot().querySelectorAll<HTMLInputElement>('.pin-input'));
-    expect(inputs).toHaveLength(4);
-    expect(stageText()).toContain('Enter the code shown in Enbox');
-
-    ['1', '2', '3', '4'].forEach((digit, index) => {
-      inputs[index].value = digit;
-      inputs[index].dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await expect(pinPromise).resolves.toBe('1234');
+    // Wallet published its handshake key — the modal displays the 3 SAS symbols.
+    relay.calls[0].onVerificationReady?.(sampleSymbols);
+    const cards = Array.from(shadowRoot().querySelectorAll<HTMLElement>('.verify-card'));
+    expect(cards).toHaveLength(3);
+    expect(cards.map((card) => card.querySelector('.verify-label')?.textContent)).toEqual(['Fox', 'Rocket', 'Guitar']);
+    expect(cards.map((card) => card.querySelector('.verify-emoji')?.textContent)).toEqual(['🦊', '🚀', '🎸']);
+    expect(stageText()).toContain('Confirm in Enbox');
+    expect(stageText()).toContain('Tap these 3 symbols in Enbox');
 
     relay.calls[0].resolve(RESULT);
     await flush();
@@ -446,8 +449,13 @@ describe('runConnectModal', () => {
     await expect(refresh).rejects.toThrow(/cancelled/i);
   });
 
-  it('shakes and retries on a mistyped pairing code', async () => {
+  it('does not overwrite verification symbols when a late claimed notification arrives', async () => {
     const relay = createFakeRelay();
+    const sampleSymbols = [
+      CONNECT_VERIFICATION_SYMBOLS[0],
+      CONNECT_VERIFICATION_SYMBOLS[1],
+      CONNECT_VERIFICATION_SYMBOLS[2],
+    ] as const;
     const promise = runConnectModal({
       wallets            : WALLETS,
       permissionRequests : PERMISSIONS,
@@ -457,11 +465,11 @@ describe('runConnectModal', () => {
 
     await flush();
     relay.calls[0].onWalletUriReady(HANDOFF);
-
-    void relay.calls[0].requestPin(2, new Error('decrypt failed'));
+    relay.calls[0].onVerificationReady?.(sampleSymbols);
+    relay.calls[0].onClaimed?.();
     await flush();
-    expect(shadowRoot().querySelector('.pin-row.shake')).not.toBeNull();
-    expect(stageText()).toContain('That code doesn’t match');
+    expect(shadowRoot().querySelectorAll('.verify-card')).toHaveLength(3);
+    expect(stageText()).toContain('Confirm in Enbox');
   });
 
   it('shows the denial stage and resolves undefined on Close', async () => {
@@ -534,7 +542,7 @@ describe('runConnectModal', () => {
     await flush();
 
     expect(stageText()).toContain('Finish in Enbox');
-    expect(stageText()).toContain('come back here for your code');
+    expect(stageText()).toContain('Approve the connection in the tab that just opened.');
 
     // Start over mints a fresh pointer — the one the wallet tab carried away
     // is single-use.
@@ -545,7 +553,7 @@ describe('runConnectModal', () => {
     expect(relay.calls).toHaveLength(2);
   });
 
-  it('routes an interrupted mobile popup back to the code path', async () => {
+  it('routes an interrupted mobile popup back to the phone path', async () => {
     const relay = createFakeRelay();
     const promise = runConnectModal({
       wallets            : WALLETS,
@@ -559,15 +567,15 @@ describe('runConnectModal', () => {
     promise.catch((): undefined => undefined);
     await flush();
 
-    // On a phone the popup alternative is pitched as skipping the code.
+    // On a phone the popup alternative is pitched as connecting directly.
     const methodLink = shadowRoot().querySelector<HTMLButtonElement>('.method-link');
-    expect(methodLink?.textContent).toContain('without a code');
+    expect(methodLink?.textContent).toContain('directly in this browser');
     methodLink?.click();
     await flush();
 
     expect(stageText()).toContain('The wallet tab was closed.');
     const back = Array.from(shadowRoot().querySelectorAll<HTMLButtonElement>('.stage .footer-link'))
-      .find((button) => button.textContent === 'Use a code instead');
+      .find((button) => button.textContent === 'Use another device instead');
     expect(back).toBeDefined();
     back?.click();
     await flush();
@@ -1063,8 +1071,8 @@ describe('runConnectModal', () => {
     relay.calls[0].onClaimed?.();
     await flush();
 
-    expect(stageText()).toContain('Request received — approve in Enbox');
-    expect(stageText()).toContain('you’ll get a code to enter here');
+    expect(stageText()).toContain('Request received — unlock Enbox');
+    expect(stageText()).toContain('Verification symbols will appear here');
 
     // The approval still lands normally after the progress beat.
     relay.calls[0].resolve(RESULT);

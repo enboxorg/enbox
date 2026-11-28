@@ -340,7 +340,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 
@@ -362,7 +361,6 @@ describe('walletConnect', () => {
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : [],
           onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
         },
       )
     ).rejects.toThrow('Connection was denied by the wallet');
@@ -384,7 +382,6 @@ describe('walletConnect', () => {
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : [],
           onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
         },
       );
     } catch (error: unknown) {
@@ -423,7 +420,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 
@@ -470,7 +466,6 @@ describe('walletConnect', () => {
         connectServerUrl     : 'https://relay.example.com',
         permissionRequests   : [],
         onWalletUriReady     : () => {},
-        validatePin          : async () => '1234',
         preSupplyDelegateDid : true,
         delegatePortableDid  : delegatePortableDid,
       },
@@ -509,7 +504,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
         walletUri          : 'custom://wallet',
       },
     );
@@ -541,7 +535,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 
@@ -574,7 +567,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 
@@ -611,7 +603,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : CHAT_PERMISSION_REQUESTS,
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 
@@ -640,7 +631,6 @@ describe('walletConnect', () => {
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : [],
           onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
         },
       )
     ).rejects.toThrow('Wallet connect failed: import failed');
@@ -676,7 +666,6 @@ describe('walletConnect', () => {
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : CHAT_PERMISSION_REQUESTS,
           onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
         },
       )
     ).rejects.toThrow('Wallet connect failed');
@@ -714,7 +703,6 @@ describe('walletConnect', () => {
           connectServerUrl   : 'https://relay.example.com',
           permissionRequests : CHAT_PERMISSION_REQUESTS,
           onWalletUriReady   : () => {},
-          validatePin        : async () => '1234',
         },
       )
     ).rejects.toThrow('Wallet connect failed: trigger cleanup');
@@ -744,7 +732,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
         sync               : '45s',
       },
     );
@@ -777,7 +764,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 
@@ -818,7 +804,6 @@ describe('walletConnect', () => {
         connectServerUrl   : 'https://relay.example.com',
         permissionRequests : [],
         onWalletUriReady   : () => {},
-        validatePin        : async () => '1234',
       },
     );
 

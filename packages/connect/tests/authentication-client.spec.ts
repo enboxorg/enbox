@@ -1,4 +1,5 @@
 import type { BearerDid } from '@enbox/dids';
+import type { Jwk } from '@enbox/crypto';
 import type { ConnectApproval, ConnectRequest, ConnectTransport } from '../src/types.js';
 
 import { DidJwk } from '@enbox/dids';
@@ -9,7 +10,7 @@ import { ConnectProvider } from '../src/provider.js';
 import { createOwnerAuthenticationProof } from '../src/owner-authentication.js';
 import { ConnectClient, randomToken } from '../src/client.js';
 
-type WalletAction = (request: ConnectRequest, signer: BearerDid, pin?: string) => Promise<string>;
+type WalletAction = (request: ConnectRequest, signer: BearerDid, handshakeKey?: Jwk) => Promise<string>;
 
 async function loopback(mode: 'relay' | 'popup', action: WalletAction,
   onAuthenticationRequest?: (request: Readonly<ConnectRequest>) => Promise<void> | void): Promise<{
@@ -17,13 +18,16 @@ async function loopback(mode: 'relay' | 'popup', action: WalletAction,
 }> {
   const requestKey = CryptoUtils.randomBytes(32);
   const walletEpk = await X25519.generateKey();
+  const handshakePrivate = await X25519.generateKey();
+  const handshakeKey: Jwk | undefined = mode === 'relay'
+    ? { kty: 'OKP', crv: 'X25519', x: handshakePrivate.x }
+    : undefined;
   const signer = await DidJwk.create();
-  const pin = mode === 'relay' ? '1234' : undefined;
   const observed = { completions: 0, requests: [] as ConnectRequest[] };
   let pending: Promise<string> | undefined;
   const transport: ConnectTransport = {
-    requiresPin    : mode === 'relay',
-    requestProfile : async state => ({
+    requiresHandshake : mode === 'relay',
+    requestProfile    : async state => ({
       state,
       encryption: mode === 'relay' ? { mode: 'dir', requestKey }
         : { mode: 'ecdh-es', walletEpk: { kty: 'OKP', crv: 'X25519', x: walletEpk.x }, walletOrigin: 'https://wallet.example' },
@@ -33,21 +37,26 @@ async function loopback(mode: 'relay' | 'popup', action: WalletAction,
       const request = await ConnectProvider.openRequest({ jwe, decryption: mode === 'relay'
         ? { mode: 'dir', requestKey } : { mode: 'ecdh-es', recipientPrivateKey: walletEpk, walletOrigin: 'https://wallet.example' } });
       observed.requests.push(request);
-      pending = action(request, signer, pin);
+      pending = action(request, signer, handshakeKey);
       // Keep rejected responses observed until the client reaches awaitResponse.
       void pending.catch((): undefined => undefined);
     },
-    awaitResponse   : (): Promise<string> => pending ?? Promise.reject(new Error('No pending request.')),
-    confirmComplete : async (): Promise<void> => { observed.completions++; },
+    awaitResponse: async (options): Promise<string> => {
+      if (handshakeKey !== undefined) {
+        await options?.onHandshake?.(handshakeKey);
+      }
+      return await (pending ?? Promise.reject(new Error('No pending request.')));
+    },
+    confirmComplete: async (): Promise<void> => { observed.completions++; },
   };
-  return { client: new ConnectClient({ transport, onAuthenticationRequest, requestPin: async (): Promise<string> => pin ?? '' }), observed };
+  return { client: new ConnectClient({ transport, onAuthenticationRequest }), observed };
 }
 
 describe('ConnectClient owner authentication', () => {
   it('should snapshot caller options before key generation and transport waits', async () => {
     const owner = await DidJwk.create();
-    const { client, observed } = await loopback('relay', async (request, signer, pin): Promise<string> =>
-      ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri, signer, pin,
+    const { client, observed } = await loopback('relay', async (request, signer, handshakeKey): Promise<string> =>
+      ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri, signer, handshakeKey,
         approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) } }));
     const params = { appName             : 'Approved application', expectedProviderDid : owner.uri,
       authentication      : { version: 1 as const, audience: 'https://identity.example', challenge: randomToken() } };
@@ -70,9 +79,9 @@ describe('ConnectClient owner authentication', () => {
     const delegate = await DidJwk.create();
     const portable = await delegate.export();
     const original = structuredClone(portable);
-    const { client } = await loopback('relay', async (request, signer, pin): Promise<string> => {
+    const { client } = await loopback('relay', async (request, signer, handshakeKey): Promise<string> => {
       expect(request.delegateDid).toBe(delegate.uri);
-      return ConnectProvider.sealApprovedResponse({ request, providerDid : owner.uri, signer, pin, approval    : {
+      return ConnectProvider.sealApprovedResponse({ request, providerDid : owner.uri, signer, handshakeKey, approval    : {
         delegateDid         : delegate.uri, delegateGrants      : [], sessionRevocations  : [],
         authenticationProof : await createOwnerAuthenticationProof({ request, owner }),
       } });
@@ -89,11 +98,11 @@ describe('ConnectClient owner authentication', () => {
   it('should register an isolated public request before delivery and never deliver after failed durable registration', async () => {
     const owner = await DidJwk.create();
     let registered = false;
-    const { client, observed } = await loopback('relay', async (request, signer, pin): Promise<string> => {
+    const { client, observed } = await loopback('relay', async (request, signer, handshakeKey): Promise<string> => {
       expect(registered).toBe(true);
       expect(request.appName).toBe('Identity service');
       expect(request.authentication?.audience).toBe('https://identity.example');
-      return ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri, signer, pin,
+      return ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri, signer, handshakeKey,
         approval    : { authenticationProof: await createOwnerAuthenticationProof({ request, owner }) } });
     }, async request => {
       expect(Object.hasOwn(request.responseKey, 'd')).toBe(false);
@@ -117,14 +126,14 @@ describe('ConnectClient owner authentication', () => {
   it('should complete real authentication-only proofs over encrypted relay and popup channels without delegate fields', async () => {
     for (const mode of ['relay', 'popup'] as const) {
       const owner = await DidJwk.create();
-      const { client, observed } = await loopback(mode, async (request, signer, pin): Promise<string> => {
+      const { client, observed } = await loopback(mode, async (request, signer, handshakeKey): Promise<string> => {
         expect(request.requestType).toBe('authenticate');
         expect(request.permissionRequests).toEqual([]);
         expect(request.delegateDid).toBeUndefined();
         expect(request.requestedSessionTtlSeconds).toBeUndefined();
         const authenticationProof = await createOwnerAuthenticationProof({ request, owner });
         return ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri,
-          approval    : { authenticationProof }, signer, pin });
+          approval    : { authenticationProof }, signer, handshakeKey });
       });
       const result = await client.authenticate({ appName             : 'Identity service', expectedProviderDid : owner.uri,
         authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() } });
@@ -140,12 +149,12 @@ describe('ConnectClient owner authentication', () => {
     const owner = await DidJwk.create();
     const delegate = await DidJwk.create();
     const portable = await delegate.export();
-    const { client } = await loopback('relay', async (request, signer, pin): Promise<string> => {
+    const { client } = await loopback('relay', async (request, signer, handshakeKey): Promise<string> => {
       const approval: ConnectApproval = {
         delegateDid         : delegate.uri, delegateGrants      : [], sessionRevocations  : [],
         authenticationProof : await createOwnerAuthenticationProof({ owner, request }),
       };
-      return ConnectProvider.sealApprovedResponse({ request, providerDid: owner.uri, approval, signer, pin });
+      return ConnectProvider.sealApprovedResponse({ request, providerDid: owner.uri, approval, signer, handshakeKey });
     });
     const result = await client.connect({ appName             : 'Data app', permissionRequests  : [], delegatePortableDid : portable,
       authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() } });
@@ -159,9 +168,9 @@ describe('ConnectClient owner authentication', () => {
       const owner = await DidJwk.create();
       const delegate = await DidJwk.create();
       const portable = await delegate.export();
-      const { client, observed } = await loopback('relay', (request, signer, pin): Promise<string> =>
+      const { client, observed } = await loopback('relay', (request, signer, handshakeKey): Promise<string> =>
         ConnectProvider.sealApprovedResponse({ request     : { ...request, authentication: undefined, requestType: 'connect' },
-          providerDid : owner.uri, signer, pin, approval    : {
+          providerDid : owner.uri, signer, handshakeKey, approval    : {
             delegateDid: delegate.uri, delegatePortableDid: portable, delegateGrants: [], sessionRevocations: [],
           } }));
       const params = { appName        : 'Identity service', authentication : { version   : 1 as const,
@@ -174,10 +183,10 @@ describe('ConnectClient owner authentication', () => {
 
   it('should reject an ephemeral signer posing as the selected owner even inside a valid encrypted response', async () => {
     const owner = await DidJwk.create();
-    const { client, observed } = await loopback('relay', async (request, signer, pin): Promise<string> => {
+    const { client, observed } = await loopback('relay', async (request, signer, handshakeKey): Promise<string> => {
       const proof = await createOwnerAuthenticationProof({ request: { ...request, expectedProviderDid: undefined }, owner: signer });
       return ConnectProvider.sealAuthenticationResponse({ request, providerDid : owner.uri,
-        approval    : { authenticationProof: proof }, signer, pin });
+        approval    : { authenticationProof: proof }, signer, handshakeKey });
     });
     await expect(client.authenticate({ appName             : 'Identity service', expectedProviderDid : owner.uri,
       authentication      : { version: 1, audience: 'https://identity.example', challenge: randomToken() } }))

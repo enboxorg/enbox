@@ -1,8 +1,9 @@
 import type { PortableDid } from '@enbox/dids';
-import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType } from '@enbox/connect';
+import type { ConnectClientMetadata, ConnectPermissionRequest, ConnectRequestType, ConnectVerificationSymbol } from '@enbox/connect';
 import type { ConnectHandler, ConnectResult, WalletConnectClientOptions } from '@enbox/auth';
 import type { Readable, Writable } from 'node:stream';
 
+import { formatVerificationSymbols } from '@enbox/connect';
 import { WalletConnect } from '@enbox/auth';
 
 import { openBrowser as defaultOpenBrowser, promptLine, renderTerminalQr } from './terminal.js';
@@ -76,8 +77,8 @@ export interface CliConnectHandlerOptions {
   /** Called with the wallet authorization URL for embedding hosts. */
   onAuthUrl?: (uri: string) => Promise<void> | void;
 
-  /** Prompt for the PIN shown by the wallet. */
-  pinPrompt?: PromptFunction;
+  /** Called with the 3 derived pre-approval verification symbols once the wallet claims the request. */
+  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
 
   /** Prompt for a wallet URL when `walletUrl` is omitted. */
   walletPrompt?: PromptFunction;
@@ -143,7 +144,9 @@ export function CliConnectHandler(options: CliConnectHandlerOptions = {}): Conne
         onWalletUriReady           : async (uri: string): Promise<void> => {
           await handleAuthUrl(uri, options);
         },
-        validatePin    : async (): Promise<string> => resolvePin(options),
+        onVerificationReady: async (symbols: readonly ConnectVerificationSymbol[]): Promise<void> => {
+          await handleVerificationReady(symbols, options);
+        },
         timeoutMs      : options.timeoutMs,
         pollIntervalMs : options.pollIntervalMs,
       } satisfies WalletConnectClientOptions);
@@ -301,13 +304,15 @@ function normalizeUrl(url: string): string | undefined {
   }
 }
 
-async function resolvePin(options: CliConnectHandlerOptions): Promise<string> {
-  const prompt = options.pinPrompt ?? defaultPrompt(options);
-  const pin = (await prompt('Enter the PIN shown in your wallet: ')).trim();
-  if (pin === '') {
-    throw new Error('@enbox/cli: wallet PIN is required.');
-  }
-  return pin;
+async function handleVerificationReady(
+  symbols: readonly ConnectVerificationSymbol[],
+  options: CliConnectHandlerOptions,
+): Promise<void> {
+  await options.onVerificationReady?.(symbols);
+  writeLine(options, '');
+  writeLine(options, 'Verify in your wallet — tap these 3 symbols:');
+  writeLine(options, `  ${formatVerificationSymbols(symbols)}`);
+  writeLine(options, '');
 }
 
 async function handleAuthUrl(uri: string, options: CliConnectHandlerOptions): Promise<void> {

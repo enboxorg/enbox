@@ -55,7 +55,7 @@ export async function walletConnect(
     walletUri                  : options.walletUri ?? 'enbox://connect',
     permissionRequests         : options.permissionRequests,
     onWalletUriReady           : options.onWalletUriReady,
-    validatePin                : options.validatePin,
+    onVerificationReady        : options.onVerificationReady,
     timeoutMs                  : options.timeoutMs,
     pollIntervalMs             : options.pollIntervalMs,
   });

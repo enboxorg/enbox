@@ -140,9 +140,6 @@ export type PopupClientTransportOptions = {
  *   genuine popup fails the handshake closed.
  */
 export class PopupClientTransport implements ConnectTransport {
-  /** {@inheritDoc ConnectTransport.requiresPin} */
-  public readonly requiresPin: boolean = false;
-
   private readonly _walletOrigin: string;
   private readonly _timeoutMs: number;
 

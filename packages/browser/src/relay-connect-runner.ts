@@ -1,48 +1,27 @@
 /**
- * Relay connect runner — the dapp side of the QR/deep-link connect flow,
- * with interactive PIN retry.
+ * Relay connect runner — the dapp side of the QR/deep-link connect flow with
+ * pre-approval ECDH SAS verification.
  *
- * This mirrors the `@enbox/connect` kernel `ConnectClient` step-for-step and
- * is composed entirely from the kernel's exported primitives (`sealRequest`,
- * `openResponse`, `RelayClientTransport`); no cryptography is reimplemented
- * here. It exists as a separate orchestrator for one reason the kernel
- * client cannot express today: **PIN retry against the delivered response**.
- * `ConnectClient` collects the PIN once and opens the response once, so a
- * mistyped code fails the whole handshake — the wallet user would have to
- * scan and approve again. The connect modal instead keeps the sealed
- * response and re-runs `openResponse` per attempt, which is safe because
- * opening is a pure decrypt-and-verify step.
- *
- * If the kernel later grows a PIN-attempts seam, this module collapses into
- * `ConnectClient` usage.
+ * Thin wrapper around the `@enbox/connect` kernel `ConnectClient` and
+ * `RelayClientTransport`: uses a visibility-aware poll sleep (so mobile and
+ * background tabs wake up immediately on return) and translates a caller's
+ * cancellation promise into the transport's `AbortSignal`.
  *
  * @module
  */
 
-import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '@enbox/dids';
 import type {
   ConnectClientMetadata,
   ConnectPermissionRequest,
-  ConnectRequest,
   ConnectRequestType,
   ConnectResult,
+  ConnectTransport,
+  ConnectVerificationSymbol,
   WalletUriHandoff,
 } from '@enbox/connect';
 
-import { DidJwk } from '@enbox/dids';
-import { X25519 } from '@enbox/crypto';
-import {
-  CONNECT_DENIED_TOKEN,
-  openResponse,
-  randomToken,
-  RelayClientTransport,
-  resolveDelegatePortableDid,
-  sealRequest,
-} from '@enbox/connect';
-
-/** Maximum interactive PIN attempts before the handshake fails. */
-export const MAX_PIN_ATTEMPTS = 6;
+import { ConnectClient, RelayClientTransport } from '@enbox/connect';
 
 /** Thrown internally when a relay handshake is cancelled by the UI. */
 export class RelayConnectCancelledError extends Error {
@@ -97,11 +76,11 @@ export interface RelayConnectOptions {
   onWalletUriReady: (handoff: WalletUriHandoff) => void;
 
   /**
-   * Collects one PIN attempt from the user. Called again (with the attempt
-   * number, 1-based, and the previous failure) after a wrong code, up to
-   * {@link MAX_PIN_ATTEMPTS} times.
+   * Invoked once when the wallet publishes its ephemeral handshake key and the
+   * 3 pre-approval SAS verification symbols are derived — display them so the
+   * user can tap the matching 3 tiles in their wallet.
    */
-  requestPin: (attempt: number, previousError?: Error) => Promise<string>;
+  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => void;
 
   /**
    * Cancellation signal: when it settles, polling stops and the handshake
@@ -123,18 +102,15 @@ export interface RelayConnectOptions {
     pollIntervalMs?: number;
     onClaimed?: () => void;
     signal?: AbortSignal;
-  }) => Pick<RelayClientTransport, 'requestProfile' | 'deliverRequest' | 'awaitResponse' | 'requiresPin'>
-    & Partial<Pick<RelayClientTransport, 'confirmComplete'>>;
+  }) => ConnectTransport;
 }
 
 /**
  * Sleep used between relay polls that ends early when the page returns to
  * the foreground. Browsers throttle — and mobile browsers freeze — timers in
  * background tabs, so a plain interval sleep can leave the user staring at a
- * stale stage after approving in the wallet tab; cutting the sleep short on
- * `visibilitychange` makes the next poll (and with it the pairing-code
- * prompt) land the moment they switch back. Falls back to a plain sleep
- * outside DOM environments.
+ * stale stage; cutting the sleep short on `visibilitychange` makes the next
+ * poll land the moment they switch back.
  */
 export function visibilityAwareSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -177,6 +153,12 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     }));
 
   const cancellationController = options.cancelled === undefined ? undefined : new AbortController();
+  if (options.cancelled !== undefined && cancellationController !== undefined) {
+    void options.cancelled.catch((reason: unknown): void => {
+      cancellationController.abort(reason);
+    });
+  }
+
   const transport = createTransport({
     connectServerUrl : options.connectServerUrl,
     walletUri        : options.walletUri,
@@ -186,148 +168,34 @@ export async function runRelayConnect(options: RelayConnectOptions): Promise<Con
     signal           : cancellationController?.signal,
   });
 
-  // Ephemeral client DID for request signing and response addressing, and a
-  // fresh X25519 pair the wallet seals the response to — same shape as the
-  // kernel `ConnectClient`.
-  const clientDid = await DidJwk.create();
-  const responsePrivateKey = await X25519.generateKey();
-  const responsePublicKey: Jwk = { kty: 'OKP', crv: 'X25519', x: responsePrivateKey.x };
+  const client = new ConnectClient({
+    transport,
+    onWalletUriReady    : options.onWalletUriReady,
+    onVerificationReady : options.onVerificationReady,
+  });
 
-  const nonce = randomToken();
-  const state = randomToken();
-
-  const profile = await transport.requestProfile(state);
-
-  const request: ConnectRequest = {
-    clientDid           : clientDid.uri,
+  const handshakePromise = client.connect({
     appName             : options.appName,
     appIcon             : options.appIcon,
     applicationId       : options.applicationId,
     clientMetadata      : options.clientMetadata,
     permissionRequests  : options.permissionRequests,
-    delegateDid         : options.delegatePortableDid?.uri,
+    delegatePortableDid : options.delegatePortableDid,
     requestType         : options.requestType,
     expectedProviderDid : options.expectedProviderDid,
     supportedDidMethods : ['did:dht', 'did:jwk'],
-    nonce,
-    state,
-    responseKey         : responsePublicKey,
-    reply               : profile.reply,
-  };
+  });
 
-  const requestJwe = await sealRequest({ request, signer: clientDid, encryption: profile.encryption });
-
-  const handoff = await transport.deliverRequest(requestJwe);
-  if (handoff !== undefined) {
-    options.onWalletUriReady(handoff);
+  if (options.cancelled === undefined) {
+    return await handshakePromise;
   }
 
-  const race = options.cancelled === undefined
-    ? transport.awaitResponse()
-    : Promise.race([transport.awaitResponse(), options.cancelled]);
-
-  let responseCiphertext: string;
   try {
-    responseCiphertext = await race;
+    return await Promise.race([handshakePromise, options.cancelled]);
   } catch (error) {
-    cancellationController?.abort();
+    cancellationController?.abort(error);
+    // Avoid unhandled rejection if the underlying handshake settles after cancellation.
+    handshakePromise.catch((): undefined => undefined);
     throw error;
-  }
-  if (responseCiphertext === CONNECT_DENIED_TOKEN) {
-    return undefined;
-  }
-
-  // Interactive PIN loop: opening is a pure decrypt-and-verify step, so a
-  // wrong code costs one more attempt, not a whole new wallet approval.
-  // Errors raised by the kernel's value checks carry a 'Connect:' prefix and
-  // indicate a protocol violation, not a mistyped code — those fail closed.
-  let lastError: Error | undefined;
-  for (let attempt = 1; attempt <= MAX_PIN_ATTEMPTS; attempt++) {
-    const pin = await (options.cancelled === undefined
-      ? options.requestPin(attempt, lastError)
-      : Promise.race([options.requestPin(attempt, lastError), options.cancelled]));
-
-    const outcome = await attemptPinOpen({
-      responseCiphertext,
-      responsePrivateKey,
-      clientDid           : clientDid.uri,
-      nonce,
-      state,
-      pin,
-      expectedProviderDid : options.expectedProviderDid,
-      delegatePortableDid : options.delegatePortableDid,
-      confirmComplete     : transport.confirmComplete?.bind(transport),
-    });
-    if (outcome.matched) {
-      return outcome.result;
-    }
-    lastError = outcome.error;
-  }
-
-  throw new Error(`[@enbox/browser] The pairing code did not match after ${MAX_PIN_ATTEMPTS} attempts.`);
-}
-
-/** One PIN attempt's outcome: either the delegated credentials, or a retryable failure. */
-type PinAttemptOutcome =
-  | { matched: true; result: ConnectResult }
-  | { matched: false; error: Error };
-
-/**
- * Opens `responseCiphertext` with one PIN attempt and, on success, resolves
- * the delegated credentials and fires the best-effort completion signal.
- * Kernel value-check failures (`'Connect:'`-prefixed) are structural, not a
- * mistyped code, so they rethrow instead of reporting a mismatch — the
- * retry loop in {@link runRelayConnect} treats that as fatal.
- */
-async function attemptPinOpen(params: {
-  responseCiphertext: string;
-  responsePrivateKey: Jwk;
-  clientDid: string;
-  nonce: string;
-  state: string;
-  pin: string;
-  expectedProviderDid: string | undefined;
-  delegatePortableDid: PortableDid | undefined;
-  confirmComplete: (() => Promise<void>) | undefined;
-}): Promise<PinAttemptOutcome> {
-  try {
-    const response = await openResponse({
-      jwe                 : params.responseCiphertext,
-      recipientPrivateKey : params.responsePrivateKey,
-      expected            : {
-        clientDid   : params.clientDid,
-        nonce       : params.nonce,
-        state       : params.state,
-        providerDid : params.expectedProviderDid,
-      },
-      pin: params.pin,
-    });
-
-    const delegatePortableDid = resolveDelegatePortableDid({
-      localDelegatePortableDid: params.delegatePortableDid,
-      response,
-    });
-
-    // Best-effort completion signal so the wallet can flip its pairing
-    // screen to a confirmed "connected" state instead of leaving the user
-    // to dismiss it blind. Fire-and-forget — mirrors the kernel client.
-    params.confirmComplete?.().catch((): undefined => undefined);
-
-    return {
-      matched : true,
-      result  : {
-        delegatePortableDid,
-        delegateGrants     : response.delegateGrants,
-        connectedDid       : response.providerDid,
-        sessionRevocations : response.sessionRevocations,
-      },
-    };
-  } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error));
-    if (failure.message.startsWith('Connect:')) {
-      // Structural/value-check failure — retrying the PIN cannot help.
-      throw failure;
-    }
-    return { matched: false, error: failure };
   }
 }

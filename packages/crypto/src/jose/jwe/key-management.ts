@@ -6,17 +6,10 @@ import { Convert } from '@enbox/common';
 import { AesGcm } from '../../primitives/aes-gcm.js';
 import { AesKw } from '../../primitives/aes-kw.js';
 import { ConcatKdf } from '../../primitives/concat-kdf.js';
-import { Hkdf } from '../../primitives/hkdf.js';
 import { Pbkdf2 } from '../../primitives/pbkdf2.js';
 import { X25519 } from '../../primitives/x25519.js';
 import { XChaCha20Poly1305 } from '../../primitives/xchacha20-poly1305.js';
 import { CryptoError, CryptoErrorCode } from '../../crypto-error.js';
-
-/**
- * The HKDF "info" value used by the optional PIN-strengthening KDF wrapper applied to an
- * ECDH-ES derived Content Encryption Key.
- */
-const ECDH_ES_PIN_KDF_INFO = 'enbox/connect/v2/pin';
 
 /**
  * The PBES2 family of "alg" (Algorithm) Header Parameter values supported by this engine.
@@ -46,14 +39,6 @@ export type JweEcdhEsEncryptKey = {
 
   /** The recipient's static X25519 public key in JWK format. */
   peerPublicKey: Jwk;
-
-  /**
-   * Optional PIN used to strengthen the derived Content Encryption Key. The PIN never transits:
-   * when provided, the CEK is passed through HKDF-SHA256 with salt UTF8(pin) and
-   * info UTF8('enbox/connect/v2/pin') after Concat KDF derivation. A recipient using the wrong
-   * PIN derives a different CEK and fails closed with an AEAD authentication tag failure.
-   */
-  pin?: string;
 };
 
 /**
@@ -65,9 +50,6 @@ export type JweEcdhEsDecryptKey = {
 
   /** The recipient's static X25519 private key in JWK format. */
   privateKey: Jwk;
-
-  /** {@inheritDoc JweEcdhEsEncryptKey.pin} */
-  pin?: string;
 };
 
 /**
@@ -358,9 +340,8 @@ export class JweKeyManagement {
       publicKeyB  : ephemeralPublicKey
     });
 
-    // Derive the CEK from the shared secret using the Concat KDF (and the optional PIN
-    // strengthening wrapper).
-    return await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader, pin: key.pin });
+    // Derive the CEK from the shared secret using the Concat KDF.
+    return await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader });
   }
 
   /**
@@ -514,9 +495,8 @@ export class JweKeyManagement {
           publicKeyB  : key.peerPublicKey
         });
 
-        // Derive the CEK from the shared secret using the Concat KDF (and the optional PIN
-        // strengthening wrapper).
-        cek = await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader, pin: key.pin });
+        // Derive the CEK from the shared secret using the Concat KDF.
+        cek = await JweKeyManagement.deriveEcdhEsCek({ sharedSecret, joseHeader });
 
         // The ephemeral public key MUST be integrity-protected, so return it as a header
         // parameter to be merged into the JWE Protected Header.
@@ -584,20 +564,14 @@ export class JweKeyManagement {
    *   the empty octet sequence when absent.
    * - SuppPubInfo is keydatalen, the bit length of the key used by the "enc" algorithm.
    *
-   * When a `pin` is provided, the derived CEK is additionally passed through HKDF-SHA256 with
-   * salt UTF8(pin) and info UTF8('enbox/connect/v2/pin'). The PIN never transits; a recipient
-   * using the wrong PIN derives a different CEK and fails closed with an AEAD authentication tag
-   * failure.
-   *
    * @param params - The CEK derivation parameters.
    * @returns A Promise that resolves to the derived CEK in JWK format.
    * @throws {@link CryptoError} if the shared secret is all zeros (low-order point rejection), the
    *         "enc" value is unsupported, or the "apu" / "apv" values cannot be decoded.
    */
-  private static async deriveEcdhEsCek({ sharedSecret, joseHeader, pin }: {
+  private static async deriveEcdhEsCek({ sharedSecret, joseHeader }: {
     sharedSecret: Uint8Array;
     joseHeader: JweHeaderParams;
-    pin?: string;
   }): Promise<Jwk> {
     // Reject an all-zero shared secret, which results from an X25519 exchange with a low-order
     // public key and would yield an attacker-predictable CEK.
@@ -621,7 +595,7 @@ export class JweKeyManagement {
     const partyVInfo = JweKeyManagement.decodeAgreementParty('apv', joseHeader.apv);
 
     // Derive the CEK from the shared secret using the Concat KDF.
-    let cekBytes = await ConcatKdf.deriveKey({
+    const cekBytes = await ConcatKdf.deriveKey({
       sharedSecret,
       keyDataLen,
       fixedInfo: {
@@ -631,17 +605,6 @@ export class JweKeyManagement {
         suppPubInfo : keyDataLen,
       }
     });
-
-    // If a PIN was provided, strengthen the CEK with the HKDF-SHA256 PIN wrapper.
-    if (pin !== undefined) {
-      cekBytes = await Hkdf.deriveKeyBytes({
-        baseKeyBytes : cekBytes,
-        hash         : 'SHA-256',
-        salt         : Convert.string(pin).toUint8Array(),
-        info         : Convert.string(ECDH_ES_PIN_KDF_INFO).toUint8Array(),
-        length       : keyDataLen,
-      });
-    }
 
     // Convert the derived CEK bytes to JWK format using the "enc" appropriate converter.
     return joseHeader.enc === 'XC20P'

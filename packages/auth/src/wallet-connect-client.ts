@@ -4,9 +4,9 @@
  * Thin adapter over the `@enbox/connect` kernel: it normalizes the
  * auth-level options into a kernel `ConnectClient` handshake carried by the
  * `RelayClientTransport`, surfaces the wallet URI to the caller (QR code /
- * deep link seam), collects the PIN through the existing `validatePin` seam,
- * and returns the kernel `ConnectResult` for the shared auth completion path
- * (`validateConnectResultGrants` → `importDelegateAndSetupSync` →
+ * deep link seam), surfaces the ECDH SAS verification symbols through
+ * `onVerificationReady`, and returns the kernel `ConnectResult` for the shared
+ * auth completion path (`validateConnectResultGrants` → `importDelegateAndSetupSync` →
  * `finalizeDelegateSession`).
  *
  * Pre-supplied delegate DIDs are augmented here (Ed25519 → X25519 private-key
@@ -26,6 +26,7 @@ import type {
   ConnectPermissionRequest,
   ConnectRequestType,
   ConnectResult,
+  ConnectVerificationSymbol,
 } from '@enbox/connect';
 import type { DwnModuleDefinition, DwnPermissionScope } from '@enbox/agent';
 
@@ -114,12 +115,11 @@ export type WalletConnectClientOptions = {
   onWalletUriReady: (uri: string) => Promise<void> | void;
 
   /**
-   * Called to collect the PIN from the user. The PIN strengthens the
-   * decryption key for the connect response from the relay.
-   *
-   * @returns A promise that resolves to the PIN as a string.
+   * Called once the wallet publishes its ephemeral handshake key and the 3
+   * pre-approval SAS verification symbols are derived. Display these symbols
+   * so the user can tap the matching 3 tiles in their wallet before approving.
    */
-  validatePin: () => Promise<string>;
+  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
 
   /**
    * Milliseconds to poll the relay for a wallet response.
@@ -180,7 +180,7 @@ async function initClient({
   walletUri,
   permissionRequests,
   onWalletUriReady,
-  validatePin,
+  onVerificationReady,
   timeoutMs,
   pollIntervalMs,
 }: WalletConnectClientOptions): Promise<ConnectResult | undefined> {
@@ -203,8 +203,8 @@ async function initClient({
       timeoutMs,
       pollIntervalMs,
     }),
-    onWalletUriReady : async (handoff): Promise<void> => { await onWalletUriReady(handoff.walletUri); },
-    requestPin       : validatePin,
+    onWalletUriReady: async (handoff): Promise<void> => { await onWalletUriReady(handoff.walletUri); },
+    onVerificationReady,
     authenticationResolver,
     onAuthenticationRequest,
   });
@@ -233,7 +233,7 @@ async function initAuthentication(options: WalletAuthenticationClientOptions): P
       pollIntervalMs   : options.pollIntervalMs,
     }),
     onWalletUriReady        : async (handoff): Promise<void> => { await options.onWalletUriReady(handoff.walletUri); },
-    requestPin              : options.validatePin,
+    onVerificationReady     : options.onVerificationReady,
     authenticationResolver  : options.authenticationResolver,
     onAuthenticationRequest : options.onAuthenticationRequest,
   });

@@ -22,8 +22,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import {
   ConnectClient,
   ConnectProvider,
+  createConnectVerificationHandshake,
   fetchRelayRequest,
   parseWalletConnectUri,
+  postRelayHandshake,
   postRelayResponse,
   RelayClientTransport,
 } from '@enbox/connect';
@@ -754,9 +756,10 @@ describe('E2E Multi-Agent Sync', () => {
       // Full kernel relay handshake against the live dwn-server connect
       // routes: the app side runs `ConnectClient` over `RelayClientTransport`;
       // the wallet side (inside `onWalletUriReady`) fetches the sealed request
-      // from the relay, opens it, runs the agent approval ceremony, and posts
-      // the sealed response back through the relay callback.
-      const pin = '2468';
+      // from the relay, publishes the SAS handshake key, runs the agent approval
+      // ceremony, and posts the sealed response back through the relay callback.
+      let walletSymbols: readonly unknown[] | undefined;
+      let appSymbols: readonly unknown[] | undefined;
       const client = new ConnectClient({
         transport: new RelayClientTransport({
           connectServerUrl : `${testDwnUrl}/connect`,
@@ -764,8 +767,8 @@ describe('E2E Multi-Agent Sync', () => {
           pollIntervalMs   : 100,
           timeoutMs        : 30_000,
         }),
-        requestPin       : async (): Promise<string> => pin,
-        onWalletUriReady : async (handoff): Promise<void> => {
+        onVerificationReady : (symbols): void => { appSymbols = symbols; },
+        onWalletUriReady    : async (handoff): Promise<void> => {
           const parsed = parseWalletConnectUri(handoff.walletUri);
           expect(parsed).toBeDefined();
 
@@ -779,6 +782,14 @@ describe('E2E Multi-Agent Sync', () => {
             throw new Error('expected a direct_post reply descriptor on the relay channel');
           }
 
+          const handshake = await createConnectVerificationHandshake({ request, requestJwe });
+          walletSymbols = handshake.symbols;
+          await postRelayHandshake({
+            callbackUrl : request.reply.callbackUrl,
+            state       : request.state,
+            walletEpk   : handshake.walletEpk,
+          });
+
           const approval = await executeConnectApproval({
             agent       : primaryHarness.agent,
             providerDid : alice.did.uri,
@@ -787,10 +798,10 @@ describe('E2E Multi-Agent Sync', () => {
           });
           const idToken = await ConnectProvider.sealApprovedResponse({
             request,
-            providerDid : alice.did.uri,
+            providerDid  : alice.did.uri,
             approval,
-            signer      : approval.responseSigner,
-            pin,
+            signer       : approval.responseSigner,
+            handshakeKey : handshake.walletEpk,
           });
           await postRelayResponse({ callbackUrl: request.reply.callbackUrl, state: request.state, idToken });
         },
@@ -800,6 +811,8 @@ describe('E2E Multi-Agent Sync', () => {
         appName            : 'Encrypted Sync E2E',
         permissionRequests : [{ moduleDefinition: encryptedModule, permissionScopes: readScopes }],
       });
+      expect(appSymbols).toBeDefined();
+      expect(appSymbols).toEqual(walletSymbols);
       expect(connectResult).toBeDefined();
       const { connectedDid, delegateGrants, delegatePortableDid } = connectResult!;
       const delegateDid = delegatePortableDid.uri;

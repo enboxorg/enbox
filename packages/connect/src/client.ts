@@ -12,6 +12,7 @@
  */
 
 import type { ConnectAuthenticationResolver } from './owner-authentication.js';
+import type { ConnectVerificationSymbol } from './sas.js';
 import type { Jwk } from '@enbox/crypto';
 import type { PortableDid } from '@enbox/dids';
 import type {
@@ -34,7 +35,8 @@ import { DidJwk } from '@enbox/dids';
 import { CryptoUtils, X25519 } from '@enbox/crypto';
 
 import { CONNECT_DENIED_TOKEN } from './types.js';
-import { assertConnectRequest, openAuthenticationResponse, openResponse, sealRequest } from './envelope.js';
+import { deriveConnectVerificationSymbols } from './sas.js';
+import { assertConnectRequest, assertX25519PublicJwk, openAuthenticationResponse, openResponse, sealRequest } from './envelope.js';
 import { ConnectAuthenticationError, verifyOwnerAuthenticationProof } from './owner-authentication.js';
 
 /** DID methods a connect client accepts for the connected identity by default. */
@@ -63,10 +65,12 @@ export type ConnectClientOptions = {
   onWalletUriReady?: (handoff: WalletUriHandoff) => Promise<void> | void;
 
   /**
-   * Called to collect the PIN from the user on PIN-strengthened channels
-   * (`transport.requiresPin`). Required for such transports.
+   * Called on relay channels once the wallet publishes its ephemeral handshake
+   * key and the 3 pre-approval SAS verification symbols are derived. The app
+   * should display these symbols so the user can tap the matching 3 tiles in
+   * their wallet before approving.
    */
-  requestPin?: () => Promise<string>;
+  onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
   /** Service-controlled DID resolver for owner proofs; omitted uses uncached did:dht/did:jwk resolution. */
   authenticationResolver?: ConnectAuthenticationResolver;
   /**
@@ -138,9 +142,9 @@ export type ConnectClientAuthenticateParams = Omit<ConnectClientConnectParams,
  * @example
  * ```ts
  * const client = new ConnectClient({
- *   transport        : new RelayClientTransport({ connectServerUrl, walletUri }),
- *   onWalletUriReady : (handoff) => renderQrCode(handoff.walletUri),
- *   requestPin       : () => promptUserForPin(),
+ *   transport           : new RelayClientTransport({ connectServerUrl, walletUri }),
+ *   onWalletUriReady    : (handoff) => renderQrCode(handoff.walletUri),
+ *   onVerificationReady : (symbols) => showVerificationSymbols(symbols),
  * });
  *
  * const result = await client.connect({ appName: 'My App', permissionRequests });
@@ -152,14 +156,14 @@ export type ConnectClientAuthenticateParams = Omit<ConnectClientConnectParams,
 export class ConnectClient {
   private readonly _transport: ConnectTransport;
   private readonly _onWalletUriReady?: (handoff: WalletUriHandoff) => Promise<void> | void;
-  private readonly _requestPin?: () => Promise<string>;
+  private readonly _onVerificationReady?: (symbols: readonly ConnectVerificationSymbol[]) => Promise<void> | void;
   private readonly _authenticationResolver?: ConnectAuthenticationResolver;
   private readonly _onAuthenticationRequest?: (request: Readonly<ConnectRequest>) => Promise<void> | void;
 
   constructor(options: ConnectClientOptions) {
     this._transport = options.transport;
     this._onWalletUriReady = options.onWalletUriReady;
-    this._requestPin = options.requestPin;
+    this._onVerificationReady = options.onVerificationReady;
     this._authenticationResolver = options.authenticationResolver;
     this._onAuthenticationRequest = options.onAuthenticationRequest;
   }
@@ -272,29 +276,41 @@ export class ConnectClient {
       await this._onWalletUriReady(handoff);
     }
 
-    const responseCiphertext = await this._transport.awaitResponse();
+    let verifiedWalletEpk: Jwk | undefined;
+    const responseCiphertext = await this._transport.awaitResponse({
+      onHandshake: async (walletEpk: Jwk): Promise<void> => {
+        assertX25519PublicJwk(walletEpk);
+        verifiedWalletEpk = walletEpk;
+        const symbols = await deriveConnectVerificationSymbols({
+          privateKey    : responsePrivateKey,
+          peerPublicKey : walletEpk,
+          requestJwe,
+          state,
+          nonce,
+          responseKey   : responsePublicKey,
+          walletEpk,
+        });
+        await this._onVerificationReady?.(symbols);
+      },
+    });
     if (responseCiphertext === CONNECT_DENIED_TOKEN) {
       return undefined;
     }
 
-    let pin: string | undefined;
-    if (this._transport.requiresPin) {
-      if (this._requestPin === undefined) {
-        throw new Error('Connect: transport requires a PIN but no `requestPin` callback was provided.');
-      }
-      pin = await this._requestPin();
+    if (this._transport.requiresHandshake === true && verifiedWalletEpk === undefined) {
+      throw new Error('Connect: relay response arrived without a verified wallet handshake.');
     }
 
     const response = await (authenticationOnly ? openAuthenticationResponse : openResponse)({
       jwe                 : responseCiphertext,
       recipientPrivateKey : responsePrivateKey,
       expected            : {
-        clientDid   : clientDid.uri,
+        clientDid    : clientDid.uri,
         nonce,
         state,
-        providerDid : params.expectedProviderDid,
+        providerDid  : params.expectedProviderDid,
+        handshakeKey : verifiedWalletEpk,
       },
-      pin,
     });
 
     if (request.authentication === undefined) {

@@ -371,8 +371,11 @@ export type ConnectRequestProfile = {
  * profile so the client stays channel-agnostic.
  */
 export interface ConnectTransport {
-  /** Whether responses on this channel are PIN-strengthened (relay flows). */
-  readonly requiresPin: boolean;
+  /**
+   * Whether responses on this channel require a pre-approval ephemeral X25519
+   * wallet handshake (`walletEpk`) bound to the response `apv` header (relay flows).
+   */
+  readonly requiresHandshake?: boolean;
 
   /**
    * Returns the channel profile for the next handshake: encryption input,
@@ -395,8 +398,14 @@ export interface ConnectTransport {
    * Awaits the wallet's response ciphertext. Resolves with the sealed
    * response JWE, or the literal {@link CONNECT_DENIED_TOKEN} when the user
    * denied the request. Rejects on channel timeout.
+   *
+   * Relay transports invoke `options.onHandshake` as soon as the wallet
+   * publishes its ephemeral `walletEpk` so the client can derive and display
+   * the pre-approval verification symbols.
    */
-  awaitResponse(): Promise<string>;
+  awaitResponse(options?: {
+    onHandshake?: (walletEpk: Jwk) => Promise<void> | void;
+  }): Promise<string>;
 
   /**
    * Best-effort completion signal back to the wallet side: the client

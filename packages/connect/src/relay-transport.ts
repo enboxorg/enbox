@@ -24,12 +24,15 @@
  * @module
  */
 
+import type { Jwk } from '@enbox/crypto';
 import type { ConnectRequestProfile, ConnectTransport, WalletUriHandoff } from './types.js';
 
 import { CryptoUtils } from '@enbox/crypto';
 import { concatenateUrl, sleep } from '@enbox/common';
 
+import { assertX25519PublicJwk } from './envelope.js';
 import { buildWalletConnectUri } from './uri.js';
+import { CONNECT_DENIED_TOKEN } from './types.js';
 
 /** Per-request abort budget applied to every relay HTTP call. */
 const RELAY_HTTP_TIMEOUT_MS = 30_000;
@@ -114,13 +117,13 @@ export type RelayClientTransportOptions = {
  * `requestProfile()` mints the single-use fragment key and records the
  * client-supplied `state` correlator; `deliverRequest()` pushes the sealed
  * request and returns the wallet URI handoff for QR/deep-link display;
- * `awaitResponse()` polls the token route until the wallet responds, the user
- * denies, or the poll budget is exhausted. Relay responses are
- * PIN-strengthened, so `requiresPin` is always `true`.
+ * `awaitResponse()` polls the handshake and token routes until the wallet
+ * publishes its ephemeral `walletEpk` (for pre-approval SAS verification) and
+ * later responds, the user denies, or the poll budget is exhausted.
  */
 export class RelayClientTransport implements ConnectTransport {
-  /** {@inheritDoc ConnectTransport.requiresPin} */
-  public readonly requiresPin: boolean = true;
+  /** {@inheritDoc ConnectTransport.requiresHandshake} */
+  public readonly requiresHandshake: boolean = true;
 
   private readonly _connectServerUrl: string;
   private readonly _walletUri: string;
@@ -199,29 +202,52 @@ export class RelayClientTransport implements ConnectTransport {
   }
 
   /**
-   * Polls `GET /connect/token/{state}.jwt` every `pollIntervalMs` until the
-   * relay returns a body (the sealed response JWE or the `DENIED` token) or
-   * the `timeoutMs` budget is exhausted.
+   * Polls `GET /connect/handshake/{state}` and `GET /connect/token/{state}.jwt`
+   * every `pollIntervalMs` until the wallet responds, the user denies, or the
+   * `timeoutMs` budget is exhausted.
    */
-  public async awaitResponse(): Promise<string> {
+  public async awaitResponse(options?: {
+    onHandshake?: (walletEpk: Jwk) => Promise<void> | void;
+  }): Promise<string> {
     if (this._state === undefined) {
       throw new Error('Connect: call `requestProfile()` before `awaitResponse()`.');
     }
 
+    const encodedState = encodeURIComponent(this._state);
     const tokenUrl = concatenateUrl(this._connectServerUrl, `token/${this._state}.jwt`);
+    const handshakeUrl = concatenateUrl(this._connectServerUrl, `handshake/${encodedState}`);
     const deadline = this._now() + this._timeoutMs;
     const statusUrl = this.resolveClaimedStatusUrl();
     let claimedNotified = false;
+    let handshakeNotified = false;
+
+    const tryHandshake = async (): Promise<void> => {
+      if (handshakeNotified || options?.onHandshake === undefined) {
+        return;
+      }
+      const walletEpk = await this.pollHandshake(handshakeUrl);
+      if (walletEpk !== undefined) {
+        handshakeNotified = true;
+        await options.onHandshake(walletEpk);
+      }
+    };
 
     while (this._now() < deadline) {
       this._signal?.throwIfAborted();
 
+      await tryHandshake();
+
       const body = await this.pollToken(tokenUrl);
       if (body !== undefined) {
+        if (body !== CONNECT_DENIED_TOKEN && !handshakeNotified) {
+          // One final check handles the race where the wallet posted handshake
+          // and response back-to-back between our two polls.
+          await tryHandshake();
+        }
         return body;
       }
 
-      if (statusUrl !== undefined && !claimedNotified) {
+      if (statusUrl !== undefined && !claimedNotified && !handshakeNotified) {
         await this.pollClaimedStatus(statusUrl, (): void => { claimedNotified = true; });
       }
 
@@ -229,6 +255,26 @@ export class RelayClientTransport implements ConnectTransport {
     }
 
     throw new Error(`Connect: timed out after ${this._timeoutMs}ms waiting for the wallet response.`);
+  }
+
+  /**
+   * Polls `handshakeUrl` once for the wallet's ephemeral X25519 handshake
+   * public key (`walletEpk`). Returns the validated public JWK when published,
+   * or `undefined` while not ready yet.
+   */
+  private async pollHandshake(handshakeUrl: string): Promise<Jwk | undefined> {
+    const response = await this._fetch(handshakeUrl, { signal: this.requestSignal() });
+    if (response.ok) {
+      const payload = await response.json() as { ready?: unknown; walletEpk?: unknown };
+      if (payload.ready === true && payload.walletEpk !== undefined) {
+        assertX25519PublicJwk(payload.walletEpk);
+        return payload.walletEpk;
+      }
+    } else {
+      await response.body?.cancel().catch((): void => {});
+    }
+
+    return undefined;
   }
 
   /**
@@ -393,6 +439,35 @@ export async function fetchRelayRequest({ requestUri, fetchFn, timeoutMs }: {
   }
 
   return await response.text();
+}
+
+/**
+ * Wallet-side helper: publishes the wallet's ephemeral X25519 handshake public
+ * key (`walletEpk`) to the relay (`POST /connect/handshake`) keyed by `state`
+ * so the requesting app can derive and display the pre-approval SAS
+ * verification symbols.
+ */
+export async function postRelayHandshake({ callbackUrl, state, walletEpk, fetchFn, timeoutMs }: {
+  callbackUrl: string;
+  state: string;
+  walletEpk: Jwk;
+  fetchFn?: FetchFn;
+  timeoutMs?: number;
+}): Promise<void> {
+  assertX25519PublicJwk(walletEpk);
+  const doFetch = fetchFn ?? defaultFetch;
+  const handshakeUrl = new URL('handshake', callbackUrl).toString();
+
+  const response = await doFetch(handshakeUrl, {
+    body    : JSON.stringify({ state, walletEpk }),
+    method  : 'POST',
+    headers : { 'Content-Type': 'application/json' },
+    signal  : AbortSignal.timeout(timeoutMs ?? RELAY_HTTP_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Connect: handshake POST failed with HTTP ${response.status}.`);
+  }
 }
 
 /**
