@@ -262,6 +262,58 @@ describe('local-node pairing storage', () => {
     expect(statusAborted).toBe(true);
   });
 
+  test('preserves stored pairing when probeTimeoutMs fires while reading response.json()', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    const stalledBodyResponse = (signal: AbortSignal | null | undefined): Response => ({
+      ok     : true,
+      status : 200,
+      json   : (): Promise<unknown> => new Promise((_resolve, reject) => {
+        const fail = (): void => { reject(signal?.reason ?? new DOMException('Timed out', 'TimeoutError')); };
+        if (signal?.aborted) {
+          fail();
+        } else {
+          signal?.addEventListener('abort', fail, { once: true });
+        }
+      }),
+    }) as unknown as Response;
+
+    // 1. Timeout during /info body read preserves the pairing record.
+    const infoBodyResult = await discoverLocalDwnPairing(
+      storage,
+      async (_url, init): Promise<Response> => stalledBodyResponse(init?.signal),
+      25,
+    );
+    expect(infoBodyResult).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).not.toBeNull();
+
+    // 2. Timeout during /local/status body read also preserves the pairing record.
+    const statusBodyResult = await discoverLocalDwnPairing(
+      storage,
+      async (url, init): Promise<Response> => {
+        if (url.toString().endsWith('/info')) {
+          return jsonResponse(localNodeInfo);
+        }
+        return stalledBodyResponse(init?.signal);
+      },
+      25,
+    );
+    expect(statusBodyResult).toBeUndefined();
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).not.toBeNull();
+  });
+
+  test('rejects invalid probeTimeoutMs values eagerly without mutating storage', async () => {
+    const storage = new MemoryStorage();
+    await persistLocalDwnPairingRecord(storage, pairingRecord);
+
+    for (const badTimeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(discoverLocalDwnPairing(storage, undefined, badTimeout)).rejects.toThrow(RangeError);
+      await expect(probeLocalDwn({ storage, probeTimeoutMs: badTimeout })).rejects.toThrow(RangeError);
+    }
+    expect(await storage.get(STORAGE_KEYS.LOCAL_DWN_ENDPOINT)).not.toBeNull();
+  });
+
   test('restores stored pairing endpoint into an agent', async () => {
     const storage = new MemoryStorage();
     await persistLocalDwnPairingRecord(storage, pairingRecord);

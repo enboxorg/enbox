@@ -94,6 +94,7 @@ export type RequestLocalDwnPairingOptions = {
   origin?: string;
   portCandidates?: readonly number[];
   pollIntervalMs?: number;
+  probeTimeoutMs?: number;
   scanPorts?: boolean;
   storage: StorageAdapter;
   timeoutMs?: number;
@@ -315,8 +316,9 @@ export async function readLocalDwnEjectionRecordForPairing(
 export async function discoverEjectedLocalDwnPairing(
   storage: StorageAdapter,
   fetchOption?: FetchLike,
+  probeTimeoutMs?: number,
 ): Promise<LocalDwnPairingRecord | undefined> {
-  const pairing = await discoverLocalDwnPairing(storage, fetchOption);
+  const pairing = await discoverLocalDwnPairing(storage, fetchOption, probeTimeoutMs);
   if (pairing === undefined) {
     await clearLocalDwnEjection(storage);
     return undefined;
@@ -341,6 +343,7 @@ export async function discoverLocalDwnPairing(
   fetchOption?: FetchLike,
   probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
 ): Promise<LocalDwnPairingRecord | undefined> {
+  const resolvedProbeTimeoutMs = resolveProbeTimeoutMs(probeTimeoutMs);
   const pairing = await readLocalDwnPairingRecord(storage);
   if (pairing === undefined) {
     return undefined;
@@ -352,7 +355,7 @@ export async function discoverLocalDwnPairing(
     return undefined;
   }
 
-  const validation = await validateLocalDwnPairing(pairing, fetchFn, undefined, probeTimeoutMs);
+  const validation = await validateLocalDwnPairing(pairing, fetchFn, undefined, resolvedProbeTimeoutMs);
   if (validation.status === 'revoked') {
     await clearLocalDwnEndpoint(storage);
     return undefined;
@@ -418,6 +421,7 @@ export async function applyLocalDwnDiscovery(
  * only from a user gesture unless a stored pairing exists.
  */
 export async function probeLocalDwn(options: ProbeLocalDwnOptions = {}): Promise<LocalDwnProbeResult> {
+  const resolvedProbeTimeoutMs = resolveProbeTimeoutMs(options.probeTimeoutMs);
   const storage = options.storage;
   const fetchFn = getFetch(options.fetch);
   if (fetchFn === undefined) {
@@ -431,7 +435,7 @@ export async function probeLocalDwn(options: ProbeLocalDwnOptions = {}): Promise
     ? undefined
     : await readLocalDwnPairingRecord(storage);
   if (storedPairing !== undefined && storage !== undefined) {
-    const validation = await validateLocalDwnPairing(storedPairing, fetchFn, options.origin, options.probeTimeoutMs);
+    const validation = await validateLocalDwnPairing(storedPairing, fetchFn, options.origin, resolvedProbeTimeoutMs);
     if (validation.status === 'paired') {
       return {
         endpoint   : storedPairing.endpoint,
@@ -462,7 +466,7 @@ export async function probeLocalDwn(options: ProbeLocalDwnOptions = {}): Promise
   const portCandidates = options.portCandidates ?? localDwnPortCandidates;
   for (const port of portCandidates) {
     const endpoint = `http://${hostname}:${port}`;
-    const serverInfo = await fetchLocalDwnServerInfo(endpoint, fetchFn, options.probeTimeoutMs);
+    const serverInfo = await fetchLocalDwnServerInfo(endpoint, fetchFn, resolvedProbeTimeoutMs);
     if (serverInfo?.localNode === true) {
       return {
         endpoint : normalizeBaseUrl(endpoint),
@@ -546,14 +550,15 @@ export async function pollLocalDwnPairing(
 export async function requestLocalDwnPairing(
   options: RequestLocalDwnPairingOptions,
 ): Promise<LocalDwnPairingRequestResult> {
+  const resolvedProbeTimeoutMs = resolveProbeTimeoutMs(options.probeTimeoutMs);
   const fetchFn = getFetch(options.fetch);
   if (fetchFn === undefined) {
     return { reason: 'no-fetch', status: 'unsupported' };
   }
 
   const probe = options.endpoint === undefined
-    ? await probeLocalDwn({ ...options, fetch: fetchFn })
-    : await probeEndpointForPairing(options.endpoint, fetchFn);
+    ? await probeLocalDwn({ ...options, fetch: fetchFn, probeTimeoutMs: resolvedProbeTimeoutMs })
+    : await probeEndpointForPairing(options.endpoint, fetchFn, resolvedProbeTimeoutMs);
 
   if (probe.status === 'unsupported' || probe.status === 'not-found') {
     return probe;
@@ -705,16 +710,24 @@ async function fetchLocalDwnServerInfo(
   return result.status === 'found' ? result.serverInfo : undefined;
 }
 
+function resolveProbeTimeoutMs(probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs): number {
+  if (!Number.isFinite(probeTimeoutMs) || probeTimeoutMs <= 0) {
+    throw new RangeError('LocalDwnDiscovery: probeTimeoutMs must be a positive finite number.');
+  }
+  return probeTimeoutMs;
+}
+
 async function fetchLocalDwnServerInfoResult(
   endpoint: string,
   fetchFn: FetchLike,
   probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
 ): Promise<LocalDwnServerInfoResult> {
+  const signal = AbortSignal.timeout(resolveProbeTimeoutMs(probeTimeoutMs));
   let response: Response;
   try {
     response = await fetchFn(endpointUrl(endpoint, '/info'), {
-      method : 'GET',
-      signal : AbortSignal.timeout(probeTimeoutMs),
+      method: 'GET',
+      signal,
     });
   } catch {
     return { status: 'unavailable' };
@@ -728,7 +741,7 @@ async function fetchLocalDwnServerInfoResult(
   try {
     body = await response.json();
   } catch {
-    return { status: 'invalid' };
+    return { status: signal.aborted ? 'unavailable' : 'invalid' };
   }
 
   if (body === null || typeof body !== 'object') {
@@ -756,6 +769,7 @@ async function fetchLocalDwnStatus(
   origin?: string,
   probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
 ): Promise<'paired' | 'revoked' | 'unavailable'> {
+  const signal = AbortSignal.timeout(resolveProbeTimeoutMs(probeTimeoutMs));
   let response: Response;
   try {
     const headers: Record<string, string> = { authorization: `Bearer ${pairing.token}` };
@@ -763,8 +777,8 @@ async function fetchLocalDwnStatus(
 
     response = await fetchFn(endpointUrl(pairing.endpoint, '/local/status'), {
       headers,
-      method : 'GET',
-      signal : AbortSignal.timeout(probeTimeoutMs),
+      method: 'GET',
+      signal,
     });
   } catch {
     return 'unavailable';
@@ -778,15 +792,19 @@ async function fetchLocalDwnStatus(
   try {
     body = await response.json() as { localNode?: unknown; paired?: unknown };
   } catch {
-    return 'revoked';
+    return signal.aborted ? 'unavailable' : 'revoked';
   }
 
   return body.localNode === true && body.paired === true ? 'paired' : 'revoked';
 }
 
-async function probeEndpointForPairing(endpoint: string, fetchFn: FetchLike): Promise<Extract<LocalDwnProbeResult, { status: 'found-unpaired' }> | { status: 'not-found' }> {
+async function probeEndpointForPairing(
+  endpoint: string,
+  fetchFn: FetchLike,
+  probeTimeoutMs: number = defaultLocalDwnProbeTimeoutMs,
+): Promise<Extract<LocalDwnProbeResult, { status: 'found-unpaired' }> | { status: 'not-found' }> {
   const normalizedEndpoint = normalizeBaseUrl(endpoint);
-  const serverInfo = await fetchLocalDwnServerInfo(normalizedEndpoint, fetchFn);
+  const serverInfo = await fetchLocalDwnServerInfo(normalizedEndpoint, fetchFn, probeTimeoutMs);
   if (serverInfo?.localNode !== true) {
     return { status: 'not-found' };
   }
